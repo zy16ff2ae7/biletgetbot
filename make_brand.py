@@ -23,9 +23,9 @@ FONT_MAIN = BRAND / "Prata-Regular.ttf"
 
 W, H = 960, 540
 FPS = 15
-FRAMES = 72
+FRAMES = 110
 TITLE = "ДЕД РЕДАЧИТ"
-SUBTITLE = "ПЕРЕПЕЧАТАЕМ БИЛЕТЫ НАЧИСТО"
+SUBTITLE = "перепечатаем ваши билеты начисто"
 HANDLE = "@biletgetbot"
 
 GOLD_TOP = (252, 243, 222)
@@ -38,13 +38,13 @@ BAR = (6, 3, 8)
 
 BAR_B = 132          # нижний литер-бар
 BAR_T = 42           # верхний бар
-TITLE_IN = (9, 18)
-SUB_IN = (20, 27)
-HANDLE_IN = (26, 32)
-CTA_IN = (58, 64)    # подсказка об абонементе в верхнем баре
+TITLE_IN = (14, 26)
+SUB_IN = (30, 40)
+HANDLE_IN = (38, 46)
+CTA_IN = (92, 100)   # подсказка об абонементе в верхнем баре
 FREE_LINE = "2 билета в день — бесплатно"
-FREE_OUT = (56, 61)  # уходит перед CTA
-BARS_IN = 10         # бары задвигаются за 10 кадров
+FREE_OUT = (88, 95)  # уходит перед CTA
+BARS_IN = 12         # бары задвигаются за 12 кадров
 
 
 def smooth(v):
@@ -251,7 +251,7 @@ def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0):
         return sum(probe.textlength(ch, font=font) + gap for ch in text) - gap
 
     title_font = _font(FONT_MAIN, 50)
-    sub_font = _font(FONT_MAIN, 19)
+    sub_font = _font(FONT_MAIN, 21)
     small_font = _font(FONT_MAIN, 20)
     tracking = 10
     top = H - bar_b
@@ -272,17 +272,24 @@ def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0):
         ov = Image.alpha_composite(ov, shl)
         ov = _gold_text(ov, mask, title_a)
 
-    # Подзаголовок: кремовые капители.
+    # Подзаголовок: изящные строчные капители + золотой росчерк сверху.
     if sub_a > 0:
         a = int(255 * sub_a)
         d = ImageDraw.Draw(ov)
         sw = width_of(SUBTITLE, sub_font, 4)
         sx = (W - sw) / 2
-        sy = top + 70
+        sy = top + 72
         for ch in SUBTITLE:
             d.text((sx + 1, sy + 1), ch, font=sub_font, fill=(0, 0, 0, int(a * 0.8)))
             d.text((sx, sy), ch, font=sub_font, fill=(*CREAM, a))
             sx += probe.textlength(ch, font=sub_font) + 4
+        # Росчерк: линия с ромбом по центру, над подзаголовком.
+        fy = top + 64
+        r = 2.6
+        d.polygon([(W / 2, fy - r), (W / 2 + r, fy), (W / 2, fy + r), (W / 2 - r, fy)],
+                  fill=(*GOLD_EDGE, int(a * 0.9)))
+        d.line([W / 2 - 70, fy, W / 2 - 10, fy], fill=(198, 162, 110, int(a * 0.55)), width=1)
+        d.line([W / 2 + 10, fy, W / 2 + 70, fy], fill=(198, 162, 110, int(a * 0.55)), width=1)
 
     # Канал: платиновый, ромбы по бокам на одной строке.
     if handle_a > 0:
@@ -338,15 +345,15 @@ thumb.save(BRAND / "thumb.jpg", quality=85)
 # --- кадры видео -------------------------------------------------------------
 def scene_of(f):
     """(ключ сцены, локальный номер кадра) по глобальному кадру."""
-    if f <= 27:
+    if f <= 39:
         return "type", f
-    if f <= 30:
-        return "flash1", f - 28          # вспышка-переход
-    if f <= 45:
-        return "laugh", f - 31
-    if f <= 47:
-        return "flash2", f - 46          # вторая вспышка
-    return "win", f - 48
+    if f <= 43:
+        return "flash1", f - 40          # вспышка-переход
+    if f <= 64:
+        return "laugh", f - 44
+    if f <= 67:
+        return "flash2", f - 65          # вторая вспышка
+    return "win", f - 68
 
 
 tmp = HERE / "work" / "frames"
@@ -372,15 +379,15 @@ for f in range(FRAMES):
         continue
 
     if scene == "type":
-        zoom = 1.0 + 0.045 * (local / 28)
-        cx = 0.54 + 0.02 * (local / 28)
+        zoom = 1.0 + 0.045 * (local / 40)
+        cx = 0.54 + 0.02 * (local / 40)
         shake = (1, -1) if local % 3 == 0 else ((-1, 1) if local % 3 == 1 else (0, 0))
     elif scene == "laugh":
         zoom = 1.047 + 0.008 * np.sin(local * 0.5)       # «дыхание» камеры
         cx = 0.54
         shake = (0, -1) if local % 6 == 0 else (0, 0)    # плечи трясутся от смеха
     else:  # win: панч-наезд и лёгкая вибрация триумфа
-        ease = min(1.0, local / 6)
+        ease = min(1.0, local / 8)
         zoom = 1.05 + 0.05 * (1 - (1 - ease) ** 3)
         cx = 0.56
         shake = (1, 0) if local % 4 == 0 else (0, 0)
