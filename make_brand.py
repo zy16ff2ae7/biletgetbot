@@ -42,6 +42,8 @@ TITLE_IN = (9, 18)
 SUB_IN = (20, 27)
 HANDLE_IN = (26, 32)
 CTA_IN = (58, 64)    # подсказка об абонементе в верхнем баре
+FREE_LINE = "2 билета в день — бесплатно"
+FREE_OUT = (56, 61)  # уходит перед CTA
 BARS_IN = 10         # бары задвигаются за 10 кадров
 
 
@@ -206,7 +208,7 @@ def probe_w(font, ch):
     return _probe.textlength(ch, font=font)
 
 
-def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0):
+def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0):
     """Кинематографичный letterbox: чистые чёрные бары с тонкой золотой
     кромкой; титры — внутри нижнего бара, на идеально чёрном фоне."""
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -221,6 +223,15 @@ def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0):
     line_a = int(150 * bars_e)
     d.line([0, H - bar_b - 1, W, H - bar_b - 1], fill=(212, 170, 96, line_a), width=1)
     d.line([0, bar_t, W, bar_t], fill=(212, 170, 96, int(line_a * 0.55)), width=1)
+
+    # Бесплатный лимит в верхнем баре — до появления CTA.
+    if free_a > 0 and cta_a < 1:
+        ff = _font(FONT_MAIN, 16)
+        fa = int(230 * free_a * (1 - cta_a))
+        fw = sum(probe_w(ff, ch) + 2 for ch in FREE_LINE) - 2
+        fx = (W - fw) / 2
+        fy = max(7, (bar_t - 19) // 2)
+        d.text((fx, fy), FREE_LINE, font=ff, fill=(*GOLD_MID, fa))
 
     # CTA в верхнем баре: появляется в конце цикла.
     if cta_a > 0:
@@ -295,8 +306,8 @@ def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0):
     return ov
 
 
-def compose(img, title_a, sub_a, handle_a, bars_e, cta_a=0.0):
-    o = overlay(title_a, sub_a, handle_a, bars_e, cta_a)
+def compose(img, title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0):
+    o = overlay(title_a, sub_a, handle_a, bars_e, cta_a, free_a)
     return Image.alpha_composite(img.convert("RGBA"), o).convert("RGB")
 
 
@@ -311,7 +322,7 @@ poster = screen(poster, glow_layer(0.35))
 poster = Dust(seed=11).draw(poster, 8)
 poster = vignette(poster)
 poster = grain(poster, 3)
-poster = compose(poster, 1, 1, 1, 1, 0)
+poster = compose(poster, 1, 1, 1, 1, 0, 0)
 poster.save(BRAND / "welcome.jpg", quality=90)
 
 # --- аватар: триумфальный кадр с поднятым билетом ----------------------------
@@ -349,13 +360,14 @@ for f in range(FRAMES):
     t_sub = smooth((f - SUB_IN[0]) / (SUB_IN[1] - SUB_IN[0]))
     t_handle = smooth((f - HANDLE_IN[0]) / (HANDLE_IN[1] - HANDLE_IN[0]))
     t_cta = smooth((f - CTA_IN[0]) / (CTA_IN[1] - CTA_IN[0]))
+    t_free = smooth((f - 10) / 6) * (1 - smooth((f - FREE_OUT[0]) / (FREE_OUT[1] - FREE_OUT[0])))
 
     if scene in ("flash1", "flash2"):
         frame = base_frame(1.05, 0.55, 0.52)
         frame = vignette(frame)
         frame = grain(frame, f)
         frame = flash_overlay(frame, local)   # бары и титры остаются чёрными
-        frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta)
+        frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta, t_free)
         frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
         continue
 
@@ -381,7 +393,7 @@ for f in range(FRAMES):
         frame = sparks.draw(frame, local)
     frame = vignette(frame)
     frame = grain(frame, f)
-    frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta)
+    frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta, t_free)
     frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
 
 print("frames:", FRAMES, "size:", W, "x", H)

@@ -10,7 +10,8 @@ import time
 
 PERIOD = 30 * 86400
 
-SCHEMAS = {1: "subscriptions", 2: "payment_incidents", 3: "users_promo", 4: "expiry_reminders"}
+SCHEMAS = {1: "subscriptions", 2: "payment_incidents", 3: "users_promo", 4: "expiry_reminders",
+           5: "daily_usage"}
 
 
 class SubscriptionStore:
@@ -19,7 +20,7 @@ class SubscriptionStore:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self.db() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4):
+            if version not in (0, 1, 2, 3, 4, 5):
                 raise RuntimeError("Unsupported subscription schema")
             for target in range(version + 1, len(SCHEMAS) + 1):
                 migration = Path(__file__).parent / f"migrations/{target:03d}_{SCHEMAS[target]}.sql"
@@ -561,6 +562,29 @@ class SubscriptionStore:
         with self.db() as db:
             db.execute("INSERT OR REPLACE INTO expiry_reminders VALUES(?,?)",
                        (user_id, int(time.time())))
+
+    DAILY_LIMIT = int(os.environ.get("BILET_DAILY_FREE", "2"))
+
+    def daily_left(self, user_id):
+        """Сколько бесплатных билетов осталось сегодня (МСК)."""
+        with self.db() as db:
+            row = db.execute("SELECT used FROM daily_usage WHERE user_id=? AND day=(date('now','localtime'))",
+                             (user_id,)).fetchone()
+            return max(0, self.DAILY_LIMIT - (row[0] if row else 0))
+
+    def daily_consume(self, user_id, count=1):
+        """Списать дневные билеты. True — лимит не исчерпан."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT used FROM daily_usage WHERE user_id=? AND day=(date('now','localtime'))",
+                             (user_id,)).fetchone()
+            used = row[0] if row else 0
+            if used + count > self.DAILY_LIMIT:
+                return False
+            db.execute("INSERT INTO daily_usage(user_id,day,used) VALUES(?,?,?) "
+                       "ON CONFLICT(user_id,day) DO UPDATE SET used=used+excluded.used",
+                       (user_id, time.strftime("%Y-%m-%d"), count))
+            return True
 
     def admin_stats(self):
         now = int(time.time())

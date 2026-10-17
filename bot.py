@@ -200,7 +200,8 @@ GREETING = (
     "будто сам Пушкин смотрит через плечо. "
     "Убирает чужие ФИО, лишние строки и блоки Пушкинской карты, "
     "сохраняет QR-коды, даты, места и цену.\n\n"
-    "Пришли PDF или ZIP с билетами — верну перепечатанные файлы прямо в чат.\n\n"
+    "Пришли PDF или ZIP с билетами — верну перепечатанные файлы прямо в чат.\n"
+    f"🎁 Каждый день — 2 билета бесплатно. Без лимита — с абонементом.\n\n"
     f"Абонемент: {CONFIG['price_stars']} Telegram Stars за 30 дней, без лимита билетов. "
     "Автопродление каждые 30 дней; отмена: /cancel_subscription.\n"
     "📖 Как пользоваться: /help\n"
@@ -213,8 +214,8 @@ GREETING = (
 
 HELP_TEXT = (
     f"📖 КАК ПОЛЬЗОВАТЬСЯ · {BRAND_NAME}\n\n"
-    "1️⃣ Открой доступ: /subscribe (абонемент на 30 дней) или введи промокод: /promo КОД.\n"
-    "Ещё не пробовал? /trial — бесплатный пробный день.\n\n"
+    "1️⃣ Каждый день перепечатываю 2 билета бесплатно — просто пришли файл.\n"
+    "Без лимита: /subscribe (абонемент), /promo КОД или /trial (пробный день).\n\n"
     "2️⃣ Пришли PDF-билет документом (не фото) — или сразу несколько файлов подряд.\n\n"
     "3️⃣ Дед перепечатает билет: удалит чужие ФИО, лишние строки и блоки Пушкинской карты, "
     "проверит QR-коды, штрихкоды, даты, ряд, место, сектор и цену. Повреждённое не отправит.\n\n"
@@ -997,10 +998,15 @@ def send_profile(chat, user_id, username=None):
     price = settings.get("custom_price")
     hide = bool(settings.get("hide_price", 0))
     price_disp = f"{price} ₽" if price is not None else "исходная (/price)"
+    try:
+        free_line = f"🎁 Бесплатно сегодня: {get_store().daily_left(user_id)} из 2 билетов\n"
+    except Exception:
+        free_line = ""
     text = (
         f"👤 ПРОФИЛЬ · {BRAND_NAME}\n\n"
         f"🆔 Telegram ID: {user_id}\n"
         f"{access}\n"
+        f"{free_line}"
         f"🎫 Билетов перепечатано: {info.get('processed', 0)}\n"
     )
     if info.get("first_seen"):
@@ -1420,11 +1426,32 @@ def _process_auto_zip_batch(chat, uid, docs):
             _progress_error(progress, chat, str(error))
 
 
+def no_access_message(uid):
+    """Сообщение без доступа: учитываем бесплатные билеты дня."""
+    try:
+        left = get_store().daily_left(uid)
+    except Exception:
+        left = 0
+    if left > 0:
+        return send_text(uid,
+            f"🎁 Сегодня осталось {left} из 2 бесплатных билетов — просто пришли PDF.\n"
+            "Без лимита — с абонементом.",
+            {"inline_keyboard": [[
+                {"text": "✍️ Без лимита", "callback_data": "welcome:subscribe"},
+                {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}]]})
+    return send_text(uid,
+        "🎟 Бесплатные 2 билета на сегодня уже перепечатаны.\n"
+        "Лимит обновится завтра утром. А без лимита — прямо сейчас:",
+        {"inline_keyboard": [[
+            {"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
+            {"text": "🎟 Промокод", "callback_data": "welcome:promo"}]]})
+
+
 def process_incoming_document(msg, job_id=None):
     chat = msg["chat"]["id"]
     uid = msg["from"]["id"]
     if not has_access(uid):
-        return show_status(chat, uid)
+        return no_access_message(uid)
     collection = get_store().open_collection(uid, chat)
     collection_id = collection["id"] if collection else None
     if collection_id:
@@ -1476,7 +1503,7 @@ def process_document(msg, collection_id=None, job_id=None):
     chat = msg["chat"]["id"]
     uid = msg["from"]["id"]
     if not has_access(uid):
-        return show_status(chat, uid)
+        return no_access_message(uid)
     document = msg["document"]
     name = document.get("file_name") or "ticket.pdf"
     if not name.lower().endswith((".pdf", ".zip")) or (document.get("file_size") or 0) > MAX_BYTES:
@@ -1568,6 +1595,20 @@ def process_document(msg, collection_id=None, job_id=None):
         if not sent:
             return _progress_error(progress, chat, "Не удалось отправить файл. Отправьте исходный PDF ещё раз.")
         get_store().bump_processed(uid)
+        if not has_access(uid):
+            try:
+                left_after = get_store().daily_left(uid) - 1
+                get_store().daily_consume(uid)
+                if left_after > 0:
+                    progress.finish(f"Билет отправлен 🩷 Бесплатных осталось сегодня: {left_after}.")
+                else:
+                    progress.finish("Билет отправлен 🩷 Бесплатный лимит на сегодня исчерпан.")
+                    send_text(chat, "Это были бесплатные 2 билета на сегодня.\n"
+                                    "Без лимита — с абонементом:",
+                              {"inline_keyboard": [[{"text": "✍️ Оформить", "callback_data": "welcome:subscribe"}]]})
+            except Exception:
+                pass
+            return
         progress.finish("Билет отправлен 🩷 Можно присылать следующий." if info["changed"]
                         else "Исходный PDF отправлен 🩷 Автоматических правок нет.")
         if auto_preview:
@@ -2302,7 +2343,8 @@ def handle(msg, update_id=None, queued=False):
             return send_text(chat, "Формат: /grant ID_или_@username дни, /revoke ID_или_@username, /refund идентификатор_оплаты, /payments.")
     if command in {"/batch", "/done", "/cancelbatch"}:
         if not has_access(uid):
-            return show_status(chat, uid)
+            return send_text(chat, "📦 Пачки — для абонемента. Бесплатно — по 2 билета в день, по одному за раз.",
+                             {"inline_keyboard": [[{"text": "✍️ Без лимита", "callback_data": "welcome:subscribe"}]]})
         collection = get_store().open_collection(uid, chat)
         if command == "/batch":
             get_store().create_collection(uid, chat)
