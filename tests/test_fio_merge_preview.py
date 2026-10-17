@@ -339,7 +339,7 @@ class FioMergePreviewTests(unittest.TestCase):
         self.assertEqual(4500, meta.get("price"))
         caption = ticket_meta.format_single_ticket_caption(meta, info)
         self.assertIn("💰 Номинал: 4 500 ₽ (изменено ✏️)", caption)
-        self.assertIn("Мама обновила цену билета", caption)
+        self.assertIn("Дед перепечатал цену билета", caption)
 
         clean_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf")
         self.assertIn("4500р.pdf", clean_name)

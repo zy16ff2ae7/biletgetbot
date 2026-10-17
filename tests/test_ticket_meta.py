@@ -92,7 +92,7 @@ class TicketMetaTests(unittest.TestCase):
         self.assertIn("Балкон середина", caption)
         self.assertIn("ряд 4", caption)
         self.assertIn("место 14", caption)
-        self.assertIn("Мама очистила билет", caption)
+        self.assertIn("Дед перепечатал билет начисто", caption)
         self.assertNotIn("ФИО", caption)
 
     def test_format_batch_report_table(self):
@@ -135,7 +135,7 @@ class TicketMetaTests(unittest.TestCase):
             }
         ]
         caption = ticket_meta.format_batch_tg_caption(items, good=1, failed=0)
-        self.assertIn("Мама упаковала пачку: 1 готово", caption)
+        self.assertIn("Дед упаковал пачку: 1 готово", caption)
         self.assertIn("Чайка", caption)
         self.assertIn("р4 м14", caption)
         self.assertIn("3 000 ₽", caption)

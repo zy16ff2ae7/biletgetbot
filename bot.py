@@ -163,18 +163,59 @@ def date_label(timestamp):
     return datetime.fromtimestamp(timestamp, ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y %H:%M МСК")
 
 
+BRAND_NAME = "ДЕД РЕДАЧИТ"
+BRAND_AVATAR = Path(HERE, "brand", "ded.jpg")       # аватар: дед за пишущей машинкой
+WELCOME_IMAGE = Path(HERE, "brand", "welcome.jpg")  # приветственная картинка для /start
+
+
+def _photo_or_none(path):
+    try:
+        return path.read_bytes() if path.exists() else None
+    except OSError:
+        return None
+
+
 GREETING = (
-    "МАМА · Мама кормит\n\n"
-    "Привет! Я МАМА, из одной сети с ДОЧЕЙ. Пришли PDF или ZIP с билетами — верну обработанные файлы прямо в чат.\n"
-    "Сохранность кодов, даты, мест и цены проверяется перед отправкой.\n"
+    f"✍️ {BRAND_NAME}\n\n"
+    "Дед сел за пишущую машинку и перепечатывает билеты заново: "
+    "убирает чужие ФИО и лишние строки, сохраняет QR-коды, даты, места и цену.\n\n"
+    "Пришли PDF или ZIP с билетами — верну перепечатанные файлы прямо в чат.\n\n"
     f"Абонемент: {CONFIG['price_stars']} Telegram Stars за 30 дней, без лимита билетов. "
     "Автопродление каждые 30 дней; отмена: /cancel_subscription.\n"
-    "/subscribe — оформить; /subscription — статус.\n"
-    "/settings — меню настроек (ФИО, скрытие цены, формат пачек, авто-превью).\n"
-    "/fio — настроить ФИО зрителя (например, /fio Иванов Иван Иванович); /fio сброс — очистить.\n"
-    "/seat — изменить ряд/место/сектор (например: /seat Ряд 3 Место 12); /seat сброс — вернуть исходные места.\n"
+    "📖 Как пользоваться: /help\n"
+    "🎟 Промокод: /promo КОД · Пробный день: /trial\n"
+    "/settings — настройки (ФИО, цена, пачки, превью).\n"
     "/batch — собрать пачку PDF; /done — получить ZIP; /cancelbatch — отменить.\n"
-    "/id — ваш Telegram ID; /terms — условия; /paysupport — помощь с оплатой."
+    "/profile — профиль и статус доступа; /id — ваш Telegram ID.\n"
+    "/terms — условия; /paysupport — помощь с оплатой."
+)
+
+HELP_TEXT = (
+    f"📖 КАК ПОЛЬЗОВАТЬСЯ · {BRAND_NAME}\n\n"
+    "1️⃣ Открой доступ: /subscribe (абонемент на 30 дней) или введи промокод: /promo КОД.\n"
+    "Ещё не пробовал? /trial — бесплатный пробный день.\n\n"
+    "2️⃣ Пришли PDF-билет документом (не фото) — или сразу несколько файлов подряд.\n\n"
+    "3️⃣ Дед перепечатает билет: удалит чужие ФИО и лишние строки, проверит QR-коды, "
+    "штрихкоды, даты, ряд, место, сектор и цену. Повреждённое не отправит.\n\n"
+    "4️⃣ Получишь чистый PDF. Под билетом — кнопки:\n"
+    "• 👤 ФИО зрителя — вписать своё имя\n"
+    "• ✏️ цена — перепечатать цену\n"
+    "• 🪑 ряд/место/сектор — пересадить зрителя\n"
+    "• 🎁 скрыть/показать цену\n"
+    "• 🖼 «До и После» — фото-превью\n"
+    "• ✂️ разбить многостраничный PDF на билеты\n\n"
+    "5️⃣ Пачка: пришли несколько PDF сразу или /batch → файлы → /done. "
+    "Верну ZIP с отчётом; формат пачек (ZIP / склейка / по одному) — в /settings.\n\n"
+    "6️⃣ Память деда: настройки хранятся, каждое следующее письмо печатается сразу.\n\n"
+    "Статус: /subscription · Профиль: /profile · Оплата: /paysupport"
+)
+
+ADMIN_PANEL_TEXT = (
+    f"🛠 АДМИН-ПАНЕЛЬ · {BRAND_NAME}\n\n"
+    "Статистика, оплаты, промокоды и рассылка — кнопками ниже.\n"
+    "Команды: /promogen КОД ДНИ АКТИВАЦИЙ — новый промокод,\n"
+    "/broadcast ТЕКСТ — рассылка всем пользователям,\n"
+    "/grant ID ДНИ, /revoke ID, /refund ID_оплаты, /payments, /payment_issues."
 )
 
 logging.basicConfig(
@@ -594,7 +635,7 @@ def download_file(file_id):
 
 
 def send_cleaned(chat, data, name, caption, cache_keys=(), reuse_id=None, reply_markup=None):
-    """Return True on delivery, None for an invalid reusable ID, False on failure."""
+    """Return delivered file_id (or True) on delivery, None on invalid reusable ID, False on failure."""
     started = time.monotonic()
     url = f"{API}/sendDocument"
     payload = {"chat_id": str(chat), "caption": caption[:1000]}
@@ -642,7 +683,7 @@ def send_cleaned(chat, data, name, caption, cache_keys=(), reuse_id=None, reply_
                     _remember_delivery(cache_keys, file_id or reuse_id, caption)
                     log.info("File delivered: %.3fs, %d bytes; mode=%s",
                              time.monotonic() - started, len(data), mode)
-                    return True
+                    return file_id or True
                 description = str(response.get("description", ""))
                 log.warning("sendDocument: %s", _safe_error(description))
                 invalid_id = (response.get("error_code") == 400 and reuse_id
@@ -823,8 +864,8 @@ def subscribe(chat, user_id):
     invoice = get_store().invoice(user_id, CONFIG["price_stars"])
     url = invoice["url"]
     if not url:
-        url = tg("createInvoiceLink", title="МАМА: абонемент на месяц",
-                 description="МАМА — мама кормит. 30 дней без лимита билетов. PDF и ZIP, проверка кодов и полей. Автопродление; отмена /cancel_subscription.",
+        url = tg("createInvoiceLink", title="ДЕД РЕДАЧИТ: абонемент на месяц",
+                 description="Дед перепечатывает билеты начисто: 30 дней без лимита билетов. PDF и ZIP, проверка кодов и полей. Автопродление; отмена /cancel_subscription.",
                  payload=invoice["payload"], provider_token="", currency="XTR",
                  prices=[{"label": "30 дней", "amount": invoice["price"]}], subscription_period=PERIOD)
         if not url:
@@ -844,7 +885,204 @@ def show_status(chat, user_id):
         if invoice and not invoice["canceled"]:
             text += "\nАвтопродление включено. Отмена: /cancel_subscription."
         return send_text(chat, text)
-    return send_text(chat, "Абонемент не активен. Оформить: /subscribe.")
+    return send_text(chat, "Абонемент не активен. Оформить: /subscribe.", markup={"inline_keyboard": [[{"text": "✍️ Оформить", "callback_data": "welcome:subscribe"}, {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}]]})
+
+
+MAIN_MARKUP = {"inline_keyboard": [
+    [{"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
+     {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}],
+    [{"text": "📖 Как пользоваться", "callback_data": "welcome:help"},
+     {"text": "👤 Профиль", "callback_data": "welcome:profile"}],
+]}
+
+
+def send_help(chat, user_id=None):
+    return send_text(chat, HELP_TEXT, markup=None if (user_id and is_admin(user_id)) else MAIN_MARKUP)
+
+
+def send_welcome(chat, user_id):
+    photo = _photo_or_none(WELCOME_IMAGE)
+    caption = GREETING
+    if photo:
+        payload = {"chat_id": str(chat), "caption": caption[:1000], "reply_markup": json.dumps(MAIN_MARKUP)}
+        try:
+            r = http_session().post(f"{API}/sendPhoto",
+                                    files={"photo": ("welcome.jpg", io.BytesIO(photo), "image/jpeg")},
+                                    data=payload, timeout=(10, 60))
+            if r.json().get("ok"):
+                return True
+        except (requests.RequestException, ValueError) as e:
+            log.warning("sendPhoto welcome: %s", _safe_error(e))
+    return send_text(chat, caption, markup=MAIN_MARKUP)
+
+
+def send_profile(chat, user_id, username=None):
+    try:
+        status = get_store().status(user_id)
+        info = get_store().user_info(user_id)
+        settings = _user_settings(user_id)
+    except Exception:
+        return send_text(chat, "Профиль временно недоступен. Попробуйте позже.")
+    if status["active"]:
+        access = "🎟 Доступ: активен до " + date_label(status["expires"])
+    elif is_admin(user_id):
+        access = "🛠 Доступ: администраторский, постоянный"
+    else:
+        access = "🎟 Доступ: не активен — /subscribe или /promo КОД"
+    fio = settings.get("fio")
+    price = settings.get("custom_price")
+    hide = bool(settings.get("hide_price", 0))
+    price_disp = f"{price} ₽" if price is not None else "исходная (/price)"
+    text = (
+        f"👤 ПРОФИЛЬ · {BRAND_NAME}\n\n"
+        f"🆔 Telegram ID: {user_id}\n"
+        f"{access}\n"
+        f"🎫 Билетов перепечатано: {info.get('processed', 0)}\n"
+    )
+    if info.get("first_seen"):
+        text += f"📅 В машинке с: {date_label(info['first_seen'])}\n"
+    text += (
+        "\n⚙️ Настройки:\n"
+        f"• ФИО зрителя: {fio or '— не задано (/fio)'}\n"
+        f"• Цена на билете: {price_disp}\n"
+        f"• Отображение цены: {'скрыта 🎁' if hide else 'показывается'}\n"
+    )
+    markup = {"inline_keyboard": []}
+    if not status["active"] and not is_admin(user_id):
+        markup["inline_keyboard"] = [
+            [{"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
+             {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}],
+            [{"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"}],
+        ]
+    photo = _photo_or_none(BRAND_AVATAR)
+    if photo:
+        payload = {"chat_id": str(chat), "caption": text[:1000], "reply_markup": json.dumps(markup)}
+        try:
+            r = http_session().post(f"{API}/sendPhoto",
+                                    files={"photo": ("ded.jpg", io.BytesIO(photo), "image/jpeg")},
+                                    data=payload, timeout=(10, 60))
+            if r.json().get("ok"):
+                return True
+        except (requests.RequestException, ValueError) as e:
+            log.warning("sendPhoto profile: %s", _safe_error(e))
+    return send_text(chat, text, markup=markup or None)
+
+
+def cmd_trial(chat, user_id):
+    if is_admin(user_id):
+        return send_text(chat, "У вас постоянный администраторский доступ.")
+    status = get_store().status(user_id)
+    if status["active"]:
+        return show_status(chat, user_id)
+    try:
+        expires, created = get_store().grant_trial(user_id, days=1)
+    except Exception:
+        return send_text(chat, "Не удалось выдать пробный день. Попробуйте позже.")
+    if created:
+        return send_text(chat, "🎁 Пробный день активирован! Доступ до " + date_label(expires)
+                         + ".\nПришлите PDF — дед начнёт перепечатывать.")
+    return send_text(chat, "Пробный день уже использовался. Оформить абонемент: /subscribe.")
+
+
+def cmd_promo(chat, user_id, arg):
+    if not arg:
+        return send_text(chat, "🎟 Формат: /promo КОД\nПромокоды выдаёт администратор бота.")
+    try:
+        expires, days = get_store().promo_redeem(user_id, arg)
+    except ValueError as error:
+        return send_text(chat, f"🚫 Промокод не принят: {error}")
+    except Exception:
+        return send_text(chat, "Не удалось активировать промокод. Попробуйте позже.")
+    return send_text(chat, f"🎟 Промокод принят: +{days} дн. Доступ до " + date_label(expires) + ".")
+
+
+def admin_stats_text():
+    try:
+        s = get_store().admin_stats()
+    except Exception:
+        return "Статистика временно недоступна."
+    return (
+        f"📊 СТАТИСТИКА · {BRAND_NAME}\n\n"
+        f"Пользователей: {s['users_total']} (+{s['users_week']} за 7 дней)\n"
+        f"Доступ активен: {s['active_now']}\n"
+        f"Оплачено: {s['paid_stars']} Stars · возвратов: {s['refunded_stars']} Stars\n"
+        f"Билетов перепечатано: {s['processed_total']}\n"
+        f"Промокодов: {s['promos_active']} активных из {s['promos_total']}\n"
+        f"Инцидентов оплат: {s['incidents']}"
+    )
+
+
+def admin_panel_markup():
+    return {"inline_keyboard": [
+        [{"text": "📊 Статистика", "callback_data": "adm:stats"},
+         {"text": "💳 Последние оплаты", "callback_data": "adm:payments"}],
+        [{"text": "🎟 Промокоды", "callback_data": "adm:promos"},
+         {"text": "⚠️ Инциденты оплат", "callback_data": "adm:incidents"}],
+        [{"text": "📣 Как разослать объявление", "callback_data": "adm:broadcast_hint"}],
+        [{"text": "🔄 Обновить", "callback_data": "adm:refresh"}],
+    ]}
+
+
+def send_admin_panel(chat):
+    return send_text(chat, ADMIN_PANEL_TEXT, markup=admin_panel_markup())
+
+
+def admin_payments_text():
+    rows = get_store().payments()
+    if not rows:
+        return "Оплат пока нет."
+    return "\n".join(f"ID {p['user_id']} | {p['amount']} Stars | {p['charge_id']} | возврат={p['refunded']}" for p in rows)
+
+
+def admin_promos_text():
+    rows = get_store().promo_list()
+    if not rows:
+        return ("Промокодов ещё нет. Создать:\n/promogen КОД ДНИ АКТИВАЦИЙ\n"
+                "Пример: /promogen THEATR2026 7 50 — 7 дней, 50 активаций, годен 30 дней.")
+    return "\n".join(
+        f"{p['code']}: +{p['days']} дн · {p['used']}/{p['uses_max']} активаций · "
+        f"годен до {date_label(p['valid_until'])}" for p in rows)
+
+
+def broadcast_text(chat, admin_id, message_text):
+    body = message_text.strip()
+    if not body:
+        return send_text(chat, "Формат: /broadcast ТЕКСТ — сообщение придёт всем пользователям бота.")
+    recipients = get_store().all_user_ids()
+    send_text(chat, f"📣 Рассылка запущена: {len(recipients)} получателей.")
+    delivered = failed = 0
+    for index, uid in enumerate(recipients, 1):
+        if send_text(uid, "📣 " + body):
+            delivered += 1
+        else:
+            failed += 1
+        if index % 20 == 0:
+            time.sleep(1)  # Telegram: не более ~30 сообщений в секунду на бота
+    return send_text(chat, f"📣 Рассылка завершена: доставлено {delivered}, не доставлено {failed}.")
+
+
+def set_my_commands():
+    commands = [
+        {"command": "start", "description": "Запустить деда"},
+        {"command": "help", "description": "Как пользоваться"},
+        {"command": "profile", "description": "Профиль и статус доступа"},
+        {"command": "subscribe", "description": "Оформить абонемент"},
+        {"command": "subscription", "description": "Статус доступа"},
+        {"command": "trial", "description": "Бесплатный пробный день"},
+        {"command": "promo", "description": "Активировать промокод"},
+        {"command": "settings", "description": "Настройки билетов"},
+        {"command": "fio", "description": "ФИО зрителя на билетах"},
+        {"command": "price", "description": "Цена на билете"},
+        {"command": "seat", "description": "Ряд, место, сектор"},
+        {"command": "batch", "description": "Собрать пачку PDF"},
+        {"command": "id", "description": "Мой Telegram ID"},
+        {"command": "paysupport", "description": "Помощь с оплатой"},
+    ]
+    try:
+        tg("setMyCommands", commands=commands)
+        log.info("command menu published")
+    except Exception:
+        log.warning("setMyCommands failed", exc_info=True)
 
 
 def payment_message(chat, user_id, payment):
@@ -1025,6 +1263,7 @@ def _send_batch_result(chat, result, progress, retry_message, uid=None):
     if not send_cleaned(chat, result["data"], zip_name, caption, reply_markup=reply_markup):
         _progress_error(progress, chat, retry_message)
         return False
+    get_store().bump_processed(uid, result["ok"])
     progress.finish(f"ZIP отправлен 🩷 Готовых PDF: {result['ok']} · ошибок: {result['failed']}.")
     if auto_preview and result.get("ok", 0) > 0:
         try:
@@ -1083,9 +1322,12 @@ def _process_auto_zip_batch(chat, uid, docs):
             if data:
                 items.append((dname, data))
 
+        missing = len(docs) - len(items)
         if not items:
             _progress_error(progress, chat, "Не удалось скачать файлы из пачки. Отправьте их ещё раз.")
             return
+        if missing:
+            send_text(chat, f"⚠️ Не удалось скачать {missing} из {len(docs)} файлов — они не войдут в пачку.")
 
         try:
             u_settings = _user_settings(uid)
@@ -1246,6 +1488,7 @@ def process_document(msg, collection_id=None, job_id=None):
             sent = send_cleaned(chat, result, out_name, caption, cache_keys=cache_keys, reply_markup=markup)
         if not sent:
             return _progress_error(progress, chat, "Не удалось отправить файл. Отправьте исходный PDF ещё раз.")
+        get_store().bump_processed(uid)
         progress.finish("Билет отправлен 🩷 Можно присылать следующий." if info["changed"]
                         else "Исходный PDF отправлен 🩷 Автоматических правок нет.")
         if auto_preview:
@@ -1256,7 +1499,7 @@ def process_document(msg, collection_id=None, job_id=None):
 
 def handle_callback_query(cb):
     data = cb.get("data") or ""
-    if not any(data == x or data.startswith(f"{x}:") for x in ("unpack", "merge", "preview", "compare", "price", "fio", "seat", "set", "toggleprice", "split")):
+    if not any(data == x or data.startswith(f"{x}:") for x in ("unpack", "merge", "preview", "compare", "price", "fio", "seat", "set", "toggleprice", "split", "welcome", "adm")):
         return
 
     sender = cb.get("from") or {}
@@ -1266,6 +1509,45 @@ def handle_callback_query(cb):
     msg_id = msg.get("message_id")
     if not chat or not uid:
         return
+
+    if data.startswith("welcome:"):
+        action = data.split(":", 1)[1]
+        if action == "subscribe":
+            return subscribe(chat, uid)
+        if action == "trial":
+            return cmd_trial(chat, uid)
+        if action == "help":
+            return send_help(chat, uid)
+        if action == "profile":
+            return send_profile(chat, uid, sender.get("username"))
+        if action == "promo":
+            get_store().set_user_state(uid, "waiting_promo")
+            return send_text(chat, "🎟 Отправьте промокод одним сообщением (например: THEATR2026).\n(для отмены напишите «отмена»)")
+        return
+
+    if data.startswith("adm:"):
+        if not is_admin(uid, sender.get("username")):
+            return send_text(chat, "Эта панель доступна администратору.")
+        action = data.split(":", 1)[1]
+        if action == "stats":
+            body = admin_stats_text()
+        elif action == "payments":
+            body = admin_payments_text()
+        elif action == "promos":
+            body = admin_promos_text()
+        elif action == "incidents":
+            rows = get_store().payment_incidents()
+            body = "\n".join(f"Событие {p['update_id']} | ID {p['user_id']} | {p['reason']}" for p in rows) or "Ошибок подтверждения оплаты нет."
+        elif action == "broadcast_hint":
+            body = ("Формат: /broadcast ТЕКСТ\nСообщение с префиксом 📣 придёт всем пользователям бота.\n"
+                    "Бот сам соблюдает паузу, чтобы не упереться в лимит Telegram.")
+        else:  # refresh
+            return send_admin_panel(chat)
+        if msg_id:
+            return tg("editMessageText", chat_id=chat, message_id=msg_id, text=body[:4000],
+                      reply_markup=admin_panel_markup())
+        return send_text(chat, body[:4000], markup=admin_panel_markup())
+
     if not has_access(uid):
         return show_status(chat, uid)
 
@@ -1371,7 +1653,11 @@ def handle_callback_query(cb):
                 sent = send_cleaned(chat, p_data, p_name, p_caption, reply_markup=p_markup)
                 if sent:
                     sent_count += 1
+                    if isinstance(sent, str):
+                        # Кнопки билета ведут к выданному файлу, а не к исходнику.
+                        get_store().save_doc_token(p_token, sent)
                 time.sleep(0.3)
+            get_store().bump_processed(uid, sent_count)
             send_text(chat, f"Готово 🩷 Распаковано билетов: {sent_count} из {len(entries)}.")
         else:
             buf = io.BytesIO()
@@ -1437,11 +1723,14 @@ def handle_callback_query(cb):
             sent = send_cleaned(chat, pdf_data, clean_name, caption, reply_markup=markup)
             if sent:
                 sent_count += 1
+                if isinstance(sent, str):
+                    get_store().save_doc_token(token, sent)
             time.sleep(0.3)
 
         if msg_id:
             tg("editMessageReplyMarkup", chat_id=chat, message_id=msg_id, reply_markup={"inline_keyboard": []})
 
+        get_store().bump_processed(uid, sent_count)
         send_text(chat, f"Готово 🩷 Распаковано билетов: {sent_count} из {len(entries)}.")
         return
 
@@ -1720,6 +2009,10 @@ def handle(msg, update_id=None, queued=False):
         CONFIG["admin_ids"].append(uid)
     if get_store().claim_invite(username, uid):
         send_text(chat, "Вам выдан абонемент на 30 дней без оплаты. Статус: /subscription.")
+    try:
+        get_store().touch_user(uid, username)
+    except Exception:
+        pass
     text = (msg.get("text") or "").strip()
     command = text.split()[0].split('@')[0].lower() if text else ""
     if msg.get("successful_payment"):
@@ -1728,6 +2021,16 @@ def handle(msg, update_id=None, queued=False):
         refunded = msg["refunded_payment"]
         get_store().refund(uid, refunded["telegram_payment_charge_id"])
         return send_text(chat, "Возврат оплаты учтён. Статус доступа: /subscription.")
+    if command == "/start":
+        return send_welcome(chat, uid)
+    if command == "/help":
+        return send_help(chat, uid)
+    if command == "/profile":
+        return send_profile(chat, uid, username)
+    if command == "/trial":
+        return cmd_trial(chat, uid)
+    if command == "/promo":
+        return cmd_promo(chat, uid, text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) > 1 else "")
     if command == "/id":
         return send_text(chat, f"Ваш Telegram ID: {uid}")
     if command in {"/settings", "/menu"}:
@@ -1825,6 +2128,24 @@ def handle(msg, update_id=None, queued=False):
     if command == "/paysupport":
         return send_text(chat, "Свяжитесь с администратором по вопросам обработки билетов, оплаты или возврата.",
                          {"inline_keyboard": [[{"text": "Администратор", "url": "tg://user?id="+str(CONFIG['admin_ids'][0])}]]})
+    if command in {"/admin", "/panel"}:
+        if not is_admin(uid, username):
+            return send_text(chat, "Эта команда доступна администратору.")
+        return send_admin_panel(chat)
+    if command == "/promogen":
+        if not is_admin(uid, username):
+            return send_text(chat, "Эта команда доступна администратору.")
+        parts = text.split()
+        try:
+            code = get_store().promo_create(parts[1], int(parts[2]), int(parts[3]) if len(parts) > 3 else 1, uid)
+        except (IndexError, ValueError) as error:
+            hint = str(error) if isinstance(error, ValueError) and str(error) else ""
+            return send_text(chat, "Формат: /promogen КОД ДНИ [АКТИВАЦИИ]. " + hint)
+        return send_text(chat, f"🎟 Промокод {code} создан. Активация: /promo {code}")
+    if command == "/broadcast":
+        if not is_admin(uid, username):
+            return send_text(chat, "Эта команда доступна администратору.")
+        return broadcast_text(chat, uid, text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else "")
     if command in {"/grant", "/revoke", "/payments", "/refund", "/payment_issues"}:
         if not is_admin(uid, username):
             return send_text(chat, "Эта команда доступна администратору.")
@@ -1888,6 +2209,11 @@ def handle(msg, update_id=None, queued=False):
         get_store().collection_state(collection["id"], "sealed")
         return _finish_collection(chat, uid, collection["id"])
     state = get_store().get_user_state(uid)
+    if state == "waiting_promo" and text and not command.startswith("/"):
+        get_store().set_user_state(uid, None)
+        if text.lower() in {"отмена", "cancel"}:
+            return send_text(chat, "Ввод промокода отменён.")
+        return cmd_promo(chat, uid, text.strip())
     if state == "waiting_fio_settings" and text and not command.startswith("/"):
         get_store().set_user_state(uid, None)
         if text.lower() in {"отмена", "cancel"}:
@@ -2055,9 +2381,12 @@ def handle(msg, update_id=None, queued=False):
 
 
 def worker_loop():
+    last_cleanup = 0.0
     while True:
         try:
-            cleanup_collections()
+            if time.monotonic() - last_cleanup >= 60:
+                cleanup_collections()
+                last_cleanup = time.monotonic()
             job = get_store().claim()
             if not job:
                 _work_ready.wait(0.5)
@@ -2167,9 +2496,15 @@ def loop():
     if spool_dir.exists():
         shutil.rmtree(spool_dir, ignore_errors=True)
     spool_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    threading.Thread(target=worker_loop, daemon=True).start()
+    try:
+        workers = max(1, int(os.environ.get("BILET_WORKERS", "2")))
+    except ValueError:
+        workers = 2
+    for _ in range(workers):
+        threading.Thread(target=worker_loop, daemon=True).start()
+    set_my_commands()
     offset = 0
-    log.info("subscription bot started")
+    log.info("subscription bot started (workers=%d)", workers)
     while True:
         updates = tg("getUpdates", offset=offset, timeout=LONG_POLL, allowed_updates=["message", "pre_checkout_query", "callback_query"])
         if updates is None:
@@ -2177,7 +2512,11 @@ def loop():
             continue
         for update in updates:
             ident = update["update_id"]
-            dispatch_update(update)
+            # Один плохой update не должен убивать polling всего бота.
+            try:
+                dispatch_update(update)
+            except Exception:
+                log.exception("dispatch of update %s failed", ident)
             offset = ident + 1
 
 

@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS users (
+  user_id INTEGER PRIMARY KEY, username TEXT,
+  first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL,
+  processed INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS promo_codes (
+  code TEXT PRIMARY KEY, days INTEGER NOT NULL CHECK(days BETWEEN 1 AND 3650),
+  uses_max INTEGER NOT NULL CHECK(uses_max BETWEEN 1 AND 100000),
+  used INTEGER NOT NULL DEFAULT 0,
+  created INTEGER NOT NULL, valid_until INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen);
+PRAGMA user_version=3;
