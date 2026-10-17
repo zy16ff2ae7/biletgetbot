@@ -8,7 +8,7 @@ mkdir -p "$bilet_work"
 bilet_package=$(mktemp -d "$bilet_work/package.XXXXXX")
 trap 'rm -rf "$bilet_package"' EXIT
 mkdir -p "$bilet_package/biletnaya" "$bilet_package/tests"
-cp "$bilet_root/"{bot.py,batches.py,ticket_meta.py,seat_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,subscription.json,requirements.txt,README.md} "$bilet_package/"
+cp "$bilet_root/"{bot.py,batches.py,ticket_meta.py,seat_tools.py,eraser_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,subscription.json,requirements.txt,README.md} "$bilet_package/"
 cp -R "$bilet_root/migrations" "$bilet_package/"
 cp "$bilet_root/tests/"test_*.py "$bilet_package/tests/"
 cp "$bilet_editor/"{server.py,raster.py,requirements.txt,index.html} "$bilet_package/biletnaya/"
