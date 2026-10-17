@@ -80,8 +80,29 @@ PDF принимаются в чате, результат возвращает�
 
 `state/subscriptions.sqlite3` — подписки, оплаты, возвраты, очередь,
 пользователи (профиль, счётчик билетов), промокоды. WAL-режим включён
-автоматически; схема обновляется миграциями `migrations/001–003`.
+автоматически; схема обновляется миграциями `migrations/001–005`
+(применяются автоматически при старте бота).
 Файл базы нельзя включать в пакет обновления или откатывать после приёма новых платежей.
+
+### Восстановление из бэкапа
+
+Ежедневно в 04:20 МСК таймер `bilet-backup.timer` снимает слепок `state/`
+(sqlite3 backup API, консистентно при работающем боте) в
+`/opt/bilet-bot/backups/state-ГГГГММДД-ЧЧММСС/`; хранятся последние 14
+(`BILET_BACKUP_KEEP`). Деплой дополнительно кладёт копию базы в каталог
+бэкапа рядом с кодом (`backup=…` в выводе).
+
+Восстановление:
+
+```bash
+systemctl stop bilet-bot
+cp /opt/bilet-bot/backups/state-20260101-042000/subscriptions.sqlite3 \
+   /opt/bilet-bot/state/subscriptions.sqlite3
+systemctl start bilet-bot
+```
+
+Проверить таймер: `systemctl list-timers bilet-backup.timer`;
+последний прогон: `journalctl -u bilet-backup.service -n 20`.
 
 ## Билеты и пачки
 

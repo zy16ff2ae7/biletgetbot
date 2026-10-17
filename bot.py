@@ -34,21 +34,12 @@ from delivery_cache import DeliveryCache, key_for
 from url_delivery import Publisher
 from telegram_file_transport import TelegramFileTransport, MetadataAPIError, MetadataUnavailable
 from subscriptions import SubscriptionStore, PERIOD
+from config import CONFIG
+from texts import (BRAND_NAME, BRAND_AVATAR, WELCOME_ANIMATION, FREE_DAILY,
+                   tickets_word, FREE_BATCH_TEXT, FREE_BATCH_KB,
+                   GREETING, HELP_TEXT, ADMIN_PANEL_TEXT)
 
 # Дневной бесплатный лимит (env BILET_DAILY_FREE) — чтобы копирайты не разошлись с ним.
-FREE_DAILY = SubscriptionStore.DAILY_LIMIT
-
-
-def tickets_word(count):
-    """Русская плюрализация: 1 билет / 2 билета / 5 билетов."""
-    if 11 <= count % 100 <= 14 or count % 10 in (0, 5, 6, 7, 8, 9):
-        return "билетов"
-    return "билет" if count % 10 == 1 else "билета"
-
-
-FREE_BATCH_TEXT = (f"📦 Пачки — для абонемента. Бесплатно — по {FREE_DAILY} "
-                   f"{tickets_word(FREE_DAILY)} в день, по одному за раз.")
-FREE_BATCH_KB = {"inline_keyboard": [[{"text": "✍️ Без лимита", "callback_data": "welcome:subscribe"}]]}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Редактор «Билетная»: по умолчанию ~/Билетная, но на VDS его кладут куда
@@ -72,12 +63,6 @@ API = "https://api.telegram.org/bot" + BOT_TOKEN
 
 MAX_BYTES = 20 * 1024 * 1024          # лимит Telegram на скачивание файла ботом
 LONG_POLL = 30
-CONFIG = json.loads(Path(HERE, "subscription.json").read_text())
-if (type(CONFIG.get("price_stars")) is not int or not 1 <= CONFIG["price_stars"] <= 10000
-        or CONFIG.get("period_days") != 30 or CONFIG.get("unlimited") is not True
-        or not CONFIG.get("admin_ids")
-        or not all(type(uid) is int and uid > 0 for uid in CONFIG["admin_ids"])):
-    raise RuntimeError("Invalid subscription configuration")
 STATE_DIR = Path(os.environ.get("BILET_STATE_DIR") or Path(HERE, "state"))
 _store = None
 _store_lock = threading.Lock()
@@ -196,9 +181,9 @@ def date_label(timestamp):
     return datetime.fromtimestamp(timestamp, ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y %H:%M МСК")
 
 
-BRAND_NAME = "ДЕД РЕДАЧИТ"
-BRAND_AVATAR = Path(HERE, "brand", "ded.jpg")       # аватар: дед за пишущей машинкой
-WELCOME_ANIMATION = Path(HERE, "brand", "welcome.mp4")  # динамичное приветствие
+_WELCOME_MEDIA_ID = None  # кеш file_id, чтобы не перезагружать ролик
+
+
 _WELCOME_MEDIA_ID = None  # кеш file_id, чтобы не перезагружать ролик
 
 
@@ -209,53 +194,6 @@ def _photo_or_none(path):
         return None
 
 
-GREETING = (
-    f"✍️ {BRAND_NAME}\n\n"
-    "Дед сел за пишущую машинку и перепечатывает билеты заново — так аккуратно, "
-    "будто сам Пушкин смотрит через плечо. "
-    "Убирает чужие ФИО, лишние строки и блоки Пушкинской карты, "
-    "сохраняет QR-коды, даты, места и цену.\n\n"
-    "Пришли PDF-билет — верну перепечатанный файл прямо в чат. Пачки и ZIP — с абонементом.\n"
-    f"🎁 Каждый день — {FREE_DAILY} {tickets_word(FREE_DAILY)} бесплатно. Без лимита — с абонементом.\n\n"
-    f"Абонемент: {CONFIG['price_stars']} Telegram Stars за 30 дней, без лимита билетов. "
-    "Автопродление каждые 30 дней; отмена: /cancel_subscription.\n"
-    "📖 Как пользоваться: /help\n"
-    "🎟 Промокод: /promo КОД · Пробный день: /trial\n"
-    "/settings — настройки (ФИО, цена, пачки, превью).\n"
-    "/batch — собрать пачку PDF; /done — получить ZIP; /cancelbatch — отменить.\n"
-    "/profile — профиль и статус доступа; /id — ваш Telegram ID.\n"
-    "/terms — условия; /paysupport — помощь с оплатой."
-)
-
-HELP_TEXT = (
-    f"📖 КАК ПОЛЬЗОВАТЬСЯ · {BRAND_NAME}\n\n"
-    f"1️⃣ Каждый день перепечатываю {FREE_DAILY} {tickets_word(FREE_DAILY)} бесплатно — просто пришли файл.\n"
-    "Без лимита: /subscribe (абонемент), /promo КОД или /trial (пробный день).\n\n"
-    "2️⃣ Пришли PDF-билет документом (не фото) — или сразу несколько файлов подряд.\n\n"
-    "3️⃣ Дед перепечатает билет: удалит чужие ФИО, лишние строки и блоки Пушкинской карты, "
-    "проверит QR-коды, штрихкоды, даты, ряд, место, сектор и цену. Повреждённое не отправит.\n\n"
-    "4️⃣ Получишь чистый PDF. Под билетом — кнопки:\n"
-    "• 👤 ФИО зрителя — вписать своё имя\n"
-    "• ✏️ цена — перепечатать цену\n"
-    "• 🪑 ряд/место/сектор — пересадить зрителя\n"
-    "• 🎁 скрыть/показать цену\n"
-    "• 🖼 «До и После» — фото-превью\n"
-    "• ✂️ разбить многостраничный PDF на билеты\n\n"
-    "5️⃣ Пачка: пришли несколько PDF сразу или /batch → файлы → /done. "
-    "Верну ZIP с отчётом; формат пачек (ZIP / склейка / по одному) — в /settings.\n\n"
-    "6️⃣ Память деда: настройки хранятся, каждое следующее письмо печатается сразу.\n\n"
-    "Статус: /subscription · Профиль: /profile · Оплата: /paysupport\n\n"
-    "Мой дядя самых честных правил… доверил деду свои билеты. "
-    "Теперь ваша очередь ✍️"
-)
-
-ADMIN_PANEL_TEXT = (
-    f"🛠 АДМИН-ПАНЕЛЬ · {BRAND_NAME}\n\n"
-    "Статистика, оплаты, промокоды и рассылка — кнопками ниже.\n"
-    "Команды: /promogen КОД ДНИ АКТИВАЦИЙ — новый промокод,\n"
-    "/broadcast ТЕКСТ — рассылка всем пользователям,\n"
-    "/grant ID ДНИ, /revoke ID, /refund ID_оплаты, /payments, /payment_issues."
-)
 
 logging.basicConfig(
     level=logging.INFO,
