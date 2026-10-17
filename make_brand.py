@@ -46,8 +46,8 @@ def cover_crop(img, w, h, cx=0.5, cy=0.5, zoom=1.0):
     return img.crop((int(left), int(top), int(left + box_w), int(top + box_h))).resize((w, h), Image.LANCZOS)
 
 
-def base_frame(zoom, cx, cy, shake=(0, 0)):
-    img = cover_crop(SRC, W, H, cx, cy, zoom)
+def base_frame(zoom, cx, cy, shake=(0, 0), src=None):
+    img = cover_crop(src or SRC, W, H, cx, cy, zoom)
     if shake != (0, 0):
         img = img.transform((W, H), Image.AFFINE, (1, 0, shake[0], 0, 1, shake[1]))
     return img
@@ -153,6 +153,11 @@ def draw_title(img, visible_chars, caret_on, with_subtitle):
 
 
 SRC = Image.open(BASE).convert("RGB")
+SCENE_LAUGH_PATH = BRAND / "key_laugh.jpg"   # дед хохочет
+SCENE_WIN_PATH = BRAND / "key_win.jpg"       # дед вскидывает билет
+SOURCES = {"type": SRC,
+           "laugh": Image.open(SCENE_LAUGH_PATH).convert("RGB"),
+           "win": Image.open(SCENE_WIN_PATH).convert("RGB")}
 
 # --- статичная обложка -------------------------------------------------------
 poster = base_frame(1.04, 0.54, 0.52)
@@ -162,26 +167,96 @@ poster = draw_title(poster, len(TITLE), False, True)
 poster = ImageEnhance.Contrast(poster).enhance(1.03)
 poster.save(BRAND / "welcome.jpg", quality=90)
 
-# --- аватар ------------------------------------------------------------------
-portrait = cover_crop(SRC, 800, 800, cx=0.63, cy=0.50, zoom=1.5)
-portrait = ImageEnhance.Color(portrait).enhance(1.05)
+# --- аватар: триумфальный кадр с поднятым билетом ----------------------------
+portrait = cover_crop(SOURCES["win"], 800, 800, cx=0.63, cy=0.52, zoom=1.45)
+portrait = ImageEnhance.Color(portrait).enhance(1.06)
+portrait = ImageEnhance.Sharpness(portrait).enhance(1.15)
 portrait.save(BRAND / "ded.jpg", quality=90)
 
-# --- кадры видео -------------------------------------------------------------
+# --- кадры видео: три сцены с эмоциями деда ---------------------------------
+def scene_of(f):
+    """(ключ сцены, локальный номер кадра) по глобальному кадру."""
+    if f <= 27:
+        return "type", f
+    if f <= 30:
+        return "flash1", f - 28          # вспышка-переход
+    if f <= 45:
+        return "laugh", f - 31
+    if f <= 47:
+        return "flash2", f - 46          # вторая вспышка
+    return "win", f - 48
+
+
+class Sparks:
+    """Розовые искры вокруг поднятого билета в финальной сцене."""
+
+    def __init__(self, count=20, seed=3):
+        rng = np.random.default_rng(seed)
+        self.angle = rng.uniform(-2.4, -0.7, count)      # веер вверх
+        self.speed = rng.uniform(0.010, 0.030, count)
+        self.size = rng.uniform(1.5, 3.6, count)
+        self.phase = rng.uniform(0, 2 * np.pi, count)
+        self.count = count
+
+    def draw(self, img, local):
+        overlay = Image.new("RGB", (W, H), (0, 0, 0))
+        d = ImageDraw.Draw(overlay)
+        ox, oy = 0.72 * W, 0.16 * H                      # точка поднятого билета
+        for i in range(self.count):
+            t = (local / 10 + self.phase[i]) % 1.6       # цикл разлёта
+            if t > 1.0:
+                continue
+            x = ox + np.cos(self.angle[i]) * self.speed[i] * t * W
+            y = oy + np.sin(self.angle[i]) * self.speed[i] * t * W + 0.012 * t * t * W
+            fade = max(0.0, 1.0 - t)
+            r = self.size[i] * (1 - 0.4 * t)
+            c = (int(255 * fade), int(170 * fade), int(205 * fade))
+            d.ellipse([x - r, y - r, x + r, y + r], fill=c)
+        return screen(img, overlay.filter(ImageFilter.GaussianBlur(0.7)))
+
+
+def flash_overlay(img, local):
+    """Короткая белая вспышка между сценами (3 кадра)."""
+    alpha = (230, 110, 35)[min(local, 2)]
+    return Image.blend(img, Image.new("RGB", (W, H), (255, 246, 230)), alpha / 255)
+
+
 tmp = HERE / "work" / "frames"
 tmp.mkdir(parents=True, exist_ok=True)
 dust = Dust()
+sparks = Sparks()
 TYPE_START = 6
 CHARS = len(TITLE)
 TYPE_FRAMES = 3
 for f in range(FRAMES):
-    zoom = 1.0 + 0.045 * (f / FRAMES)          # медленный наезд камеры
-    cx = 0.54 + 0.02 * (f / FRAMES)            # лёгкий дрейф к деду
-    shake = (1, -1) if f % 3 == 0 else ((-1, 1) if f % 3 == 1 else (0, 0))  # тряска машинки
-    frame = base_frame(zoom, cx, 0.52, shake)
+    scene, local = scene_of(f)
+    if scene == "flash1" or scene == "flash2":
+        frame = base_frame(1.05, 0.55, 0.52)
+        frame = draw_title(frame, CHARS, False, True)
+        frame = flash_overlay(frame, local)
+        frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
+        continue
+
+    if scene == "type":
+        zoom = 1.0 + 0.045 * (local / 28)
+        cx = 0.54 + 0.02 * (local / 28)
+        shake = (1, -1) if local % 3 == 0 else ((-1, 1) if local % 3 == 1 else (0, 0))
+    elif scene == "laugh":
+        zoom = 1.035 + 0.009 * np.sin(local * 0.5)       # «дыхание» камеры
+        cx = 0.54
+        shake = (0, -1) if local % 6 == 0 else (0, 0)    # плечи трясутся от смеха
+    else:  # win: панч-наезд и лёгкая вибрация триумфа
+        ease = min(1.0, local / 6)
+        zoom = 1.05 + 0.05 * (1 - (1 - ease) ** 3)
+        cx = 0.56
+        shake = (1, 0) if local % 4 == 0 else (0, 0)
+
+    frame = base_frame(zoom, cx, 0.52, shake, src=SOURCES[scene])
     pulse = 0.30 + 0.10 * np.sin(f * 0.45) + (0.06 if f % 12 < 2 else 0)
     frame = screen(frame, glow_layer(pulse))
     frame = dust.draw(frame, f)
+    if scene == "win":
+        frame = sparks.draw(frame, local)
     typed = max(0, min(CHARS, (f - TYPE_START) // TYPE_FRAMES + 1)) if f >= TYPE_START else 0
     caret = (f // 2) % 2 == 0
     frame = draw_title(frame, typed, caret, typed >= CHARS)
