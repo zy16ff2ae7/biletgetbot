@@ -177,7 +177,6 @@ GREETING = (
     "/seat — изменить ряд/место/сектор (например: /seat Ряд 3 Место 12); /seat сброс — вернуть исходные места.\n"
     "/pushkin — снять Пушкинскую карту с билета.\n"
     "/del — стереть любой лишний текст (например: /del Сервисный сбор); /del сброс — вернуть.\n"
-    "/avito — защищённое фото-превью со скрытыми кодами для Авито и соцсетей.\n"
     "/batch — собрать пачку PDF; /done — получить ZIP; /cancelbatch — отменить.\n"
     "/id — ваш Telegram ID; /terms — условия; /paysupport — помощь с оплатой."
 )
@@ -992,14 +991,13 @@ def _single_ticket_markup(token, hide_price=False, pages=1):
     else:
         price_toggle_btn = {"text": "🎁 Скрыть цену", "callback_data": f"toggleprice:{token}:1"}
     preview_btn = {"text": "🖼 Фото: До и После", "callback_data": f"compare:{token}"}
-    pushkin_btn = {"text": "🧹 Снять Пушкинскую", "callback_data": f"pushkin:{token}"}
-    avito_btn = {"text": "🛡 Для Авито", "callback_data": f"avito:{token}"}
+    pushkin_btn = {"text": "🧹 Снять Пушкинскую карту", "callback_data": f"pushkin:{token}"}
 
     rows = [
         [seat_btn],
         [fio_btn, price_edit_btn],
         [price_toggle_btn, preview_btn],
-        [pushkin_btn, avito_btn],
+        [pushkin_btn],
     ]
     if pages > 1:
         rows.append([{"text": f"✂️ Разбить на билеты ({pages} шт.)", "callback_data": f"split:{token}"}])
