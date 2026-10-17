@@ -1,0 +1,20 @@
+# systemd-юнит: cp bilet-bot.service /etc/systemd/system/ && systemctl enable --now bilet-bot
+[Unit]
+Description=biletgetbot (ДЕД РЕДАЧИТ) — Telegram ticket rewriter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/bilet-bot
+ExecStart=/opt/bilet-bot/.venv/bin/python /opt/bilet-bot/bot.py
+Restart=always
+RestartSec=5
+UMask=0077
+# Дневные лимиты и подписи времени — по МСК.
+Environment=TZ=Europe/Moscow
+# Environment=BILET_WORKERS=2
+# EnvironmentFile=-/opt/bilet-bot/.env
+
+[Install]
+WantedBy=multi-user.target

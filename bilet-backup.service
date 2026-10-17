@@ -1,0 +1,6 @@
+[Unit]
+Description=biletgetbot daily state backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/bilet-bot/scripts/backup-state.sh

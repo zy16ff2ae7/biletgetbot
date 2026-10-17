@@ -529,9 +529,9 @@ def format_single_ticket_caption(meta: dict[str, Any] | None, info: dict[str, An
     if not meta or not meta.get("title"):
         verified = info.get("verification", {}) if isinstance(info, dict) else {}
         return (
-            f"🩷 Мама приготовила билет. Проверены коды: {verified.get('readable_codes', 0)} · поля: {verified.get('fields', 0)}."
+            f"✍️ Дед перепечатал билет начисто. Проверены коды: {verified.get('readable_codes', 0)} · поля: {verified.get('fields', 0)}."
             if (isinstance(info, dict) and info.get("changed"))
-            else "🩷 Автоматических правок нет: возвращаю исходный PDF без изменений."
+            else "✍️ Автоматических правок нет: возвращаю исходный PDF без изменений."
         )
 
     lines = []
@@ -578,17 +578,17 @@ def format_single_ticket_caption(meta: dict[str, Any] | None, info: dict[str, An
 
     lines.append("")
     if isinstance(info, dict) and info.get("seat_info"):
-        lines.append("🩷 Мама пересадила зрителя на новые места 🪑")
+        lines.append("✍️ Дед пересадил зрителя на новые места 🪑")
     elif isinstance(info, dict) and info.get("custom_price"):
-        lines.append("🩷 Мама обновила цену билета ✏️")
+        lines.append("✍️ Дед перепечатал цену билета ✏️")
     elif isinstance(info, dict) and info.get("spectator_fio"):
-        lines.append(f"🩷 Мама добавила зрителя {info['spectator_fio']}")
+        lines.append(f"✍️ Дед вписал зрителя {info['spectator_fio']}")
     elif isinstance(info, dict) and info.get("hide_price"):
-        lines.append("🩷 Мама скрыла цену билета 🎁")
+        lines.append("✍️ Дед скрыл цену билета 🎁")
     elif isinstance(info, dict) and info.get("changed"):
-        lines.append("🩷 Мама очистила билет")
+        lines.append("✍️ Дед перепечатал билет начисто")
     else:
-        lines.append("🩷 Исходный PDF без изменений")
+        lines.append("✍️ Исходный PDF без изменений")
 
     return "\n".join(lines)
 
@@ -630,7 +630,7 @@ def format_batch_report_table(items_meta: list[dict[str, Any]]) -> str:
     """Format structured plaintext table for report.txt inside ZIP."""
     lines = [
         "=" * 88,
-        "РЕЕСТР ОБРАБОТАННЫХ БИЛЕТОВ (МАМА · @biletgetbot)",
+        "РЕЕСТР ОБРАБОТАННЫХ БИЛЕТОВ (ДЕД РЕДАЧИТ · @biletgetbot)",
         "=" * 88,
         "",
         f"{'№':<3} | {'Спектакль':<24} | {'Театр':<16} | {'Дата':<10} | {'Места':<22} | {'Номинал':<10} | {'Имя файла'}",
@@ -686,7 +686,7 @@ def format_batch_report_table(items_meta: list[dict[str, Any]]) -> str:
 
 def format_batch_tg_caption(items_meta: list[dict[str, Any]], good: int, failed: int) -> str:
     """Format concise summary for Telegram ZIP document caption."""
-    header = f"🩷 Мама упаковала пачку: {good} готово"
+    header = f"✍️ Дед упаковал пачку: {good} готово"
     if failed:
         header += f", {failed} с ошибкой"
     header += "\n"

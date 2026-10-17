@@ -85,14 +85,20 @@ class DeliveryCacheTests(unittest.TestCase):
     def run_document(self, cached, sent, source=None, allowed=True):
         stack = ExitStack()
         self.addCleanup(stack.close)
+        old_store = bot._store
+        bot._store = None
+        stack.callback(lambda: setattr(bot, '_store', old_store))
         stack.enter_context(patch.object(bot, 'STATE_DIR', Path(self.tmp.name)))
         stack.enter_context(patch.object(bot, 'has_access', return_value=allowed))
+        if not allowed:
+            stack.enter_context(patch.object(bot.get_store(), 'daily_left', return_value=0))
         card = stack.enter_context(patch.object(bot, 'Progress')).return_value.__enter__.return_value
         stack.enter_context(patch.object(bot, '_cached_file', side_effect=cached))
         download = stack.enter_context(patch.object(bot, 'download_file', return_value=source or ticket('kassir')))
         clean = stack.enter_context(patch.object(bot, 'clean_ticket_with_report', wraps=bot.clean_ticket_with_report))
         send = stack.enter_context(patch.object(bot, 'send_cleaned', side_effect=sent))
         stack.enter_context(patch.object(bot, 'show_status'))
+        stack.enter_context(patch.object(bot, 'no_access_message'))
         stack.enter_context(patch.object(bot, 'send_text'))
         bot.process_document({'chat': {'id': 111}, 'from': {'id': 111},
                               'document': {'file_id': 'source-id', 'file_unique_id': 'source-unique', 'file_name': 'a.pdf'}})

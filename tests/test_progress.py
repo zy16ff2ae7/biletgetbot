@@ -44,7 +44,7 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(1, sum(method == 'sendMessage' for method, _ in calls))
         edits = [payload for method, payload in calls if method == 'editMessageText']
         self.assertTrue(all(payload['message_id'] == 17 for payload in edits))
-        self.assertIn('Всё готово', edits[-1]['text'])
+        self.assertTrue(any(x in edits[-1]['text'] for x in ('Всё готово', 'Всё перепечатано')))
 
     def test_completion_during_slow_edit_is_not_lost(self):
         entered, release = threading.Event(), threading.Event()
@@ -61,7 +61,7 @@ class ProgressTests(unittest.TestCase):
             card.finish('Файл отправлен')
             release.set()
         card.thread.join(1)
-        self.assertIn('Всё готово', edits[-1])
+        self.assertTrue(any(x in edits[-1] for x in ('Всё готово', 'Всё перепечатано')))
 
     def test_unexpected_failure_stops_spinner_and_does_not_claim_success(self):
         with self.assertRaises(ValueError):
@@ -71,7 +71,7 @@ class ProgressTests(unittest.TestCase):
         card.thread.join(1)
         self.assertFalse(card.thread.is_alive())
         self.assertEqual('error', card.outcome)
-        self.assertNotIn('Всё готово', card.render())
+        self.assertFalse(any(x in card.render() for x in ('Всё готово', 'Всё перепечатано')))
         self.assertIn('○ Отправляю результат', card.render())
 
     def test_failed_initial_notification_exits_cosmetic_thread(self):

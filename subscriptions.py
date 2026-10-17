@@ -3,11 +3,15 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import time
 
 PERIOD = 30 * 86400
+
+SCHEMAS = {1: "subscriptions", 2: "payment_incidents", 3: "users_promo", 4: "expiry_reminders",
+           5: "daily_usage"}
 
 
 class SubscriptionStore:
@@ -16,11 +20,12 @@ class SubscriptionStore:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self.db() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3, 4, 5):
                 raise RuntimeError("Unsupported subscription schema")
-            for target in range(version + 1, 3):
-                migration = Path(__file__).parent / f"migrations/{target:03d}_{'subscriptions' if target == 1 else 'payment_incidents'}.sql"
+            for target in range(version + 1, len(SCHEMAS) + 1):
+                migration = Path(__file__).parent / f"migrations/{target:03d}_{SCHEMAS[target]}.sql"
                 db.executescript("BEGIN IMMEDIATE;\n" + migration.read_text() + "\nCOMMIT;")
+            self._ensure_user_settings(db)
         os.chmod(self.path, 0o600)
 
     @contextmanager
@@ -28,6 +33,11 @@ class SubscriptionStore:
         db = sqlite3.connect(self.path, timeout=15)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
+        try:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.Error:
+            pass
         try:
             with db:
                 yield db
@@ -349,7 +359,6 @@ class SubscriptionStore:
 
     def save_doc_token(self, token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None, del_texts=None, strip_pushkin=None):
         with self.db() as db:
-            self._ensure_user_settings(db)
             db.execute(
                 "INSERT INTO doc_tokens(token, file_id, created, custom_price, hide_price, fio, seat_info, del_texts, strip_pushkin) "
                 "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -367,13 +376,11 @@ class SubscriptionStore:
 
     def get_doc_by_token(self, token):
         with self.db() as db:
-            self._ensure_user_settings(db)
             row = db.execute("SELECT file_id FROM doc_tokens WHERE token=?", (token,)).fetchone()
             return row["file_id"] if row else None
 
     def get_doc_token_info(self, token):
         with self.db() as db:
-            self._ensure_user_settings(db)
             row = db.execute("SELECT file_id, custom_price, hide_price, fio, seat_info, del_texts, strip_pushkin FROM doc_tokens WHERE token=?", (token,)).fetchone()
             if not row:
                 return None
@@ -389,55 +396,46 @@ class SubscriptionStore:
 
     def set_user_last_doc_token(self, user_id, token):
         with self.db() as db:
-            self._ensure_user_settings(db)
             db.execute("INSERT INTO user_settings(user_id, last_doc_token) VALUES(?, ?) "
                        "ON CONFLICT(user_id) DO UPDATE SET last_doc_token=excluded.last_doc_token", (user_id, token))
 
     def get_user_last_doc_token(self, user_id):
         with self.db() as db:
-            self._ensure_user_settings(db)
             row = db.execute("SELECT last_doc_token FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
             return row["last_doc_token"] if row and row["last_doc_token"] else None
 
     def get_user_fio(self, user_id):
         with self.db() as db:
-            self._ensure_user_settings(db)
             row = db.execute("SELECT fio FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
             return row["fio"] if row and row["fio"] else None
 
     def set_user_fio(self, user_id, fio):
         with self.db() as db:
-            self._ensure_user_settings(db)
             db.execute("INSERT INTO user_settings(user_id, fio) VALUES(?, ?) "
                        "ON CONFLICT(user_id) DO UPDATE SET fio=excluded.fio", (user_id, fio))
 
     def get_user_custom_price(self, user_id):
         with self.db() as db:
-            self._ensure_user_settings(db)
             row = db.execute("SELECT custom_price FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
             return row["custom_price"] if row and row["custom_price"] is not None else None
 
     def set_user_custom_price(self, user_id, price):
         with self.db() as db:
-            self._ensure_user_settings(db)
             db.execute("INSERT INTO user_settings(user_id, custom_price) VALUES(?, ?) "
                        "ON CONFLICT(user_id) DO UPDATE SET custom_price=excluded.custom_price", (user_id, price))
 
     def get_user_state(self, user_id):
         with self.db() as db:
-            self._ensure_user_settings(db)
             row = db.execute("SELECT state FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
             return row["state"] if row and row["state"] else None
 
     def set_user_state(self, user_id, state):
         with self.db() as db:
-            self._ensure_user_settings(db)
             db.execute("INSERT INTO user_settings(user_id, state) VALUES(?, ?) "
                        "ON CONFLICT(user_id) DO UPDATE SET state=excluded.state", (user_id, state))
 
     def get_user_settings(self, user_id):
         with self.db() as db:
-            self._ensure_user_settings(db)
             row = db.execute("SELECT fio, state, hide_price, batch_mode, auto_preview, custom_price FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
             if not row:
                 return {"fio": None, "state": None, "hide_price": 0, "batch_mode": "zip", "auto_preview": 0, "custom_price": None}
@@ -454,9 +452,172 @@ class SubscriptionStore:
         if column not in {"fio", "state", "hide_price", "batch_mode", "auto_preview", "custom_price"}:
             raise ValueError(f"Invalid setting column: {column}")
         with self.db() as db:
-            self._ensure_user_settings(db)
             db.execute(f"INSERT INTO user_settings(user_id, {column}) VALUES(?, ?) "
                        f"ON CONFLICT(user_id) DO UPDATE SET {column}=excluded.{column}", (user_id, value))
 
 
 
+
+    # --- пользователи, профиль, промокоды -----------------------------------
+
+    def touch_user(self, user_id, username=None):
+        now = int(time.time())
+        with self.db() as db:
+            db.execute("INSERT INTO users(user_id,username,first_seen,last_seen) VALUES(?,?,?,?) "
+                       "ON CONFLICT(user_id) DO UPDATE SET last_seen=excluded.last_seen, "
+                       "username=COALESCE(excluded.username, users.username)",
+                       (user_id, (username or "").strip() or None, now, now))
+
+    def bump_processed(self, user_id, count=1):
+        if count <= 0:
+            return
+        with self.db() as db:
+            db.execute("INSERT INTO users(user_id,first_seen,last_seen,processed) VALUES(?,?,?,?) "
+                       "ON CONFLICT(user_id) DO UPDATE SET processed=users.processed+excluded.processed",
+                       (user_id, int(time.time()), int(time.time()), count))
+
+    def user_info(self, user_id):
+        with self.db() as db:
+            row = db.execute("SELECT username, first_seen, last_seen, processed FROM users WHERE user_id=?",
+                             (user_id,)).fetchone()
+            return dict(row) if row else {"username": None, "first_seen": None, "last_seen": None, "processed": 0}
+
+    def all_user_ids(self):
+        with self.db() as db:
+            return [row[0] for row in db.execute("SELECT user_id FROM users ORDER BY last_seen DESC")]
+
+    def promo_create(self, code, days, uses, admin_id, valid_days=30):
+        code = code.strip().upper()
+        if not re.fullmatch(r"[A-Z0-9_-]{3,32}", code):
+            raise ValueError("Код: 3-32 символа, латиница/цифры/дефис.")
+        if not 1 <= days <= 3650 or not 1 <= uses <= 100000:
+            raise ValueError("Дни: 1-3650, активации: 1-100000.")
+        with self.db() as db:
+            db.execute("INSERT INTO promo_codes(code,days,uses_max,used,created,valid_until) VALUES(?,?,?,?,?,?)",
+                       (code, days, uses, 0, int(time.time()), int(time.time()) + valid_days * 86400))
+        return code
+
+    def promo_redeem(self, user_id, code):
+        code = (code or "").strip().upper()
+        if not code:
+            raise ValueError("Укажите код: /promo КОД")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM promo_codes WHERE code=?", (code,)).fetchone()
+            if not row:
+                raise ValueError("такой код не найден.")
+            if row["valid_until"] < time.time():
+                raise ValueError("срок действия кода истёк.")
+            if row["used"] >= row["uses_max"]:
+                raise ValueError("лимит активаций исчерпан.")
+            paid = db.execute("SELECT MAX(expires) FROM payments WHERE user_id=? AND refunded=0",
+                              (user_id,)).fetchone()[0] or 0
+            gift = db.execute("SELECT expires FROM grants WHERE user_id=?", (user_id,)).fetchone()
+            base = max(int(time.time()), paid, gift[0] if gift else 0)
+            expires = base + row["days"] * 86400
+            db.execute("INSERT INTO grants(user_id,expires,admin_id) VALUES(?,?,0) "
+                       "ON CONFLICT(user_id) DO UPDATE SET expires=MAX(grants.expires,excluded.expires)",
+                       (user_id, expires))
+            db.execute("UPDATE promo_codes SET used=used+1 WHERE code=?", (code,))
+            return expires, row["days"]
+
+    def promo_delete(self, code):
+        code = (code or "").strip().upper()
+        with self.db() as db:
+            cursor = db.execute("DELETE FROM promo_codes WHERE code=?", (code,))
+            return cursor.rowcount > 0
+
+    def promo_list(self):
+        with self.db() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT code, days, uses_max, used, created, valid_until FROM promo_codes ORDER BY created DESC LIMIT 12")]
+
+    def grant_trial(self, user_id, days=1):
+        """One trial per user, ever; idempotent via access_actions."""
+        action = f"trial:{user_id}"
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT expires FROM access_actions WHERE id=?", (action,)).fetchone()
+            if row:
+                return row[0], False
+            paid = db.execute("SELECT MAX(expires) FROM payments WHERE user_id=? AND refunded=0",
+                              (user_id,)).fetchone()[0] or 0
+            gift = db.execute("SELECT expires FROM grants WHERE user_id=?", (user_id,)).fetchone()
+            expires = max(int(time.time()), paid, gift[0] if gift else 0) + days * 86400
+            db.execute("INSERT INTO grants(user_id,expires,admin_id) VALUES(?,?,?) "
+                       "ON CONFLICT(user_id) DO UPDATE SET expires=MAX(grants.expires,excluded.expires)",
+                       (user_id, expires, user_id))
+            db.execute("INSERT INTO access_actions VALUES(?,?)", (action, expires))
+            return expires, True
+
+    def due_expiry_reminds(self, fresh_hours=24, stale_hours=48):
+        """Пользователи, у которых доступ кончился в окне [stale, fresh] часов назад
+        и которым ещё не отправляли напоминание."""
+        now = int(time.time())
+        with self.db() as db:
+            rows = db.execute(
+                """
+                WITH acc AS (
+                    SELECT u.user_id AS uid,
+                           MAX(COALESCE((SELECT MAX(expires) FROM payments
+                                         WHERE user_id=u.user_id AND refunded=0), 0),
+                               COALESCE((SELECT expires FROM grants WHERE user_id=u.user_id), 0)) AS exp
+                    FROM users u GROUP BY u.user_id
+                )
+                SELECT uid FROM acc
+                WHERE exp > 0 AND exp BETWEEN ? AND ?
+                  AND uid NOT IN (SELECT user_id FROM expiry_reminders)
+                """, (now - stale_hours * 3600, now - fresh_hours * 3600)).fetchall()
+            return [row[0] for row in rows]
+
+    def mark_expiry_reminded(self, user_id):
+        with self.db() as db:
+            db.execute("INSERT OR REPLACE INTO expiry_reminders VALUES(?,?)",
+                       (user_id, int(time.time())))
+
+    DAILY_LIMIT = int(os.environ.get("BILET_DAILY_FREE", "2"))
+
+    def daily_left(self, user_id):
+        """Сколько бесплатных билетов осталось сегодня (МСК).
+
+        У абонементчиков счётчик не расходуется — всегда полный лимит,
+        чтобы строка профиля не показывала «0 из 2» при активной подписке.
+        """
+        if self.status(user_id)["active"]:
+            return self.DAILY_LIMIT
+        with self.db() as db:
+            row = db.execute("SELECT used FROM daily_usage WHERE user_id=? AND day=(date('now','localtime'))",
+                             (user_id,)).fetchone()
+            return max(0, self.DAILY_LIMIT - (row[0] if row else 0))
+
+    def daily_consume(self, user_id, count=1):
+        """Списать дневные билеты. True — лимит не исчерпан."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT used FROM daily_usage WHERE user_id=? AND day=(date('now','localtime'))",
+                             (user_id,)).fetchone()
+            used = row[0] if row else 0
+            if used + count > self.DAILY_LIMIT:
+                return False
+            db.execute("INSERT INTO daily_usage(user_id,day,used) VALUES(?,?,?) "
+                       "ON CONFLICT(user_id,day) DO UPDATE SET used=used+excluded.used",
+                       (user_id, time.strftime("%Y-%m-%d"), count))
+            return True
+
+    def admin_stats(self):
+        now = int(time.time())
+        with self.db() as db:
+            def one(sql, args=()):
+                return db.execute(sql, args).fetchone()[0] or 0
+            return {
+                "users_total": one("SELECT COUNT(*) FROM users"),
+                "users_week": one("SELECT COUNT(*) FROM users WHERE first_seen>?", (now - 7 * 86400,)),
+                "active_now": one("SELECT COUNT(*) FROM payments WHERE expires>? AND refunded=0", (now,))
+                              + one("SELECT COUNT(*) FROM grants WHERE expires>?", (now,)),
+                "paid_stars": one("SELECT SUM(amount) FROM payments WHERE refunded=0"),
+                "refunded_stars": one("SELECT SUM(amount) FROM payments WHERE refunded=1"),
+                "processed_total": one("SELECT SUM(processed) FROM users"),
+                "incidents": one("SELECT COUNT(*) FROM payment_incidents"),
+                "promos_active": one("SELECT COUNT(*) FROM promo_codes WHERE used<uses_max AND valid_until>?", (now,)),
+                "promos_total": one("SELECT COUNT(*) FROM promo_codes"),
+            }

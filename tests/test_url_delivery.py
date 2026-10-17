@@ -136,6 +136,14 @@ class PublisherTests(unittest.TestCase):
                 client.join(2)
         self.assertFalse(client.is_alive())
         self.assertEqual(b'pdf!', received[0][2])
+        # _release выполняется в потоке хендлера уже после ответа клиенту:
+        # дождаться фактического освобождения бюджета, иначе publish сражается с гонкой.
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            with publisher._lock:
+                if all(not entry.users for entry in publisher._entries.values()):
+                    break
+            time.sleep(0.005)
         publisher.publish(b'new!', 'b.pdf')
 
     def test_background_expiry_reclaims_memory_without_another_request(self):

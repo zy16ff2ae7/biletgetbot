@@ -7,6 +7,7 @@ an unbounded work queue. HTTPS verifies Telegram's hostname on both edges.
 from dataclasses import dataclass, field
 import json
 import math
+import os
 import re
 import threading
 import time
@@ -17,7 +18,11 @@ import urllib3
 
 
 API_HOST = 'api.telegram.org'
-EDGES = ('149.154.166.110', '149.154.167.220')
+# Telegram может сменить IP фронтендов; список перекрывается переменной
+# окружения BILET_TELEGRAM_EDGES (через запятую).
+_DEFAULT_EDGES = ('149.154.166.110', '149.154.167.220')
+EDGES = (tuple(edge.strip() for edge in os.environ.get('BILET_TELEGRAM_EDGES', '').split(',')
+               if edge.strip()) or _DEFAULT_EDGES)
 MAX_METADATA_BYTES = 64 * 1024
 
 
