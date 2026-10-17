@@ -1,0 +1,10 @@
+.token
+debts.json
+debts.json.tmp
+bot.log
+__pycache__/
+state/
+*.sqlite3
+*.sqlite3-*
+work/
+.DS_Store
