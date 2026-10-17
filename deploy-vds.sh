@@ -96,7 +96,7 @@ PREFLIGHT
     printf 'GATEWAY READY; candidate=%s; backup=%s\n' "$bilet_root/http-candidate" "$bilet_backup"
     exit 0
 fi
-for bilet_file in bot.py batches.py ticket_meta.py seat_tools.py validation.py progress.py delivery_cache.py url_delivery.py telegram_file_transport.py nginx-bilet-delivery.conf subscriptions.py subscription.json requirements.txt README.md; do
+for bilet_file in bot.py batches.py ticket_meta.py seat_tools.py eraser_tools.py validation.py progress.py delivery_cache.py url_delivery.py telegram_file_transport.py nginx-bilet-delivery.conf subscriptions.py subscription.json requirements.txt README.md; do
     if [ -f "$bilet_root/$bilet_file" ]; then cp -a "$bilet_root/$bilet_file" "$bilet_backup/code/"; fi
 done
 for bilet_dir in biletnaya tests migrations brand; do
@@ -141,7 +141,7 @@ with sqlite3.connect(sys.argv[1]) as source, sqlite3.connect(sys.argv[2]) as tar
     source.backup(target)
 DB
 fi
-cp "$bilet_stage/"{bot.py,batches.py,ticket_meta.py,seat_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,requirements.txt,README.md} "$bilet_root/"
+cp "$bilet_stage/"{bot.py,batches.py,ticket_meta.py,seat_tools.py,eraser_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,requirements.txt,README.md} "$bilet_root/"
 if [ "$bilet_enable_url" = 1 ]; then
     "$bilet_python" - "$bilet_root/.env" <<'ENVIRONMENT'
 from pathlib import Path
