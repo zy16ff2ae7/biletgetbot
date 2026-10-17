@@ -14,7 +14,8 @@ from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFo
 HERE = Path(__file__).resolve().parent
 BRAND = HERE / "brand"
 BASE = BRAND / "welcome_base.jpg"
-FONT_PATH = Path("/home/user/fonts/Oranienbaum.ttf")
+# Шрифт Oranienbaum (SIL OFL) лежит рядом со скриптом, в brand/.
+FONT_PATH = Path(__file__).resolve().parent / "brand" / "Oranienbaum.ttf"
 
 W, H = 960, 540
 FPS = 15
