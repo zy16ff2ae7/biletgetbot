@@ -3,11 +3,12 @@
 Outputs (next to the base image):
   welcome.jpg  — static 16:9 cover with the typed title (sendPhoto fallback)
   welcome.mp4  — dynamic greeting: camera push-in, lamp pulse, dust in the
-                 beam, typewriter shake, title typed letter by letter
-  ded.jpg      — square avatar crop of the grandfather
+                 beam, typewriter shake, flash scene transitions, pink sparks,
+                 title typed letter by letter in gold Prata
+  ded.jpg      — square avatar crop of the triumphant grandfather
 
-Typefaces (SIL OFL, bundled in brand/): Prata for the title,
-Cormorant Italic for the subtitle.
+Typefaces (SIL OFL, bundled in brand/): Prata for the gold title,
+Playfair Display Italic for the subtitle.
 """
 from pathlib import Path
 
@@ -18,7 +19,7 @@ HERE = Path(__file__).resolve().parent
 BRAND = HERE / "brand"
 BASE = BRAND / "welcome_base.jpg"
 FONT_TITLE = BRAND / "Prata-Regular.ttf"
-FONT_SUB = BRAND / "Cormorant-Italic.ttf"
+FONT_SUB = BRAND / "PlayfairDisplay-Italic.ttf"
 
 W, H = 960, 540
 FPS = 15
@@ -26,9 +27,12 @@ FRAMES = 72
 TITLE = "ДЕД РЕДАЧИТ"
 SUBTITLE = "театральные билеты — с чистого листа"
 HANDLE = "@biletgetbot"
-CREAM = (246, 235, 212)
-ROSE = (247, 183, 210)
-MUTED = (206, 186, 200)
+GOLD_TOP = (252, 243, 222)
+GOLD_MID = (243, 211, 146)
+GOLD_DEEP = (198, 150, 86)
+GOLD_EDGE = (240, 205, 138)
+ROSE = (248, 186, 212)
+MUTED = (208, 188, 200)
 
 
 def cover_crop(img, w, h, cx=0.5, cy=0.5, zoom=1.0):
@@ -71,6 +75,22 @@ def screen(base, overlay):
     return ImageChops.screen(base, overlay)
 
 
+def vignette(img, strength=0.34):
+    """Soft cinematic darkening towards the corners."""
+    m = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(m).ellipse([-W * 0.25, -H * 0.35, W * 1.25, H * 1.35], fill=255)
+    m = m.filter(ImageFilter.GaussianBlur(120))
+    return Image.composite(img, ImageEnhance.Brightness(img).enhance(1.0 - strength), m)
+
+
+def grain(img, frame, amount=3.2):
+    """Subtle film grain, unique per frame."""
+    rng = np.random.default_rng(frame * 7 + 1)
+    noise = rng.normal(0.0, amount, (H, W, 1)).astype(np.int16)
+    arr = np.asarray(img).astype(np.int16) + noise
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+
+
 class Dust:
     """Soft particles drifting upward inside the lamp beam."""
 
@@ -97,6 +117,40 @@ class Dust:
         return screen(img, overlay.filter(ImageFilter.GaussianBlur(0.8)))
 
 
+class Sparks:
+    """Розовые искры вокруг поднятого билета в финальной сцене."""
+
+    def __init__(self, count=20, seed=3):
+        rng = np.random.default_rng(seed)
+        self.angle = rng.uniform(-2.4, -0.7, count)
+        self.speed = rng.uniform(0.010, 0.030, count)
+        self.size = rng.uniform(1.5, 3.6, count)
+        self.phase = rng.uniform(0, 2 * np.pi, count)
+        self.count = count
+
+    def draw(self, img, local):
+        overlay = Image.new("RGB", (W, H), (0, 0, 0))
+        d = ImageDraw.Draw(overlay)
+        ox, oy = 0.72 * W, 0.16 * H
+        for i in range(self.count):
+            t = (local / 10 + self.phase[i]) % 1.6
+            if t > 1.0:
+                continue
+            x = ox + np.cos(self.angle[i]) * self.speed[i] * t * W
+            y = oy + np.sin(self.angle[i]) * self.speed[i] * t * W + 0.012 * t * t * W
+            fade = max(0.0, 1.0 - t)
+            r = self.size[i] * (1 - 0.4 * t)
+            c = (int(255 * fade), int(170 * fade), int(205 * fade))
+            d.ellipse([x - r, y - r, x + r, y + r], fill=c)
+        return screen(img, overlay.filter(ImageFilter.GaussianBlur(0.7)))
+
+
+def flash_overlay(img, local):
+    """Короткая белая вспышка между сценами (3 кадра)."""
+    alpha = (230, 110, 35)[min(local, 2)]
+    return Image.blend(img, Image.new("RGB", (W, H), (255, 246, 230)), alpha / 255)
+
+
 def _font(path, size, weight=None):
     font = ImageFont.truetype(str(path), size)
     if weight is not None:
@@ -107,62 +161,100 @@ def _font(path, size, weight=None):
     return font
 
 
+def _gold_gradient(y0, y1):
+    """Вертикальный золотой градиент высотой y1-y0."""
+    stops = [(0.0, GOLD_TOP), (0.42, GOLD_MID), (0.72, GOLD_DEEP), (1.0, GOLD_EDGE)]
+    ys = np.linspace(0.0, 1.0, y1 - y0)
+    channels = []
+    for i in range(3):
+        xs = [s[0] for s in stops]
+        vals = [s[1][i] for s in stops]
+        channels.append(np.interp(ys, xs, vals))
+    row = np.stack(channels, axis=1).astype(np.uint8)          # (h, 3)
+    return Image.fromarray(np.repeat(row[:, None, :], W, axis=1), "RGB")
+
+
 def draw_title(img, visible_chars, caret_on, with_subtitle):
     d = ImageDraw.Draw(img)
-    title_font = _font(FONT_TITLE, 76)
-    sub_font = _font(FONT_SUB, 35, weight=540)
-    small_font = _font(FONT_SUB, 22, weight=460)
-    tracking = 12
+    title_font = _font(FONT_TITLE, 78)
+    sub_font = _font(FONT_SUB, 36, weight=530)
+    small_font = _font(FONT_SUB, 23, weight=460)
+    tracking = 14
 
     def width_of(text, font, gap):
         return sum(d.textlength(ch, font=font) + gap for ch in text) - gap
 
     tw = width_of(TITLE, title_font, tracking)
     x0 = (W - tw) / 2
-    y0 = H - 158
+    y0 = H - 162
+    glyph_h = int(title_font.size * 1.06)
 
     # Тёмная сливовая подложка-лента под заголовком.
     band = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     bd = ImageDraw.Draw(band)
-    bd.rectangle([0, y0 - 30, W, H], fill=(24, 12, 28, 172))
+    bd.rectangle([0, y0 - 32, W, H], fill=(24, 12, 28, 174))
     band = band.filter(ImageFilter.GaussianBlur(10))
     img.paste(band, (0, 0), band)
 
-    # Тень, затем кремовые буквы с межбуквенным просветом.
-    d = ImageDraw.Draw(img)
+    # Маска всех видимых букв.
+    mask = Image.new("L", (W, H), 0)
+    md = ImageDraw.Draw(mask)
     x = x0
     for ch in TITLE[:visible_chars]:
-        d.text((x + 2, y0 + 3), ch, font=title_font, fill=(10, 5, 12))
-        d.text((x, y0), ch, font=title_font, fill=CREAM)
+        md.text((x, y0), ch, font=title_font, fill=255)
         x += d.textlength(ch, font=title_font) + tracking
 
+    # Мягкая падающая тень.
+    shadow = ImageChops.offset(mask.filter(ImageFilter.GaussianBlur(6)).point(lambda v: int(v * 0.55)), 3, 5)
+    img.paste(Image.new("RGB", (W, H), (8, 4, 10)), (0, 0), shadow)
+
+    # Золотой градиент сквозь маску + тонкий верхний блик (металл).
+    gold = Image.new("RGB", (W, H), (0, 0, 0))
+    gold.paste(_gold_gradient(y0, y0 + glyph_h), (0, y0), mask.crop((0, y0, W, y0 + glyph_h)))
+    img = Image.composite(gold, img, mask)
+    bevel = ImageChops.subtract(mask, ImageChops.offset(mask, 0, 1)).point(lambda v: int(v * 0.6))
+    img = Image.composite(Image.new("RGB", (W, H), (255, 250, 236)), img, bevel)
+    d = ImageDraw.Draw(img)
+
+    # Каретка машинки.
     if caret_on and visible_chars < len(TITLE):
         cx = x0 + sum(d.textlength(c, font=title_font) + tracking for c in TITLE[:visible_chars])
-        d.rectangle([cx + 5, y0 + 8, cx + 9, y0 + 68], fill=CREAM)
+        d.rectangle([cx + 6, y0 + 8, cx + 10, y0 + 70], fill=GOLD_MID)
 
     if with_subtitle:
         sw = width_of(SUBTITLE, sub_font, 2)
-        x = (W - sw) / 2
+        sx = (W - sw) / 2
+        sy = y0 + 98
         for ch in SUBTITLE:
-            d.text((x + 1, y0 + 96 + 1), ch, font=sub_font, fill=(10, 5, 12))
-            d.text((x, y0 + 96), ch, font=sub_font, fill=ROSE)
-            x += d.textlength(ch, font=sub_font) + 2
-        hw = width_of(HANDLE, small_font, 1)
-        d.text(((W - hw) / 2, y0 + 132), HANDLE, font=small_font, fill=MUTED)
+            d.text((sx + 1, sy + 1), ch, font=sub_font, fill=(10, 5, 12))
+            d.text((sx, sy), ch, font=sub_font, fill=ROSE)
+            sx += d.textlength(ch, font=sub_font) + 2
+        # Орнаментальные линейки с ромбами по бокам ручки канала.
+        hy = y0 + 138
+        hw = d.textlength(HANDLE, font=small_font)
+        hx = (W - hw) / 2
+        d.text((hx, hy), HANDLE, font=small_font, fill=MUTED)
+        for side in (-1, 1):
+            line_end = hx + (side * -26)
+            line_start = line_end + (side * -118)
+            d.line([line_start, hy + 12, line_end, hy + 12], fill=(150, 122, 132), width=1)
+            mid = (line_start + line_end) / 2
+            r = 3.4
+            d.polygon([(mid, hy + 12 - r), (mid + r, hy + 12), (mid, hy + 12 + r), (mid - r, hy + 12)],
+                      fill=GOLD_EDGE)
     return img
 
 
 SRC = Image.open(BASE).convert("RGB")
-SCENE_LAUGH_PATH = BRAND / "key_laugh.jpg"   # дед хохочет
-SCENE_WIN_PATH = BRAND / "key_win.jpg"       # дед вскидывает билет
 SOURCES = {"type": SRC,
-           "laugh": Image.open(SCENE_LAUGH_PATH).convert("RGB"),
-           "win": Image.open(SCENE_WIN_PATH).convert("RGB")}
+           "laugh": Image.open(BRAND / "key_laugh.jpg").convert("RGB"),
+           "win": Image.open(BRAND / "key_win.jpg").convert("RGB")}
 
 # --- статичная обложка -------------------------------------------------------
 poster = base_frame(1.04, 0.54, 0.52)
 poster = screen(poster, glow_layer(0.35))
 poster = Dust(seed=11).draw(poster, 8)
+poster = vignette(poster)
 poster = draw_title(poster, len(TITLE), False, True)
 poster = ImageEnhance.Contrast(poster).enhance(1.03)
 poster.save(BRAND / "welcome.jpg", quality=90)
@@ -187,40 +279,6 @@ def scene_of(f):
     return "win", f - 48
 
 
-class Sparks:
-    """Розовые искры вокруг поднятого билета в финальной сцене."""
-
-    def __init__(self, count=20, seed=3):
-        rng = np.random.default_rng(seed)
-        self.angle = rng.uniform(-2.4, -0.7, count)      # веер вверх
-        self.speed = rng.uniform(0.010, 0.030, count)
-        self.size = rng.uniform(1.5, 3.6, count)
-        self.phase = rng.uniform(0, 2 * np.pi, count)
-        self.count = count
-
-    def draw(self, img, local):
-        overlay = Image.new("RGB", (W, H), (0, 0, 0))
-        d = ImageDraw.Draw(overlay)
-        ox, oy = 0.72 * W, 0.16 * H                      # точка поднятого билета
-        for i in range(self.count):
-            t = (local / 10 + self.phase[i]) % 1.6       # цикл разлёта
-            if t > 1.0:
-                continue
-            x = ox + np.cos(self.angle[i]) * self.speed[i] * t * W
-            y = oy + np.sin(self.angle[i]) * self.speed[i] * t * W + 0.012 * t * t * W
-            fade = max(0.0, 1.0 - t)
-            r = self.size[i] * (1 - 0.4 * t)
-            c = (int(255 * fade), int(170 * fade), int(205 * fade))
-            d.ellipse([x - r, y - r, x + r, y + r], fill=c)
-        return screen(img, overlay.filter(ImageFilter.GaussianBlur(0.7)))
-
-
-def flash_overlay(img, local):
-    """Короткая белая вспышка между сценами (3 кадра)."""
-    alpha = (230, 110, 35)[min(local, 2)]
-    return Image.blend(img, Image.new("RGB", (W, H), (255, 246, 230)), alpha / 255)
-
-
 tmp = HERE / "work" / "frames"
 tmp.mkdir(parents=True, exist_ok=True)
 dust = Dust()
@@ -232,6 +290,7 @@ for f in range(FRAMES):
     scene, local = scene_of(f)
     if scene == "flash1" or scene == "flash2":
         frame = base_frame(1.05, 0.55, 0.52)
+        frame = vignette(frame)
         frame = draw_title(frame, CHARS, False, True)
         frame = flash_overlay(frame, local)
         frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
@@ -257,9 +316,11 @@ for f in range(FRAMES):
     frame = dust.draw(frame, f)
     if scene == "win":
         frame = sparks.draw(frame, local)
+    frame = vignette(frame)
     typed = max(0, min(CHARS, (f - TYPE_START) // TYPE_FRAMES + 1)) if f >= TYPE_START else 0
     caret = (f // 2) % 2 == 0
     frame = draw_title(frame, typed, caret, typed >= CHARS)
+    frame = grain(frame, f)
     frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
 
 print("frames:", FRAMES, "size:", W, "x", H)
