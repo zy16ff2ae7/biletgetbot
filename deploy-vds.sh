@@ -8,9 +8,14 @@ mkdir -p "$bilet_work"
 bilet_package=$(mktemp -d "$bilet_work/package.XXXXXX")
 trap 'rm -rf "$bilet_package"' EXIT
 mkdir -p "$bilet_package/biletnaya" "$bilet_package/tests"
-cp "$bilet_root/"{bot.py,batches.py,ticket_meta.py,seat_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,subscription.json,requirements.txt,README.md} "$bilet_package/"
+cp "$bilet_root/"{bot.py,batches.py,ticket_meta.py,seat_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,subscription.json,requirements.txt,README.md,make_brand.py,LICENSE} "$bilet_package/"
 cp -R "$bilet_root/migrations" "$bilet_package/"
 cp "$bilet_root/tests/"test_*.py "$bilet_package/tests/"
+if [ -f "$bilet_root/tests/_stub_engine.py" ]; then cp "$bilet_root/tests/_stub_engine.py" "$bilet_package/tests/"; fi
+if [ -d "$bilet_root/scripts" ]; then cp -R "$bilet_root/scripts" "$bilet_package/"; fi
+for bilet_unit in bilet-bot.service bilet-backup.service bilet-backup.timer; do
+    if [ -f "$bilet_root/$bilet_unit" ]; then cp "$bilet_root/$bilet_unit" "$bilet_package/"; fi
+done
 cp "$bilet_editor/"{server.py,raster.py,requirements.txt,index.html} "$bilet_package/biletnaya/"
 cp -R "$bilet_editor/vendor" "$bilet_editor/tests" "$bilet_package/biletnaya/"
 if [ -d "$bilet_root/brand" ]; then cp -R "$bilet_root/brand" "$bilet_package/"; fi
@@ -96,10 +101,10 @@ PREFLIGHT
     printf 'GATEWAY READY; candidate=%s; backup=%s\n' "$bilet_root/http-candidate" "$bilet_backup"
     exit 0
 fi
-for bilet_file in bot.py batches.py ticket_meta.py seat_tools.py validation.py progress.py delivery_cache.py url_delivery.py telegram_file_transport.py nginx-bilet-delivery.conf subscriptions.py subscription.json requirements.txt README.md; do
+for bilet_file in bot.py batches.py ticket_meta.py seat_tools.py validation.py progress.py delivery_cache.py url_delivery.py telegram_file_transport.py nginx-bilet-delivery.conf subscriptions.py subscription.json requirements.txt README.md make_brand.py LICENSE bilet-bot.service bilet-backup.service bilet-backup.timer; do
     if [ -f "$bilet_root/$bilet_file" ]; then cp -a "$bilet_root/$bilet_file" "$bilet_backup/code/"; fi
 done
-for bilet_dir in biletnaya tests migrations brand; do
+for bilet_dir in biletnaya tests migrations brand scripts; do
     if [ -d "$bilet_root/$bilet_dir" ]; then cp -a "$bilet_root/$bilet_dir" "$bilet_backup/code/"; fi
 done
 if [ -f "$bilet_root/.env" ]; then cp -a "$bilet_root/.env" "$bilet_backup/environment"; fi
@@ -118,7 +123,7 @@ bilet_rollback() {
     for bilet_file in bot.py batches.py ticket_meta.py seat_tools.py validation.py progress.py delivery_cache.py url_delivery.py telegram_file_transport.py nginx-bilet-delivery.conf subscriptions.py subscription.json requirements.txt README.md; do
         rm -f "$bilet_root/$bilet_file"
     done
-    for bilet_dir in biletnaya tests migrations brand; do rm -rf "$bilet_root/$bilet_dir"; done
+    for bilet_dir in biletnaya tests migrations brand scripts; do rm -rf "$bilet_root/$bilet_dir"; done
     cp -a "$bilet_backup/code/." "$bilet_root/"
     if [ -f "$bilet_backup/environment" ]; then
         cp -a "$bilet_backup/environment" "$bilet_root/.env"
@@ -161,11 +166,19 @@ fi
 if [ ! -f "$bilet_root/subscription.json" ] || [ "$bilet_settings" = 1 ]; then
     cp "$bilet_stage/subscription.json" "$bilet_root/"
 fi
-for bilet_dir in biletnaya tests migrations brand; do
+for bilet_dir in biletnaya tests migrations brand scripts; do
     if [ ! -d "$bilet_stage/$bilet_dir" ]; then continue; fi
     rm -rf "$bilet_root/$bilet_dir"
     cp -a "$bilet_stage/$bilet_dir" "$bilet_root/$bilet_dir"
 done
+# Ежедневный бэкап state: скрипт + systemd-юниты (идемпотентно).
+if [ -f "$bilet_stage/scripts/backup-state.sh" ]; then
+    chmod 700 "$bilet_root/scripts/backup-state.sh"
+    cp "$bilet_stage/bilet-backup.service" "$bilet_stage/bilet-backup.timer" /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable --now bilet-backup.timer
+    printf 'backup timer: %s\n' "$(systemctl is-enabled bilet-backup.timer)"
+fi
 cd "$bilet_root"
 BILETNAYA="$bilet_root/biletnaya" "$bilet_python" - <<'VERIFY'
 import bot

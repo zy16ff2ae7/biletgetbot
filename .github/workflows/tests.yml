@@ -22,4 +22,6 @@ jobs:
             tests.test_telegram_file_transport \
             tests.test_new_features \
             tests.test_broadcast_guard \
+            tests.test_daily_free \
+            tests.test_free_tier_flow \
             -v

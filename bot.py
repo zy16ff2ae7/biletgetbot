@@ -1619,15 +1619,17 @@ def process_document(msg, collection_id=None, job_id=None):
         get_store().bump_processed(uid)
         if not has_access(uid):
             try:
-                left_after = get_store().daily_left(uid) - 1
-                get_store().daily_consume(uid)
-                if left_after > 0:
-                    progress.finish(f"Билет отправлен 🩷 Бесплатных осталось сегодня: {left_after}.")
-                else:
-                    progress.finish("Билет отправлен 🩷 Бесплатный лимит на сегодня исчерпан.")
-                    send_text(chat, f"Это были бесплатные {FREE_DAILY} {tickets_word(FREE_DAILY)} на сегодня.\n"
-                                    "Без лимита — с абонементом:",
-                              {"inline_keyboard": [[{"text": "✍️ Оформить", "callback_data": "welcome:subscribe"}]]})
+                if get_store().daily_consume(uid):
+                    left_after = get_store().daily_left(uid)
+                    if left_after > 0:
+                        progress.finish(f"Билет отправлен 🩷 Бесплатных осталось сегодня: {left_after}.")
+                    else:
+                        progress.finish("Билет отправлен 🩷 Бесплатный лимит на сегодня исчерпан.")
+                        send_text(chat, f"Это были бесплатные {FREE_DAILY} {tickets_word(FREE_DAILY)} на сегодня.\n"
+                                        "Без лимита — с абонементом:",
+                                  {"inline_keyboard": [[{"text": "✍️ Оформить", "callback_data": "welcome:subscribe"}]]})
+                # consume() == False: параллельная гонка исчерпала лимит —
+                # билет уже ушёл, пользователя не ругаем.
             except Exception:
                 pass
             return
