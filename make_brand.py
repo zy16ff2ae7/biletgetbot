@@ -120,27 +120,27 @@ class Dust:
 class Sparks:
     """Розовые искры вокруг поднятого билета в финальной сцене."""
 
-    def __init__(self, count=20, seed=3):
+    def __init__(self, count=34, seed=3):
         rng = np.random.default_rng(seed)
-        self.angle = rng.uniform(-2.4, -0.7, count)
-        self.speed = rng.uniform(0.010, 0.030, count)
-        self.size = rng.uniform(1.5, 3.6, count)
+        self.angle = rng.uniform(-2.5, -0.6, count)
+        self.speed = rng.uniform(0.010, 0.034, count)
+        self.size = rng.uniform(1.8, 4.2, count)
         self.phase = rng.uniform(0, 2 * np.pi, count)
         self.count = count
 
     def draw(self, img, local):
         overlay = Image.new("RGB", (W, H), (0, 0, 0))
         d = ImageDraw.Draw(overlay)
-        ox, oy = 0.72 * W, 0.16 * H
+        ox, oy = 0.715 * W, 0.115 * H
         for i in range(self.count):
             t = (local / 10 + self.phase[i]) % 1.6
             if t > 1.0:
                 continue
             x = ox + np.cos(self.angle[i]) * self.speed[i] * t * W
             y = oy + np.sin(self.angle[i]) * self.speed[i] * t * W + 0.012 * t * t * W
-            fade = max(0.0, 1.0 - t)
+            fade = max(0.0, 1.0 - t) * (0.55 + 0.45 * np.sin(self.phase[i] * 5 + t * 9))
             r = self.size[i] * (1 - 0.4 * t)
-            c = (int(255 * fade), int(170 * fade), int(205 * fade))
+            c = (int(255 * fade), int(185 * fade), int(215 * fade))
             d.ellipse([x - r, y - r, x + r, y + r], fill=c)
         return screen(img, overlay.filter(ImageFilter.GaussianBlur(0.7)))
 
@@ -186,14 +186,19 @@ def draw_title(img, visible_chars, caret_on, with_subtitle):
 
     tw = width_of(TITLE, title_font, tracking)
     x0 = (W - tw) / 2
-    y0 = H - 162
+    y0 = H - 188
     glyph_h = int(title_font.size * 1.06)
 
-    # Тёмная сливовая подложка-лента под заголовком.
-    band = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    bd = ImageDraw.Draw(band)
-    bd.rectangle([0, y0 - 32, W, H], fill=(24, 12, 28, 174))
-    band = band.filter(ImageFilter.GaussianBlur(10))
+    # Тёмная сливовая подложка-лента с плавным фейдом верхней кромки.
+    band_top = y0 - 32
+    fade_h = 70
+    alpha_col = np.zeros(H)
+    alpha_col[band_top:band_top + fade_h] = np.linspace(0, 178, fade_h) ** 0.8
+    alpha_col[band_top + fade_h:] = 178.0
+    band_rgba = np.zeros((H, W, 4), dtype=np.uint8)
+    band_rgba[..., 0], band_rgba[..., 1], band_rgba[..., 2] = 24, 12, 28
+    band_rgba[..., 3] = alpha_col.astype(np.uint8)[:, None]
+    band = Image.fromarray(band_rgba, "RGBA").filter(ImageFilter.GaussianBlur(2))
     img.paste(band, (0, 0), band)
 
     # Маска всех видимых букв.
@@ -216,31 +221,33 @@ def draw_title(img, visible_chars, caret_on, with_subtitle):
     img = Image.composite(Image.new("RGB", (W, H), (255, 250, 236)), img, bevel)
     d = ImageDraw.Draw(img)
 
-    # Каретка машинки.
+    # Каретка машинки: от базовой линии до верха прописных.
     if caret_on and visible_chars < len(TITLE):
         cx = x0 + sum(d.textlength(c, font=title_font) + tracking for c in TITLE[:visible_chars])
-        d.rectangle([cx + 6, y0 + 8, cx + 10, y0 + 70], fill=GOLD_MID)
+        cap_h = int(title_font.size * 0.72)
+        d.rectangle([cx + 6, y0 + glyph_h - cap_h, cx + 11, y0 + glyph_h - 2], fill=GOLD_MID)
 
     if with_subtitle:
         sw = width_of(SUBTITLE, sub_font, 2)
         sx = (W - sw) / 2
-        sy = y0 + 98
+        sy = y0 + 92
         for ch in SUBTITLE:
             d.text((sx + 1, sy + 1), ch, font=sub_font, fill=(10, 5, 12))
             d.text((sx, sy), ch, font=sub_font, fill=ROSE)
             sx += d.textlength(ch, font=sub_font) + 2
-        # Орнаментальные линейки с ромбами по бокам ручки канала.
-        hy = y0 + 138
+        # Канал с орнаментальными линейками и ромбами — целиком внутри кадра.
+        hy = y0 + 136
         hw = d.textlength(HANDLE, font=small_font)
         hx = (W - hw) / 2
         d.text((hx, hy), HANDLE, font=small_font, fill=MUTED)
+        line_y = hy + 13
         for side in (-1, 1):
-            line_end = hx + (side * -26)
-            line_start = line_end + (side * -118)
-            d.line([line_start, hy + 12, line_end, hy + 12], fill=(150, 122, 132), width=1)
+            line_end = hx + (side * -22)
+            line_start = line_end + (side * -112)
+            d.line([line_start, line_y, line_end, line_y], fill=(158, 130, 140), width=1)
             mid = (line_start + line_end) / 2
-            r = 3.4
-            d.polygon([(mid, hy + 12 - r), (mid + r, hy + 12), (mid, hy + 12 + r), (mid - r, hy + 12)],
+            r = 3.2
+            d.polygon([(mid, line_y - r), (mid + r, line_y), (mid, line_y + r), (mid - r, line_y)],
                       fill=GOLD_EDGE)
     return img
 
@@ -301,7 +308,7 @@ for f in range(FRAMES):
         cx = 0.54 + 0.02 * (local / 28)
         shake = (1, -1) if local % 3 == 0 else ((-1, 1) if local % 3 == 1 else (0, 0))
     elif scene == "laugh":
-        zoom = 1.035 + 0.009 * np.sin(local * 0.5)       # «дыхание» камеры
+        zoom = 1.047 + 0.008 * np.sin(local * 0.5)       # «дыхание» камеры
         cx = 0.54
         shake = (0, -1) if local % 6 == 0 else (0, 0)    # плечи трясутся от смеха
     else:  # win: панч-наезд и лёгкая вибрация триумфа
