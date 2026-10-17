@@ -236,7 +236,7 @@ def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0):
     # CTA в верхнем баре: появляется в конце цикла.
     if cta_a > 0:
         cta_font = _font(FONT_MAIN, 17)
-        cta = "абонемент — 1000 ★ · /subscribe"
+        cta = "абонемент — 1000 звёзд · /subscribe"
         a = int(255 * cta_a)
         cw = sum(probe_w(cta_font, ch) + 2 for ch in cta) - 2
         cx = (W - cw) / 2

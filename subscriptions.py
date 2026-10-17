@@ -566,7 +566,13 @@ class SubscriptionStore:
     DAILY_LIMIT = int(os.environ.get("BILET_DAILY_FREE", "2"))
 
     def daily_left(self, user_id):
-        """Сколько бесплатных билетов осталось сегодня (МСК)."""
+        """Сколько бесплатных билетов осталось сегодня (МСК).
+
+        У абонементчиков счётчик не расходуется — всегда полный лимит,
+        чтобы строка профиля не показывала «0 из 2» при активной подписке.
+        """
+        if self.status(user_id)["active"]:
+            return self.DAILY_LIMIT
         with self.db() as db:
             row = db.execute("SELECT used FROM daily_usage WHERE user_id=? AND day=(date('now','localtime'))",
                              (user_id,)).fetchone()

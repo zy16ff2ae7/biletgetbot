@@ -11,6 +11,8 @@ ExecStart=/opt/bilet-bot/.venv/bin/python /opt/bilet-bot/bot.py
 Restart=always
 RestartSec=5
 UMask=0077
+# Дневные лимиты и подписи времени — по МСК.
+Environment=TZ=Europe/Moscow
 # Environment=BILET_WORKERS=2
 # EnvironmentFile=-/opt/bilet-bot/.env
 

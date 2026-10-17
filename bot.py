@@ -1451,7 +1451,10 @@ def process_incoming_document(msg, job_id=None):
     chat = msg["chat"]["id"]
     uid = msg["from"]["id"]
     if not has_access(uid):
-        return no_access_message(uid)
+        # Бесплатный тир: 2 билета в день, по одному за раз, без авто-пачек.
+        if get_store().daily_left(uid) <= 0:
+            return no_access_message(uid)
+        return process_document(msg, None, job_id=job_id)
     collection = get_store().open_collection(uid, chat)
     collection_id = collection["id"] if collection else None
     if collection_id:
@@ -1502,7 +1505,7 @@ def process_incoming_document(msg, job_id=None):
 def process_document(msg, collection_id=None, job_id=None):
     chat = msg["chat"]["id"]
     uid = msg["from"]["id"]
-    if not has_access(uid):
+    if not has_access(uid) and get_store().daily_left(uid) <= 0:
         return no_access_message(uid)
     document = msg["document"]
     name = document.get("file_name") or "ticket.pdf"
@@ -2524,7 +2527,7 @@ def handle(msg, update_id=None, queued=False):
         return _reissue_ticket_with_seat(chat, uid, ref, text)
     if msg.get("document"):
         if not has_access(uid):
-            return show_status(chat, uid)
+            return no_access_message(uid)
         collection = get_store().open_collection(uid, chat)
         ident = collection["id"] if collection else None
         if queued:
