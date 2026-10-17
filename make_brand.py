@@ -5,6 +5,9 @@ Outputs (next to the base image):
   welcome.mp4  — dynamic greeting: camera push-in, lamp pulse, dust in the
                  beam, typewriter shake, title typed letter by letter
   ded.jpg      — square avatar crop of the grandfather
+
+Typefaces (SIL OFL, bundled in brand/): Prata for the title,
+Cormorant Italic for the subtitle.
 """
 from pathlib import Path
 
@@ -14,17 +17,18 @@ from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFo
 HERE = Path(__file__).resolve().parent
 BRAND = HERE / "brand"
 BASE = BRAND / "welcome_base.jpg"
-# Шрифт Oranienbaum (SIL OFL) лежит рядом со скриптом, в brand/.
-FONT_PATH = Path(__file__).resolve().parent / "brand" / "Oranienbaum.ttf"
+FONT_TITLE = BRAND / "Prata-Regular.ttf"
+FONT_SUB = BRAND / "Cormorant-Italic.ttf"
 
 W, H = 960, 540
 FPS = 15
 FRAMES = 72
 TITLE = "ДЕД РЕДАЧИТ"
-SUBTITLE = "театральные билеты — начисто"
+SUBTITLE = "театральные билеты — с чистого листа"
 HANDLE = "@biletgetbot"
-CREAM = (245, 233, 208)
-PINK = (255, 168, 200)
+CREAM = (246, 235, 212)
+ROSE = (247, 183, 210)
+MUTED = (206, 186, 200)
 
 
 def cover_crop(img, w, h, cx=0.5, cy=0.5, zoom=1.0):
@@ -53,7 +57,7 @@ def glow_layer(strength):
     """Warm additive light centred on the desk lamp (fractional position)."""
     layer = Image.new("L", (W, H), 0)
     d = ImageDraw.Draw(layer)
-    lamp = (int(0.135 * W), int(0.40 * H))
+    lamp = (int(0.20 * W), int(0.36 * H))
     for radius, alpha in ((300, 70), (190, 110), (110, 150)):
         d.ellipse([lamp[0] - radius, lamp[1] - radius * 0.8,
                    lamp[0] + radius, lamp[1] + radius * 0.8], fill=alpha)
@@ -72,7 +76,7 @@ class Dust:
 
     def __init__(self, count=26, seed=7):
         rng = np.random.default_rng(seed)
-        self.x = rng.uniform(0.02, 0.34, count)
+        self.x = rng.uniform(0.10, 0.40, count)
         self.y = rng.uniform(0.05, 0.85, count)
         self.speed = rng.uniform(0.004, 0.012, count)
         self.size = rng.uniform(1.2, 3.2, count)
@@ -93,28 +97,38 @@ class Dust:
         return screen(img, overlay.filter(ImageFilter.GaussianBlur(0.8)))
 
 
+def _font(path, size, weight=None):
+    font = ImageFont.truetype(str(path), size)
+    if weight is not None:
+        try:
+            font.set_variation_by_axes([weight])
+        except Exception:
+            pass
+    return font
+
+
 def draw_title(img, visible_chars, caret_on, with_subtitle):
     d = ImageDraw.Draw(img)
-    title_font = ImageFont.truetype(str(FONT_PATH), 86)
-    sub_font = ImageFont.truetype(str(FONT_PATH), 30)
-    small_font = ImageFont.truetype(str(FONT_PATH), 24)
-    tracking = 10
+    title_font = _font(FONT_TITLE, 76)
+    sub_font = _font(FONT_SUB, 35, weight=540)
+    small_font = _font(FONT_SUB, 22, weight=460)
+    tracking = 12
 
-    def width_of(text, font):
-        return sum(d.textlength(ch, font=font) + tracking for ch in text) - tracking
+    def width_of(text, font, gap):
+        return sum(d.textlength(ch, font=font) + gap for ch in text) - gap
 
-    tw = width_of(TITLE, title_font)
+    tw = width_of(TITLE, title_font, tracking)
     x0 = (W - tw) / 2
-    y0 = H - 148
+    y0 = H - 158
 
     # Тёмная сливовая подложка-лента под заголовком.
     band = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     bd = ImageDraw.Draw(band)
-    bd.rectangle([0, y0 - 26, W, H], fill=(24, 12, 28, 168))
+    bd.rectangle([0, y0 - 30, W, H], fill=(24, 12, 28, 172))
     band = band.filter(ImageFilter.GaussianBlur(10))
     img.paste(band, (0, 0), band)
 
-    # Мягкая тень под буквами, затем сам текст.
+    # Тень, затем кремовые буквы с межбуквенным просветом.
     d = ImageDraw.Draw(img)
     x = x0
     for ch in TITLE[:visible_chars]:
@@ -123,19 +137,18 @@ def draw_title(img, visible_chars, caret_on, with_subtitle):
         x += d.textlength(ch, font=title_font) + tracking
 
     if caret_on and visible_chars < len(TITLE):
-        cx = x0 + (sum(d.textlength(c, font=title_font) + tracking for c in TITLE[:visible_chars])
-                   if visible_chars else 0)
-        d.rectangle([cx + 4, y0 + 6, cx + 4 + 5, y0 + 78], fill=CREAM)
+        cx = x0 + sum(d.textlength(c, font=title_font) + tracking for c in TITLE[:visible_chars])
+        d.rectangle([cx + 5, y0 + 8, cx + 9, y0 + 68], fill=CREAM)
 
     if with_subtitle:
-        sw = width_of(SUBTITLE, sub_font)
+        sw = width_of(SUBTITLE, sub_font, 2)
         x = (W - sw) / 2
         for ch in SUBTITLE:
-            d.text((x + 1, y0 + 108 + 1), ch, font=sub_font, fill=(10, 5, 12))
-            d.text((x, y0 + 108), ch, font=sub_font, fill=PINK)
-            x += d.textlength(ch, font=sub_font) + 3
-        hw = d.textlength(HANDLE, font=small_font)
-        d.text(((W - hw) / 2, y0 + 148), HANDLE, font=small_font, fill=(210, 190, 200))
+            d.text((x + 1, y0 + 96 + 1), ch, font=sub_font, fill=(10, 5, 12))
+            d.text((x, y0 + 96), ch, font=sub_font, fill=ROSE)
+            x += d.textlength(ch, font=sub_font) + 2
+        hw = width_of(HANDLE, small_font, 1)
+        d.text(((W - hw) / 2, y0 + 132), HANDLE, font=small_font, fill=MUTED)
     return img
 
 
@@ -150,7 +163,7 @@ poster = ImageEnhance.Contrast(poster).enhance(1.03)
 poster.save(BRAND / "welcome.jpg", quality=90)
 
 # --- аватар ------------------------------------------------------------------
-portrait = cover_crop(SRC, 800, 800, cx=0.66, cy=0.52, zoom=1.55)
+portrait = cover_crop(SRC, 800, 800, cx=0.63, cy=0.50, zoom=1.5)
 portrait = ImageEnhance.Color(portrait).enhance(1.05)
 portrait.save(BRAND / "ded.jpg", quality=90)
 
@@ -163,7 +176,7 @@ CHARS = len(TITLE)
 TYPE_FRAMES = 3
 for f in range(FRAMES):
     zoom = 1.0 + 0.045 * (f / FRAMES)          # медленный наезд камеры
-    cx = 0.52 + 0.02 * (f / FRAMES)            # лёгкий дрейф к деду
+    cx = 0.54 + 0.02 * (f / FRAMES)            # лёгкий дрейф к деду
     shake = (1, -1) if f % 3 == 0 else ((-1, 1) if f % 3 == 1 else (0, 0))  # тряска машинки
     frame = base_frame(zoom, cx, 0.52, shake)
     pulse = 0.30 + 0.10 * np.sin(f * 0.45) + (0.06 if f % 12 < 2 else 0)

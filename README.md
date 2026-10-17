@@ -9,8 +9,10 @@
 Аватар деда: `brand/ded.jpg`, приветственная картинка: `brand/welcome.jpg`,
 динамичное приветствие для /start: `brand/welcome.mp4` (видео с анимацией печати).
 Все ассеты пересобираются из исходного кадра `brand/welcome_base.jpg`
-скриптом `python3 make_brand.py` (нужны Pillow, numpy, imageio-ffmpeg;
-заголовок печатается шрифтом Oranienbaum, `brand/Oranienbaum.ttf`, SIL OFL).
+скриптом `python3 make_brand.py` (нужны Pillow, numpy, imageio-ffmpeg).
+Заголовок набран шрифтом Prata, подзаголовок — Cormorant Italic
+(`brand/*.ttf`, SIL OFL). На всех билетах и бумагах кадра нет ни одного
+напечатанного названия — чистые листы, как и обещает подзаголовок.
 Бот работает только через сообщения Telegram: без Mini App и веб-кабинета.
 PDF и ZIP принимаются в чате, результат возвращается туда же. Оплата —
 штатный счёт в Telegram Stars.
