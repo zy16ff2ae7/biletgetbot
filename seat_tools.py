@@ -64,8 +64,9 @@ def parse_seat_input(raw: str) -> dict[str, str]:
         res["seat"] = re.sub(r"\s+", "", r).replace("–", "-")
 
     r = take(
-        r"(?:сектор|сект|зона|ярус)\.?\s*[:=]?\s*([а-яёa-z0-9\s-]+?)(?=\s+(?:ряд|место|\d)|$)",
-        r"((?<![а-яёa-z])(?:партер|амфитеатр|бельэтаж|бенуар|балкон|ложа|ярус)(?:\s+(?:лев[а-яё]+|прав[а-яё]+|центр[а-яё]+|\d+(?:-?[а-яё]+)?))?)"
+        r"(?:сектор|сект|зона)\.?\s*[:=№]?\s*([а-яёa-z0-9\s-]+?)(?=[\s,;]+(?:ряд|место|seat|row|\d)|[\s,;]*$)",
+        r"((?:ярус|трибуна|подиум|ложа|галерея)\.?\s*[:=№]?\s*[а-яёa-z0-9\s-]+?)(?=[\s,;]+(?:ряд|место|seat|row|\d)|[\s,;]*$)",
+        r"((?<![а-яёa-z])(?:партер|амфитеатр|бельэтаж|бенуар|балкон|ложа|ярус|трибуна|галерея|подиум|танцпол|танцевальный партер|фан-?зона)(?:\s+(?:лев[а-яё]+|прав[а-яё]+|центр[а-яё]+|\d+(?:-?[а-яё]+)?|[a-zа-яё0-9]+))?)"
     )
     if r:
         res["sector"] = r.strip()
@@ -88,7 +89,60 @@ def parse_seat_input(raw: str) -> dict[str, str]:
     return res
 
 
-def format_seat_summary(parsed: dict[str, str]) -> str:
+def get_seats_for_pages(seat_spec: str, page_count: int) -> list[str]:
+    """Given a seat specification and number of pages, return consecutive seat value for each page.
+
+    Examples:
+        get_seats_for_pages("12", 3) -> ["12", "13", "14"]
+        get_seats_for_pages("12-14", 3) -> ["12", "13", "14"]
+        get_seats_for_pages("12, 14, 16", 3) -> ["12", "14", "16"]
+        get_seats_for_pages("5А", 2) -> ["5А", "6А"]
+        get_seats_for_pages("Входной", 2) -> ["Входной", "Входной"]
+    """
+    if page_count <= 1 or not seat_spec:
+        return [seat_spec] if seat_spec else []
+
+    # Comma-separated list: "12, 13, 14"
+    if "," in seat_spec:
+        items = [s.strip() for s in seat_spec.split(",") if s.strip()]
+        if len(items) >= page_count:
+            return items[:page_count]
+        last = items[-1]
+        m = re.match(r"^(\d+)([а-яёa-z]?)$", last, re.I)
+        if m:
+            base_n = int(m.group(1))
+            suffix = m.group(2)
+            needed = page_count - len(items)
+            for i in range(1, needed + 1):
+                items.append(f"{base_n + i}{suffix}")
+            return items
+        return items + [last] * (page_count - len(items))
+
+    # Range: "12-14" or "12–14"
+    m_range = re.match(r"^(\d+)\s*[-–]\s*(\d+)$", seat_spec)
+    if m_range:
+        start = int(m_range.group(1))
+        end = int(m_range.group(2))
+        step = 1 if end >= start else -1
+        res = [str(x) for x in range(start, end + step, step)]
+        if len(res) >= page_count:
+            return res[:page_count]
+        last_val = int(res[-1])
+        for i in range(1, page_count - len(res) + 1):
+            res.append(str(last_val + i))
+        return res
+
+    # Single numeric value with optional letter: "12" or "12А"
+    m_single = re.match(r"^(\d+)([а-яёa-z]?)$", seat_spec.strip(), re.I)
+    if m_single:
+        base_num = int(m_single.group(1))
+        suffix = m_single.group(2)
+        return [f"{base_num + i}{suffix}" for i in range(page_count)]
+
+    return [seat_spec] * page_count
+
+
+def format_seat_summary(parsed: dict[str, str], page_count: int = 1) -> str:
     """Format human-readable summary of parsed seat instructions."""
     tokens = []
     if parsed.get("sector"):
@@ -96,7 +150,14 @@ def format_seat_summary(parsed: dict[str, str]) -> str:
     if parsed.get("row"):
         tokens.append(f"ряд {parsed['row']}")
     if parsed.get("seat"):
-        tokens.append(f"место {parsed['seat']}")
+        if page_count > 1:
+            seats = get_seats_for_pages(parsed["seat"], page_count)
+            if seats and len(seats) > 1 and seats[0] != seats[-1]:
+                tokens.append(f"места {seats[0]}–{seats[-1]} ({page_count} шт.)")
+            elif seats:
+                tokens.append(f"место {seats[0]}")
+        else:
+            tokens.append(f"место {parsed['seat']}")
     return " · ".join(tokens) or "новые места"
 
 
@@ -190,15 +251,20 @@ def apply_seat_edits(doc: Any, seat_input: str | dict[str, str], srv: Any) -> tu
 
     edits: list[dict[str, Any]] = []
     replaced_lines: dict[int, list[str]] = {}
+    page_count = len(doc)
+    page_seats = get_seats_for_pages(parsed.get("seat", ""), page_count) if (page_count > 1 and parsed.get("seat")) else [parsed.get("seat")] * page_count
 
-    for pno in range(len(doc)):
+    for pno in range(page_count):
         page = doc[pno]
+        page_parsed = dict(parsed)
+        if page_seats[pno] is not None:
+            page_parsed["seat"] = page_seats[pno]
         lines = srv.field_tags(srv.extract_lines(page))
         for l in lines:
             tags = set(l.get("tags") or [])
             if not (tags & {"row", "seat", "sector"}):
                 continue
-            nt = new_text_for_line(l, parsed)
+            nt = new_text_for_line(l, page_parsed)
             if nt and nt != l.get("text"):
                 edits.append({
                     "page": pno,

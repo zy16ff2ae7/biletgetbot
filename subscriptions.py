@@ -341,18 +341,27 @@ class SubscriptionStore:
             db.execute("ALTER TABLE doc_tokens ADD COLUMN fio TEXT DEFAULT NULL")
         if "seat_info" not in doc_cols:
             db.execute("ALTER TABLE doc_tokens ADD COLUMN seat_info TEXT DEFAULT NULL")
+        if "del_texts" not in doc_cols:
+            db.execute("ALTER TABLE doc_tokens ADD COLUMN del_texts TEXT DEFAULT NULL")
+        if "strip_pushkin" not in doc_cols:
+            db.execute("ALTER TABLE doc_tokens ADD COLUMN strip_pushkin INTEGER DEFAULT 0")
         db.execute("CREATE INDEX IF NOT EXISTS idx_doc_tokens_created ON doc_tokens(created)")
 
-    def save_doc_token(self, token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None):
+    def save_doc_token(self, token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None, del_texts=None, strip_pushkin=None):
         with self.db() as db:
             self._ensure_user_settings(db)
             db.execute(
-                "INSERT INTO doc_tokens(token, file_id, created, custom_price, hide_price, fio, seat_info) "
-                "VALUES(?, ?, ?, ?, ?, ?, ?) "
+                "INSERT INTO doc_tokens(token, file_id, created, custom_price, hide_price, fio, seat_info, del_texts, strip_pushkin) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(token) DO UPDATE SET "
                 "file_id=excluded.file_id, created=excluded.created, "
-                "custom_price=excluded.custom_price, hide_price=excluded.hide_price, fio=excluded.fio, seat_info=excluded.seat_info",
-                (token, file_id, int(time.time()), custom_price, (1 if hide_price else 0) if hide_price is not None else None, fio, seat_info)
+                "custom_price=excluded.custom_price, hide_price=excluded.hide_price, "
+                "fio=excluded.fio, seat_info=excluded.seat_info, "
+                "del_texts=excluded.del_texts, strip_pushkin=excluded.strip_pushkin",
+                (token, file_id, int(time.time()), custom_price,
+                 (1 if hide_price else 0) if hide_price is not None else None,
+                 fio, seat_info, del_texts,
+                 (1 if strip_pushkin else 0) if strip_pushkin is not None else None)
             )
             db.execute("DELETE FROM doc_tokens WHERE created < ?", (int(time.time()) - 7 * 86400,))
 
@@ -365,7 +374,7 @@ class SubscriptionStore:
     def get_doc_token_info(self, token):
         with self.db() as db:
             self._ensure_user_settings(db)
-            row = db.execute("SELECT file_id, custom_price, hide_price, fio, seat_info FROM doc_tokens WHERE token=?", (token,)).fetchone()
+            row = db.execute("SELECT file_id, custom_price, hide_price, fio, seat_info, del_texts, strip_pushkin FROM doc_tokens WHERE token=?", (token,)).fetchone()
             if not row:
                 return None
             return {
@@ -374,6 +383,8 @@ class SubscriptionStore:
                 "hide_price": bool(row["hide_price"]) if row["hide_price"] is not None else None,
                 "fio": row["fio"],
                 "seat_info": row["seat_info"],
+                "del_texts": row["del_texts"],
+                "strip_pushkin": bool(row["strip_pushkin"]) if row["strip_pushkin"] is not None else False,
             }
 
     def set_user_last_doc_token(self, user_id, token):

@@ -29,6 +29,7 @@ import batches
 import validation
 import ticket_meta
 import seat_tools
+import eraser_tools
 from progress import Progress, PDF_STEPS, BATCH_STEPS, COLLECT_STEPS
 from delivery_cache import DeliveryCache, key_for
 from url_delivery import Publisher
@@ -134,9 +135,9 @@ def _user_settings(uid):
         return {"fio": None, "state": None, "hide_price": 0, "batch_mode": "zip", "auto_preview": 0}
 
 
-def _save_doc_token(token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None, uid=None):
+def _save_doc_token(token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None, del_texts=None, strip_pushkin=None, uid=None):
     try:
-        get_store().save_doc_token(token, file_id, custom_price=custom_price, hide_price=hide_price, fio=fio, seat_info=seat_info)
+        get_store().save_doc_token(token, file_id, custom_price=custom_price, hide_price=hide_price, fio=fio, seat_info=seat_info, del_texts=del_texts, strip_pushkin=strip_pushkin)
         if uid is not None:
             get_store().set_user_last_doc_token(uid, token)
     except Exception:
@@ -172,7 +173,11 @@ GREETING = (
     "/subscribe — оформить; /subscription — статус.\n"
     "/settings — меню настроек (ФИО, скрытие цены, формат пачек, авто-превью).\n"
     "/fio — настроить ФИО зрителя (например, /fio Иванов Иван Иванович); /fio сброс — очистить.\n"
+    "/price — изменить цену билета (например, /price 2500); /price сброс — вернуть исходную.\n"
     "/seat — изменить ряд/место/сектор (например: /seat Ряд 3 Место 12); /seat сброс — вернуть исходные места.\n"
+    "/pushkin — снять Пушкинскую карту с билета.\n"
+    "/del — стереть любой лишний текст (например: /del Сервисный сбор); /del сброс — вернуть.\n"
+    "/avito — защищённое фото-превью со скрытыми кодами для Авито и соцсетей.\n"
     "/batch — собрать пачку PDF; /done — получить ZIP; /cancelbatch — отменить.\n"
     "/id — ваш Telegram ID; /terms — условия; /paysupport — помощь с оплатой."
 )
@@ -201,7 +206,7 @@ def _load_server():
 
 srv = _load_server()
 PROCESSING_VERSION = hashlib.sha256(b"".join(Path(path).read_bytes() for path in (
-    __file__, Path(HERE, "validation.py"), Path(HERE, "ticket_meta.py"), Path(HERE, "seat_tools.py"), Path(BILETNAYA, "server.py"), Path(BILETNAYA, "raster.py")
+    __file__, Path(HERE, "validation.py"), Path(HERE, "ticket_meta.py"), Path(HERE, "seat_tools.py"), Path(HERE, "eraser_tools.py"), Path(BILETNAYA, "server.py"), Path(BILETNAYA, "raster.py")
 )) + BOT_TOKEN.encode()).hexdigest()
 
 
@@ -331,7 +336,7 @@ def trim_memory():
         pass
 
 
-def clean_ticket_with_report(data, on_progress=None, spectator_fio=None, hide_price=False, custom_price=None, seat_info=None):
+def clean_ticket_with_report(data, on_progress=None, spectator_fio=None, hide_price=False, custom_price=None, seat_info=None, del_texts=None, strip_pushkin=False):
     """Return (ok, PDF bytes or explanation, cleanup metadata)."""
     try:
         return _clean_ticket_with_report_impl(
@@ -341,12 +346,14 @@ def clean_ticket_with_report(data, on_progress=None, spectator_fio=None, hide_pr
             hide_price=hide_price,
             custom_price=custom_price,
             seat_info=seat_info,
+            del_texts=del_texts,
+            strip_pushkin=strip_pushkin,
         )
     finally:
         trim_memory()
 
 
-def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, hide_price=False, custom_price=None, seat_info=None):
+def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, hide_price=False, custom_price=None, seat_info=None, del_texts=None, strip_pushkin=False):
     """Return (ok, PDF bytes or explanation, cleanup metadata)."""
     info = {"changed": False, "removed": 0}
     started = time.monotonic()
@@ -437,6 +444,31 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                 elif seat_err:
                     log.warning("seat replacement warning: %s", seat_err)
 
+            del_applied = False
+            if del_texts:
+                if isinstance(del_texts, str):
+                    targets = [t.strip() for t in del_texts.split("||") if t.strip()]
+                else:
+                    targets = list(del_texts)
+                for dt in targets:
+                    h_cnt, rem = eraser_tools.redact_text_from_doc(cleaned, dt, srv=srv)
+                    if h_cnt:
+                        del_applied = True
+                        for pno in range(len(cleaned)):
+                            if pno < len(validation_targets):
+                                for rm_str in rem:
+                                    validation_targets[pno].add(_normalized(rm_str))
+
+            pushkin_applied = False
+            if strip_pushkin:
+                p_cnt, p_rem = eraser_tools.strip_pushkin_card_from_doc(cleaned, srv=srv)
+                if p_cnt:
+                    pushkin_applied = True
+                    for pno in range(len(cleaned)):
+                        if pno < len(validation_targets):
+                            for rm_str in p_rem:
+                                validation_targets[pno].add(_normalized(rm_str))
+
             warnings = [warning for item in report for warning in item.get("warn", [])]
             if warnings:
                 log.warning("cleanup incomplete: %d engine warnings", len(warnings))
@@ -451,7 +483,7 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                     return False, ("Не удалось полностью удалить распознанные данные. "
                                    "Файл не отправлен."), info
             count = sum(len(item.get("removed", [])) for item in report)
-            info["changed"] = bool(ghosts or count or fio_val or hide_price or (price_val is not None) or seat_applied)
+            info["changed"] = bool(ghosts or count or fio_val or hide_price or (price_val is not None) or seat_applied or del_applied or pushkin_applied)
             info["removed"] = count
             if fio_val:
                 info["spectator_fio"] = fio_val
@@ -936,6 +968,21 @@ def build_settings_card(uid):
     return text, reply_markup
 
 
+def _sector_keyboard(token):
+    return {
+        "inline_keyboard": [
+            [{"text": "🎭 Партер", "callback_data": f"choose_sec:{token}:Партер"},
+             {"text": "🏛 Бельэтаж", "callback_data": f"choose_sec:{token}:Бельэтаж"}],
+            [{"text": "🏰 Балкон", "callback_data": f"choose_sec:{token}:Балкон"},
+             {"text": "🎪 Амфитеатр", "callback_data": f"choose_sec:{token}:Амфитеатр"}],
+            [{"text": "🚪 Ложа", "callback_data": f"choose_sec:{token}:Ложа"},
+             {"text": "🎩 Бенуар", "callback_data": f"choose_sec:{token}:Бенуар"}],
+            [{"text": "🏟 Трибуна", "callback_data": f"choose_sec:{token}:Трибуна"},
+             {"text": "🌌 Галерея", "callback_data": f"choose_sec:{token}:Галерея"}],
+        ]
+    }
+
+
 def _single_ticket_markup(token, hide_price=False, pages=1):
     seat_btn = {"text": "🪑 Изменить место/ряд", "callback_data": f"seat:{token}"}
     fio_btn = {"text": "👤 Изменить ФИО", "callback_data": f"fio:{token}"}
@@ -945,11 +992,14 @@ def _single_ticket_markup(token, hide_price=False, pages=1):
     else:
         price_toggle_btn = {"text": "🎁 Скрыть цену", "callback_data": f"toggleprice:{token}:1"}
     preview_btn = {"text": "🖼 Фото: До и После", "callback_data": f"compare:{token}"}
+    pushkin_btn = {"text": "🧹 Снять Пушкинскую", "callback_data": f"pushkin:{token}"}
+    avito_btn = {"text": "🛡 Для Авито", "callback_data": f"avito:{token}"}
 
     rows = [
         [seat_btn],
         [fio_btn, price_edit_btn],
         [price_toggle_btn, preview_btn],
+        [pushkin_btn, avito_btn],
     ]
     if pages > 1:
         rows.append([{"text": f"✂️ Разбить на билеты ({pages} шт.)", "callback_data": f"split:{token}"}])
@@ -1256,7 +1306,7 @@ def process_document(msg, collection_id=None, job_id=None):
 
 def handle_callback_query(cb):
     data = cb.get("data") or ""
-    if not any(data == x or data.startswith(f"{x}:") for x in ("unpack", "merge", "preview", "compare", "price", "fio", "seat", "set", "toggleprice", "split")):
+    if not any(data == x or data.startswith(f"{x}:") for x in ("unpack", "merge", "preview", "compare", "price", "fio", "seat", "choose_sec", "pushkin", "avito", "set", "toggleprice", "split")):
         return
 
     sender = cb.get("from") or {}
@@ -1612,19 +1662,43 @@ def handle_callback_query(cb):
         state_key = token or target_file_id
         get_store().set_user_state(uid, f"waiting_seat:{state_key}")
         cur_seat = doc_info.get("seat_info") if doc_info else None
-        if cur_seat:
-            prompt = (
-                f"🪑 Сейчас указано: {cur_seat}\n\n"
-                f"Введите новый ряд, место или сектор (например: «Ряд 3 Место 12» или «Партер, ряд 5, место 10»):\n"
-                f"Для возврата исходных мест напишите «сброс»\n"
-                f"(для отмены напишите «отмена»)"
-            )
-        else:
-            prompt = (
-                f"🪑 Введите новый ряд, место или сектор (например: «Ряд 3 Место 12» или «Партер, ряд 5, место 10»):\n"
-                f"(для отмены напишите «отмена»)"
-            )
+        kb = _sector_keyboard(state_key)
+        prefix = f"🪑 Сейчас указано: {cur_seat}\n\n" if cur_seat else "🪑 Введите новый ряд, место или сектор:\n\n"
+        prompt = (
+            f"{prefix}"
+            f"Выберите сектор кнопкой ниже или напишите в чат вручную:\n"
+            f"(бывают и любые другие сектора: Сектор А, VIP-ложа, Танцпол, Подиум, Ярус 2 и т.д.)\n\n"
+            f"Примеры ввода:\n"
+            f"• Ряд 3 Место 12\n"
+            f"• Партер, ряд 5, место 10\n"
+            f"• 3 12 (быстрый ввод: ряд 3, место 12)\n"
+            f"• Ряд 4 Места 12-14 (для нескольких билетов подряд)\n"
+            f"• сброс — вернуть исходные места\n"
+            f"(для отмены напишите «отмена»)"
+        )
+        return send_text(chat, prompt, reply_markup=kb)
+
+    if data.startswith("choose_sec:"):
+        parts = data.split(":", 2)
+        token = parts[1]
+        sector = parts[2] if len(parts) > 2 else ""
+        get_store().set_user_state(uid, f"waiting_seat_row:{token}:{sector}")
+        prompt = (
+            f"🎭 Выбран сектор: **{sector}**.\n\n"
+            f"Теперь введите ряд и место (например: «Ряд 3 Место 12» или просто «3 12»):\n"
+            f"• Если на билете несколько страниц, места назначим подряд автоматически (например «3 12» -> 12, 13, 14...)\n"
+            f"• Если хотите применить только сектор без смены ряда/места, напишите «только сектор»\n"
+            f"(для отмены напишите «отмена»)"
+        )
         return send_text(chat, prompt)
+
+    if data.startswith("pushkin:"):
+        token = data.split(":", 1)[1] if ":" in data else None
+        return _reissue_ticket_with_pushkin_strip(chat, uid, token)
+
+    if data.startswith("avito:"):
+        token = data.split(":", 1)[1] if ":" in data else None
+        return _send_avito_preview(chat, uid, token)
 
 
 def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
@@ -1639,11 +1713,15 @@ def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
         tok_price = doc_info["custom_price"]
         tok_hide = doc_info["hide_price"]
         tok_fio = doc_info["fio"]
+        tok_del = doc_info.get("del_texts")
+        tok_pushkin = doc_info.get("strip_pushkin")
     else:
         target_file_id = get_store().get_doc_by_token(ref) or ref
         tok_price = None
         tok_hide = None
         tok_fio = None
+        tok_del = None
+        tok_pushkin = False
 
     if cleaned_cmd.lower() in {"сброс", "reset", "clear", "none"}:
         new_seat = None
@@ -1679,7 +1757,9 @@ def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
         spectator_fio=cur_fio,
         hide_price=hide_price,
         custom_price=custom_price,
-        seat_info=new_seat
+        seat_info=new_seat,
+        del_texts=tok_del,
+        strip_pushkin=tok_pushkin
     )
     if not ok:
         return send_text(chat, f"Не удалось обновить билет: {result}")
@@ -1688,7 +1768,196 @@ def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
     out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price)
     caption = ticket_meta.format_single_ticket_caption(meta, info)
     new_token = secrets.token_hex(8)
-    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=new_seat, uid=uid)
+    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=new_seat, del_texts=tok_del, strip_pushkin=tok_pushkin, uid=uid)
+    pages_cnt = 1
+    try:
+        with fitz.open(stream=result, filetype="pdf") as _d:
+            pages_cnt = len(_d)
+    except Exception:
+        pass
+    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt)
+    sent = send_cleaned(chat, result, out_name, caption, reply_markup=markup)
+    if not sent:
+        return send_text(chat, "Не удалось отправить обновлённый билет.")
+    auto_preview = bool(u_settings.get("auto_preview", 0))
+    if auto_preview:
+        img_bytes = render_pdf_preview(result)
+        if img_bytes:
+            send_photo(chat, img_bytes, caption="🖼 Авто-превью билета")
+    return
+
+
+def _reissue_ticket_with_pushkin_strip(chat, uid, ref):
+    get_store().set_user_state(uid, None)
+    doc_info = get_store().get_doc_token_info(ref)
+    if doc_info:
+        target_file_id = doc_info["file_id"]
+        tok_price = doc_info["custom_price"]
+        tok_hide = doc_info["hide_price"]
+        tok_fio = doc_info["fio"]
+        tok_seat = doc_info["seat_info"]
+        tok_del = doc_info.get("del_texts")
+    else:
+        target_file_id = get_store().get_doc_by_token(ref) or ref
+        tok_price = None
+        tok_hide = None
+        tok_fio = None
+        tok_seat = None
+        tok_del = None
+
+    data = download_file(target_file_id)
+    if not data:
+        return send_text(chat, "Не удалось скачать исходный файл.")
+
+    u_settings = _user_settings(uid)
+    cur_fio = tok_fio if tok_fio is not None else get_store().get_user_fio(uid)
+    hide_price = tok_hide if tok_hide is not None else bool(u_settings.get("hide_price", 0))
+    custom_price = tok_price if tok_price is not None else u_settings.get("custom_price")
+
+    send_text(chat, "🧹 Снимаю Пушкинскую карту и перевожу билет в коммерческий вид...")
+    ok, result, info = clean_ticket_with_report(
+        data,
+        spectator_fio=cur_fio,
+        hide_price=hide_price,
+        custom_price=custom_price,
+        seat_info=tok_seat,
+        del_texts=tok_del,
+        strip_pushkin=True
+    )
+    if not ok:
+        return send_text(chat, f"Не удалось обновить билет: {result}")
+
+    meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
+    out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price)
+    caption = "🧹 Пушкинская карта снята с билета!\n\n" + ticket_meta.format_single_ticket_caption(meta, info)
+    new_token = secrets.token_hex(8)
+    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=tok_seat, del_texts=tok_del, strip_pushkin=True, uid=uid)
+    pages_cnt = 1
+    try:
+        with fitz.open(stream=result, filetype="pdf") as _d:
+            pages_cnt = len(_d)
+    except Exception:
+        pass
+    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt)
+    sent = send_cleaned(chat, result, out_name, caption, reply_markup=markup)
+    if not sent:
+        return send_text(chat, "Не удалось отправить обновлённый билет.")
+    auto_preview = bool(u_settings.get("auto_preview", 0))
+    if auto_preview:
+        img_bytes = render_pdf_preview(result)
+        if img_bytes:
+            send_photo(chat, img_bytes, caption="🖼 Авто-превью билета")
+    return
+
+
+def _send_avito_preview(chat, uid, ref):
+    doc_info = get_store().get_doc_token_info(ref)
+    if doc_info:
+        target_file_id = doc_info["file_id"]
+        tok_price = doc_info["custom_price"]
+        tok_hide = doc_info["hide_price"]
+        tok_fio = doc_info["fio"]
+        tok_seat = doc_info["seat_info"]
+        tok_del = doc_info.get("del_texts")
+        tok_pushkin = doc_info.get("strip_pushkin")
+    else:
+        target_file_id = get_store().get_doc_by_token(ref) or ref
+        tok_price = None
+        tok_hide = None
+        tok_fio = None
+        tok_seat = None
+        tok_del = None
+        tok_pushkin = False
+
+    data = download_file(target_file_id)
+    if not data:
+        return send_text(chat, "Не удалось скачать файл для создания превью.")
+
+    u_settings = _user_settings(uid)
+    cur_fio = tok_fio if tok_fio is not None else get_store().get_user_fio(uid)
+    hide_price = tok_hide if tok_hide is not None else bool(u_settings.get("hide_price", 0))
+    custom_price = tok_price if tok_price is not None else u_settings.get("custom_price")
+
+    ok, result, info = clean_ticket_with_report(
+        data,
+        spectator_fio=cur_fio,
+        hide_price=hide_price,
+        custom_price=custom_price,
+        seat_info=tok_seat,
+        del_texts=tok_del,
+        strip_pushkin=tok_pushkin
+    )
+    pdf_to_mask = result if ok and isinstance(result, (bytes, bytearray)) else data
+    png_bytes = eraser_tools.make_avito_preview(pdf_to_mask, srv=srv)
+    if not png_bytes:
+        return send_text(chat, "Не удалось сгенерировать превью для Авито.")
+
+    caption = (
+        "🛡 **Защищённое фото для публикации на Авито / Юле / соцсетях**\n\n"
+        "• Штрихкоды и QR-коды надёжно скрыты защитной плашкой — мошенники не украдут билет до покупки.\n"
+        "• Мероприятие, дата, ряд, место и цена отлично видны покупателям.\n"
+        "• Можно сразу выкладывать в объявление!"
+    )
+    return send_photo(chat, png_bytes, caption=caption)
+
+
+def _reissue_ticket_with_deletion(chat, uid, ref, target_text):
+    get_store().set_user_state(uid, None)
+    clean_target = target_text.strip()
+    if clean_target.lower() in {"отмена", "cancel"}:
+        return send_text(chat, "Удаление текста отменено.")
+
+    doc_info = get_store().get_doc_token_info(ref)
+    if doc_info:
+        target_file_id = doc_info["file_id"]
+        tok_price = doc_info["custom_price"]
+        tok_hide = doc_info["hide_price"]
+        tok_fio = doc_info["fio"]
+        tok_seat = doc_info["seat_info"]
+        tok_del = doc_info.get("del_texts")
+        tok_pushkin = doc_info.get("strip_pushkin")
+    else:
+        target_file_id = get_store().get_doc_by_token(ref) or ref
+        tok_price = None
+        tok_hide = None
+        tok_fio = None
+        tok_seat = None
+        tok_del = None
+        tok_pushkin = False
+
+    if clean_target.lower() in {"сброс", "reset", "clear"}:
+        new_del = None
+        send_text(chat, "Все ручные удаления сброшены. Перевыпускаю билет...")
+    else:
+        new_del = f"{tok_del}||{clean_target}" if tok_del else clean_target
+        send_text(chat, f"✂️ Стираю «{clean_target}» с билета...")
+
+    data = download_file(target_file_id)
+    if not data:
+        return send_text(chat, "Не удалось скачать исходный файл.")
+
+    u_settings = _user_settings(uid)
+    cur_fio = tok_fio if tok_fio is not None else get_store().get_user_fio(uid)
+    hide_price = tok_hide if tok_hide is not None else bool(u_settings.get("hide_price", 0))
+    custom_price = tok_price if tok_price is not None else u_settings.get("custom_price")
+
+    ok, result, info = clean_ticket_with_report(
+        data,
+        spectator_fio=cur_fio,
+        hide_price=hide_price,
+        custom_price=custom_price,
+        seat_info=tok_seat,
+        del_texts=new_del,
+        strip_pushkin=tok_pushkin
+    )
+    if not ok:
+        return send_text(chat, f"Не удалось обновить билет: {result}")
+
+    meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
+    out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price)
+    caption = f"✂️ Текст «{clean_target}» удалён!\n\n" + ticket_meta.format_single_ticket_caption(meta, info) if new_del else ticket_meta.format_single_ticket_caption(meta, info)
+    new_token = secrets.token_hex(8)
+    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=tok_seat, del_texts=new_del, strip_pushkin=tok_pushkin, uid=uid)
     pages_cnt = 1
     try:
         with fitz.open(stream=result, filetype="pdf") as _d:
@@ -1789,19 +2058,21 @@ def handle(msg, update_id=None, queued=False):
                 get_store().set_user_state(uid, f"waiting_seat:{recent_token}")
                 doc_info = get_store().get_doc_token_info(recent_token)
                 cur_seat = doc_info.get("seat_info") if doc_info else None
-                if cur_seat:
-                    prompt = (
-                        f"🪑 Сейчас установлено: {cur_seat}\n\n"
-                        f"Введите новый ряд, место или сектор (например: «Ряд 3 Место 12» или «Партер, ряд 5, место 10»):\n"
-                        f"Для возврата исходных мест напишите «сброс»\n"
-                        f"(для отмены напишите «отмена»)"
-                    )
-                else:
-                    prompt = (
-                        f"🪑 Введите новый ряд, место или сектор (например: «Ряд 3 Место 12» или «Партер, ряд 5, место 10»):\n"
-                        f"(для отмены напишите «отмена»)"
-                    )
-                return send_text(chat, prompt)
+                kb = _sector_keyboard(recent_token)
+                prefix = f"🪑 Сейчас установлено: {cur_seat}\n\n" if cur_seat else "🪑 **Смена места, ряда и сектора**\n\n"
+                prompt = (
+                    f"{prefix}"
+                    f"Выберите сектор кнопкой ниже или напишите в чат вручную:\n"
+                    f"(бывают и любые другие сектора: Сектор А, VIP-ложа, Танцпол, Подиум, Ярус 2 и т.д.)\n\n"
+                    f"Примеры ввода:\n"
+                    f"• Ряд 3 Место 12\n"
+                    f"• Партер, ряд 5, место 10\n"
+                    f"• 3 12 (быстрый ввод: ряд 3, место 12)\n"
+                    f"• Ряд 4 Места 12-14 (для нескольких билетов подряд)\n"
+                    f"• сброс — вернуть исходные места\n"
+                    f"(для отмены напишите «отмена»)"
+                )
+                return send_text(chat, prompt, reply_markup=kb)
             else:
                 return send_text(
                     chat,
@@ -1820,6 +2091,41 @@ def handle(msg, update_id=None, queued=False):
                 "Пришлите PDF с билетом, после чего используйте команду /seat."
             )
         return _reissue_ticket_with_seat(chat, uid, recent_token, arg)
+    if command in {"/del", "/erase"}:
+        parts = text.split(maxsplit=1)
+        recent_token = get_store().get_user_last_doc_token(uid)
+        if len(parts) == 1:
+            if recent_token:
+                get_store().set_user_state(uid, f"waiting_del:{recent_token}")
+                return send_text(
+                    chat,
+                    "✂️ **Универсальный ластик**\n\n"
+                    "Напишите текст, который нужно стереть с билета (например: «Пушкинская карта», «ФИО зрителя» или «Сервисный сбор»):\n"
+                    "Для сброса всех удалений напишите «сброс»\n"
+                    "(для отмены напишите «отмена»)"
+                )
+            else:
+                return send_text(
+                    chat,
+                    "✂️ **Универсальный ластик**\n\n"
+                    "Сначала пришлите билет в PDF. Затем используйте команду:\n"
+                    "/del Пушкинская карта\n"
+                    "/del <любой лишний текст>"
+                )
+        arg = parts[1].strip()
+        if not recent_token:
+            return send_text(chat, "✂️ Не найден недавний билет для удаления текста.\nПришлите PDF с билетом, затем используйте команду /del.")
+        return _reissue_ticket_with_deletion(chat, uid, recent_token, arg)
+    if command in {"/pushkin", "/pk"}:
+        recent_token = get_store().get_user_last_doc_token(uid)
+        if not recent_token:
+            return send_text(chat, "🧹 Не найден недавний билет. Пришлите PDF с билетом, затем используйте команду /pushkin.")
+        return _reissue_ticket_with_pushkin_strip(chat, uid, recent_token)
+    if command in {"/avito", "/safe", "/resale"}:
+        recent_token = get_store().get_user_last_doc_token(uid)
+        if not recent_token:
+            return send_text(chat, "🛡 Не найден недавний билет. Пришлите PDF с билетом, затем используйте команду /avito.")
+        return _send_avito_preview(chat, uid, recent_token)
     if command == "/terms":
         return send_text(chat, f"Абонемент: {CONFIG['price_stars']} Stars за 30 дней без лимита билетов. Автопродление — каждые 30 дней; отмена /cancel_subscription. В одной пачке до 50 PDF и 100 МБ распакованных данных. Входящий файл до 20 МБ. Исходные файлы пачки хранятся на сервере не более часа и удаляются после отправки. По вопросам оплаты: /paysupport.")
     if command == "/paysupport":
@@ -2041,6 +2347,18 @@ def handle(msg, update_id=None, queued=False):
     if state and state.startswith("waiting_seat:") and text and not command.startswith("/"):
         ref = state.split(":", 1)[1]
         return _reissue_ticket_with_seat(chat, uid, ref, text)
+    if state and state.startswith("waiting_seat_row:") and text and not command.startswith("/"):
+        parts = state.split(":", 2)
+        ref = parts[1]
+        sec = parts[2] if len(parts) > 2 else ""
+        if text.strip().lower() in {"только сектор", "сектор"}:
+            full_input = f"сектор {sec}"
+        else:
+            full_input = f"{sec}, {text.strip()}"
+        return _reissue_ticket_with_seat(chat, uid, ref, full_input)
+    if state and state.startswith("waiting_del:") and text and not command.startswith("/"):
+        ref = state.split(":", 1)[1]
+        return _reissue_ticket_with_deletion(chat, uid, ref, text)
     if msg.get("document"):
         if not has_access(uid):
             return show_status(chat, uid)
@@ -2114,6 +2432,12 @@ def dispatch_update(update):
             text = "Генерирую фото-превью..."
         elif data.startswith("fio"):
             text = "Редактирование ФИО..."
+        elif data.startswith("choose_sec"):
+            text = "Выбор сектора..."
+        elif data.startswith("pushkin"):
+            text = "Снимаю Пушкинскую карту..."
+        elif data.startswith("avito"):
+            text = "Генерирую версию для Авито..."
         if cb_id:
             tg("answerCallbackQuery", callback_query_id=cb_id, text=text)
         store.enqueue(ident, {"kind": "callback_query", "callback": cb})
