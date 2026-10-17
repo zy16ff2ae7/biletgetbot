@@ -165,7 +165,8 @@ def date_label(timestamp):
 
 BRAND_NAME = "ДЕД РЕДАЧИТ"
 BRAND_AVATAR = Path(HERE, "brand", "ded.jpg")       # аватар: дед за пишущей машинкой
-WELCOME_IMAGE = Path(HERE, "brand", "welcome.jpg")  # приветственная картинка для /start
+WELCOME_ANIMATION = Path(HERE, "brand", "welcome.mp4")  # динамичное приветствие
+_WELCOME_MEDIA_ID = None  # кеш file_id, чтобы не перезагружать ролик
 
 
 def _photo_or_none(path):
@@ -904,11 +905,49 @@ def send_help(chat, user_id=None):
     return send_text(chat, HELP_TEXT, markup=None if (user_id and is_admin(user_id)) else MAIN_MARKUP)
 
 
+def _send_brand_media(chat, path, kind, caption, markup):
+    """Send brand media by cached file_id, upload as fallback. Return bool."""
+    global _WELCOME_MEDIA_ID
+    payload = {"chat_id": str(chat), "caption": caption[:1000], "reply_markup": json.dumps(markup)}
+    field = "video" if kind == "video" else "photo"
+    method = "sendAnimation" if kind == "video" else "sendPhoto"
+    if _WELCOME_MEDIA_ID:
+        try:
+            r = http_session().post(f"{API}/{method}", json={**payload, field: _WELCOME_MEDIA_ID}, timeout=(10, 60))
+            if r.json().get("ok"):
+                return True
+            _WELCOME_MEDIA_ID = None
+        except (requests.RequestException, ValueError) as e:
+            log.warning("brand media by id: %s", _safe_error(e))
+    try:
+        r = http_session().post(f"{API}/{method}",
+                                files={field: (path.name, io.BytesIO(path.read_bytes()),
+                                               "video/mp4" if kind == "video" else "image/jpeg")},
+                                data=payload, timeout=(10, 120))
+        res = r.json()
+        if res.get("ok"):
+            result = res.get("result") or {}
+            if kind == "video":
+                new_id = (result.get("video") or {}).get("file_id")
+            else:
+                photos = result.get("photo") or []
+                new_id = photos[-1].get("file_id") if photos else None
+            if new_id:
+                _WELCOME_MEDIA_ID = new_id
+            return True
+        log.warning("sendBrandMedia: %s", _safe_error(res.get("description", "")))
+        return False
+    except (requests.RequestException, ValueError) as e:
+        log.warning("sendBrandMedia upload: %s", _safe_error(e))
+        return False
+
+
 def send_welcome(chat, user_id):
+    if WELCOME_ANIMATION.exists() and _send_brand_media(chat, WELCOME_ANIMATION, "video", GREETING, MAIN_MARKUP):
+        return True
     photo = _photo_or_none(WELCOME_IMAGE)
-    caption = GREETING
     if photo:
-        payload = {"chat_id": str(chat), "caption": caption[:1000], "reply_markup": json.dumps(MAIN_MARKUP)}
+        payload = {"chat_id": str(chat), "caption": GREETING[:1000], "reply_markup": json.dumps(MAIN_MARKUP)}
         try:
             r = http_session().post(f"{API}/sendPhoto",
                                     files={"photo": ("welcome.jpg", io.BytesIO(photo), "image/jpeg")},
@@ -917,7 +956,7 @@ def send_welcome(chat, user_id):
                 return True
         except (requests.RequestException, ValueError) as e:
             log.warning("sendPhoto welcome: %s", _safe_error(e))
-    return send_text(chat, caption, markup=MAIN_MARKUP)
+    return send_text(chat, GREETING, markup=MAIN_MARKUP)
 
 
 def send_profile(chat, user_id, username=None):
