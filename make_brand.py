@@ -302,12 +302,13 @@ def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0):
             d.text((hx + gdx, hy + gdy), HANDLE, font=small_font, fill=(0, 0, 0, int(a * 0.8)))
         d.text((hx, hy), HANDLE, font=small_font, fill=(*PLATINUM, a))
         cy = hy + 11
+        r = 2.8
         for side in (-1, 1):
-            line_end = hx + (side * -14)
-            line_start = line_end + (side * -70)
-            d.line([line_start, cy, line_end, cy], fill=(198, 172, 182, int(a * 0.8)), width=1)
-            mid = (line_start + line_end) / 2
-            r = 2.8
+            # Ромб и линия СНАРУЖИ от текста: слева от левого края, справа от правого.
+            inner = hx - 14 if side < 0 else hx + hw + 14
+            outer = inner + side * 70
+            d.line([outer, cy, inner, cy], fill=(198, 172, 182, int(a * 0.8)), width=1)
+            mid = (outer + inner) / 2
             d.polygon([(mid, cy - r), (mid + r, cy), (mid, cy + r), (mid - r, cy)],
                       fill=(*GOLD_EDGE, a))
     return ov
