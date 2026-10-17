@@ -95,7 +95,7 @@ def vignette(img, strength=0.34):
     return Image.composite(img, ImageEnhance.Brightness(img).enhance(1.0 - strength), m)
 
 
-def grain(img, frame, amount=3.2):
+def grain(img, frame, amount=2.6):
     """Subtle film grain, unique per frame."""
     rng = np.random.default_rng(frame * 7 + 1)
     noise = rng.normal(0.0, amount, (H, W, 1)).astype(np.int16)
@@ -199,7 +199,6 @@ def text_overlay(title_alpha, sub_alpha, handle_alpha):
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     drift = int((1 - title_alpha) * 12)          # мягкое всплытие при появлении
     y0 = H - 188 + drift
-    glyph_h = int(title_font.size * 1.06)
 
     # Лента-подложка: появляется вместе с заголовком, верхняя кромка — фейд.
     band_top = y0 - 32
@@ -222,17 +221,21 @@ def text_overlay(title_alpha, sub_alpha, handle_alpha):
         md.text((x, y0), ch, font=title_font, fill=255)
         x += probe.textlength(ch, font=title_font) + tracking
 
-    shadow = ImageChops.offset(mask.filter(ImageFilter.GaussianBlur(6)), 3, 5)
-    shadow = shadow.point(lambda v: int(v * 0.55 * title_alpha))
+    shadow = ImageChops.offset(mask.filter(ImageFilter.GaussianBlur(10)), 2, 4)
+    shadow = shadow.point(lambda v: int(v * 0.35 * title_alpha))
     shadow_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     shadow_layer.paste(Image.new("RGBA", (W, H), (8, 4, 10, 255)), (0, 0), shadow)
     ov = Image.alpha_composite(ov, shadow_layer)
 
     if title_alpha > 0:
         gold_mask = mask.point(lambda v: int(v * title_alpha))
-        gold_full = Image.new("RGB", (W, H), (0, 0, 0))
-        gold_full.paste(_gold_gradient(y0, y0 + glyph_h), (0, y0), mask.crop((0, y0, W, y0 + glyph_h)))
-        ov.paste(gold_full, (0, 0), gold_mask)
+        # Градиент строго по фактическому bbox чернил: лапки «Д» ниже базовой
+        # линии тоже должны получить золото, иначе остаются чёрные шипы.
+        ink = mask.getbbox()
+        grad = _gold_gradient(ink[1], ink[3]).crop((ink[0], 0, ink[2], ink[3] - ink[1])).convert("RGBA")
+        gold_full = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        gold_full.paste(grad, (ink[0], ink[1]), mask.crop(ink))
+        ov = Image.alpha_composite(ov, gold_full)
         bevel = ImageChops.subtract(mask, ImageChops.offset(mask, 0, 1)).point(
             lambda v: int(v * 0.6 * title_alpha))
         ov.paste(Image.new("RGBA", (W, H), (255, 250, 236, 255)), (0, 0), bevel)
@@ -249,16 +252,6 @@ def text_overlay(title_alpha, sub_alpha, handle_alpha):
             d.text((sx + 1, sy + 1), ch, font=sub_font, fill=(8, 4, 10, a))
             d.text((sx, sy), ch, font=sub_font, fill=(*CREAM, a))
             sx += probe.textlength(ch, font=sub_font) + sub_tracking
-        rule_alpha = int(a * 0.85)
-        line_y = sy + 44
-        edge = (W - sw) / 2 - 14
-        for side in (-1, 1):
-            x_from, x_to = (edge, edge - 120) if side < 0 else (W - edge, W - edge + 120)
-            d.line([x_from, line_y, x_to, line_y], fill=(168, 138, 148, rule_alpha), width=1)
-            mid = (x_from + x_to) / 2
-            r = 3.2
-            d.polygon([(mid, line_y - r), (mid + r, line_y), (mid, line_y + r), (mid - r, line_y)],
-                      fill=(*GOLD_EDGE, rule_alpha))
 
     # Канал: @biletgetbot между орнаментальными линейками.
     if handle_alpha > 0:
@@ -269,8 +262,8 @@ def text_overlay(title_alpha, sub_alpha, handle_alpha):
         d.text((hx, hy), HANDLE, font=small_font, fill=(*MUTED, a))
         line_y = hy + 15
         for side in (-1, 1):
-            line_end = hx + (side * -22)
-            line_start = line_end + (side * -104)
+            line_end = hx + (side * -18)
+            line_start = line_end + (side * -86)
             d.line([line_start, line_y, line_end, line_y], fill=(168, 138, 148, int(a * 0.8)), width=1)
             mid = (line_start + line_end) / 2
             r = 3.0
