@@ -31,7 +31,7 @@ GOLD_MID = (243, 211, 146)
 GOLD_DEEP = (198, 150, 86)
 GOLD_EDGE = (240, 205, 138)
 CREAM = (246, 235, 212)
-MUTED = (206, 188, 198)
+MUTED = (236, 228, 234)
 
 TITLE_IN = (10, 22)     # окно фейда заголовка, кадры
 SUB_IN = (32, 40)       # окно фейда подзаголовка
@@ -187,7 +187,7 @@ def text_overlay(title_alpha, sub_alpha, handle_alpha):
         return Image.new("RGBA", (W, H), (0, 0, 0, 0))
     title_font = _font(FONT_MAIN, 78)
     sub_font = _font(FONT_MAIN, 25)
-    small_font = _font(FONT_MAIN, 22)
+    small_font = _font(FONT_MAIN, 25)
     tracking = 14
     sub_tracking = 6
 
@@ -204,7 +204,7 @@ def text_overlay(title_alpha, sub_alpha, handle_alpha):
     band_top = y0 - 32
     fade_h = 70
     alpha_col = np.zeros(H)
-    band_alpha = 178.0 * title_alpha
+    band_alpha = 208.0 * title_alpha
     first, last = max(0, band_top), min(H, band_top + fade_h)
     alpha_col[first:last] = (np.linspace(0, 1, last - first) ** 0.8) * band_alpha
     alpha_col[last:] = band_alpha
@@ -242,29 +242,38 @@ def text_overlay(title_alpha, sub_alpha, handle_alpha):
 
     d = ImageDraw.Draw(ov)
 
-    # Подзаголовок: капители Prata, кремовый цвет, золотые линейки по бокам.
+    # Подзаголовок: капители Prata с тёмным гало — чистая кромка на любом фоне.
     if sub_alpha > 0:
         a = int(255 * sub_alpha)
         sw = width_of(SUBTITLE, sub_font, sub_tracking)
         sx = (W - sw) / 2
         sy = y0 + 96
         for ch in SUBTITLE:
-            d.text((sx + 1, sy + 1), ch, font=sub_font, fill=(8, 4, 10, a))
-            d.text((sx, sy), ch, font=sub_font, fill=(*CREAM, a))
+            for gdx, gdy in ((1, 1), (-1, 1), (1, -1), (-1, -1), (2, 1), (0, 2)):
+                d.text((sx + gdx, sy + gdy), ch, font=sub_font, fill=(8, 4, 10, int(a * 0.55)))
+            d.text((sx, sy), ch, font=sub_font, fill=(252, 245, 230, a))
             sx += probe.textlength(ch, font=sub_font) + sub_tracking
 
-    # Канал: @biletgetbot между орнаментальными линейками.
+    # Канал: @biletgetbot на мягкой тёмной плашке, с орнаментальными линейками.
     if handle_alpha > 0:
         a = int(255 * handle_alpha)
-        hy = y0 + 142
+        hy = y0 + 138
         hw = probe.textlength(HANDLE, font=small_font)
         hx = (W - hw) / 2
-        d.text((hx, hy), HANDLE, font=small_font, fill=(*MUTED, a))
-        line_y = hy + 15
+        under = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ud = ImageDraw.Draw(under)
+        ud.rounded_rectangle([hx - 128, hy - 8, hx + hw + 128, hy + int(small_font.size * 1.5) + 8],
+                             radius=16, fill=(12, 6, 16, int(150 * handle_alpha)))
+        ov = Image.alpha_composite(ov, under.filter(ImageFilter.GaussianBlur(7)))
+        d = ImageDraw.Draw(ov)
+        for gdx, gdy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
+            d.text((hx + gdx, hy + gdy), HANDLE, font=small_font, fill=(8, 4, 10, int(a * 0.6)))
+        d.text((hx, hy), HANDLE, font=small_font, fill=(236, 228, 234, a))
+        line_y = hy + 16
         for side in (-1, 1):
-            line_end = hx + (side * -18)
-            line_start = line_end + (side * -86)
-            d.line([line_start, line_y, line_end, line_y], fill=(168, 138, 148, int(a * 0.8)), width=1)
+            line_end = hx + (side * -20)
+            line_start = line_end + (side * -88)
+            d.line([line_start, line_y, line_end, line_y], fill=(198, 172, 182, int(a * 0.9)), width=1)
             mid = (line_start + line_end) / 2
             r = 3.0
             d.polygon([(mid, line_y - r), (mid + r, line_y), (mid, line_y + r), (mid - r, line_y)],
@@ -350,8 +359,8 @@ for f in range(FRAMES):
     if scene == "win":
         frame = sparks.draw(frame, local)
     frame = vignette(frame)
-    frame = compose_text(frame, t_title, t_sub, t_handle)
     frame = grain(frame, f)
+    frame = compose_text(frame, t_title, t_sub, t_handle)
     frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
 
 print("frames:", FRAMES, "size:", W, "x", H)
