@@ -41,6 +41,7 @@ BAR_T = 42           # верхний бар
 TITLE_IN = (9, 18)
 SUB_IN = (20, 27)
 HANDLE_IN = (26, 32)
+CTA_IN = (58, 64)    # подсказка об абонементе в верхнем баре
 BARS_IN = 10         # бары задвигаются за 10 кадров
 
 
@@ -198,7 +199,14 @@ def _gold_text(ov, mask, alpha):
     return ov
 
 
-def overlay(title_a, sub_a, handle_a, bars_e):
+_probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+
+
+def probe_w(font, ch):
+    return _probe.textlength(ch, font=font)
+
+
+def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0):
     """Кинематографичный letterbox: чистые чёрные бары с тонкой золотой
     кромкой; титры — внутри нижнего бара, на идеально чёрном фоне."""
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -213,6 +221,18 @@ def overlay(title_a, sub_a, handle_a, bars_e):
     line_a = int(150 * bars_e)
     d.line([0, H - bar_b - 1, W, H - bar_b - 1], fill=(212, 170, 96, line_a), width=1)
     d.line([0, bar_t, W, bar_t], fill=(212, 170, 96, int(line_a * 0.55)), width=1)
+
+    # CTA в верхнем баре: появляется в конце цикла.
+    if cta_a > 0:
+        cta_font = _font(FONT_MAIN, 17)
+        cta = "абонемент — 1000 ★ · /subscribe"
+        a = int(255 * cta_a)
+        cw = sum(probe_w(cta_font, ch) + 2 for ch in cta) - 2
+        cx = (W - cw) / 2
+        cy = max(8, (bar_t - 20) // 2)
+        for ch in cta:
+            d.text((cx, cy), ch, font=cta_font, fill=(*GOLD_MID, a))
+            cx += probe_w(cta_font, ch) + 2
 
     probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
 
@@ -275,8 +295,8 @@ def overlay(title_a, sub_a, handle_a, bars_e):
     return ov
 
 
-def compose(img, title_a, sub_a, handle_a, bars_e):
-    o = overlay(title_a, sub_a, handle_a, bars_e)
+def compose(img, title_a, sub_a, handle_a, bars_e, cta_a=0.0):
+    o = overlay(title_a, sub_a, handle_a, bars_e, cta_a)
     return Image.alpha_composite(img.convert("RGBA"), o).convert("RGB")
 
 
@@ -291,7 +311,7 @@ poster = screen(poster, glow_layer(0.35))
 poster = Dust(seed=11).draw(poster, 8)
 poster = vignette(poster)
 poster = grain(poster, 3)
-poster = compose(poster, 1, 1, 1, 1)
+poster = compose(poster, 1, 1, 1, 1, 0)
 poster.save(BRAND / "welcome.jpg", quality=90)
 
 # --- аватар: триумфальный кадр с поднятым билетом ----------------------------
@@ -299,6 +319,10 @@ portrait = cover_crop(SOURCES["win"], 800, 800, cx=0.63, cy=0.52, zoom=1.45)
 portrait = ImageEnhance.Color(portrait).enhance(1.06)
 portrait = ImageEnhance.Sharpness(portrait).enhance(1.15)
 portrait.save(BRAND / "ded.jpg", quality=90)
+
+# --- миниатюра видео (Telegram превью) ---------------------------------------
+thumb = cover_crop(SOURCES["win"], 320, 320, cx=0.63, cy=0.52, zoom=1.45)
+thumb.save(BRAND / "thumb.jpg", quality=85)
 
 # --- кадры видео -------------------------------------------------------------
 def scene_of(f):
@@ -324,13 +348,14 @@ for f in range(FRAMES):
     t_title = smooth((f - TITLE_IN[0]) / (TITLE_IN[1] - TITLE_IN[0]))
     t_sub = smooth((f - SUB_IN[0]) / (SUB_IN[1] - SUB_IN[0]))
     t_handle = smooth((f - HANDLE_IN[0]) / (HANDLE_IN[1] - HANDLE_IN[0]))
+    t_cta = smooth((f - CTA_IN[0]) / (CTA_IN[1] - CTA_IN[0]))
 
     if scene in ("flash1", "flash2"):
         frame = base_frame(1.05, 0.55, 0.52)
         frame = vignette(frame)
         frame = grain(frame, f)
         frame = flash_overlay(frame, local)   # бары и титры остаются чёрными
-        frame = compose(frame, t_title, t_sub, t_handle, t_bars)
+        frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta)
         frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
         continue
 
@@ -356,7 +381,7 @@ for f in range(FRAMES):
         frame = sparks.draw(frame, local)
     frame = vignette(frame)
     frame = grain(frame, f)
-    frame = compose(frame, t_title, t_sub, t_handle, t_bars)
+    frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta)
     frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
 
 print("frames:", FRAMES, "size:", W, "x", H)

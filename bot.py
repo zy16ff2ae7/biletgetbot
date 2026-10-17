@@ -72,6 +72,12 @@ _publisher = None
 _publisher_lock = threading.Lock()
 _file_transport = None
 _file_transport_lock = threading.Lock()
+_last_action = {}
+_last_action_lock = threading.Lock()
+_pending_broadcast = {}
+_broadcast_running = False
+_broadcast_lock = threading.Lock()
+_last_remind_check = 0.0
 
 
 def get_file_transport():
@@ -156,6 +162,18 @@ def is_admin(user_id, username=None):
 
 def has_access(user_id):
     return is_admin(user_id) or get_store().status(user_id)["active"]
+
+
+def cooldown_ok(uid, seconds=3.0):
+    """Простой троттлинг перевыпуска билетов: кнопки цены/ФИО/места
+    запускают полный рендер PDF, спамить ими нельзя."""
+    now = time.monotonic()
+    with _last_action_lock:
+        last = _last_action.get(uid, 0.0)
+        if now - last < seconds:
+            return False
+        _last_action[uid] = now
+        return True
 
 
 def date_label(timestamp):
@@ -920,10 +938,12 @@ def _send_brand_media(chat, path, kind, caption, markup):
         except (requests.RequestException, ValueError) as e:
             log.warning("brand media by id: %s", _safe_error(e))
     try:
-        r = http_session().post(f"{API}/{method}",
-                                files={field: (path.name, io.BytesIO(path.read_bytes()),
-                                               "video/mp4" if kind == "video" else "image/jpeg")},
-                                data=payload, timeout=(10, 120))
+        files = {field: (path.name, io.BytesIO(path.read_bytes()),
+                         "video/mp4" if kind == "video" else "image/jpeg")}
+        thumb_path = Path(HERE, "brand", "thumb.jpg")
+        if kind == "video" and thumb_path.exists():
+            files["thumbnail"] = ("thumb.jpg", io.BytesIO(thumb_path.read_bytes()), "image/jpeg")
+        r = http_session().post(f"{API}/{method}", files=files, data=payload, timeout=(10, 120))
         res = r.json()
         if res.get("ok"):
             result = res.get("result") or {}
@@ -967,7 +987,8 @@ def send_profile(chat, user_id, username=None):
     except Exception:
         return send_text(chat, "Профиль временно недоступен. Попробуйте позже.")
     if status["active"]:
-        access = "🎟 Доступ: активен до " + date_label(status["expires"])
+        access = ("🎟 Доступ: активен до " + date_label(status["expires"])
+                  + f" · осталось {max(0, int(status['expires'] - time.time()) // 86400)} дн.")
     elif is_admin(user_id):
         access = "🛠 Доступ: администраторский, постоянный"
     else:
@@ -1088,11 +1109,24 @@ def admin_promos_text():
 
 
 def broadcast_text(chat, admin_id, message_text):
+    """Сначала предпросмотр с подтверждением; сама рассылка — в фоне."""
     body = message_text.strip()
     if not body:
         return send_text(chat, "Формат: /broadcast ТЕКСТ — сообщение придёт всем пользователям бота.")
     recipients = get_store().all_user_ids()
-    send_text(chat, f"📣 Рассылка запущена: {len(recipients)} получателей.")
+    _pending_broadcast[admin_id] = body
+    return send_text(
+        chat,
+        f"📣 Предпросмотр рассылки для {len(recipients)} получателей:\n\n"
+        f"─────\n📣 {body}\n─────\n\nОтправить?",
+        {"inline_keyboard": [[{"text": "✅ Отправить всем", "callback_data": "adm:bcastgo"},
+                              {"text": "❌ Отмена", "callback_data": "adm:bcastno"}]]})
+
+
+def _run_broadcast(chat, body):
+    """Фоновая рассылка: воркеры очереди не блокируются."""
+    global _broadcast_running
+    recipients = get_store().all_user_ids()
     delivered = failed = 0
     for index, uid in enumerate(recipients, 1):
         if send_text(uid, "📣 " + body):
@@ -1101,7 +1135,9 @@ def broadcast_text(chat, admin_id, message_text):
             failed += 1
         if index % 20 == 0:
             time.sleep(1)  # Telegram: не более ~30 сообщений в секунду на бота
-    return send_text(chat, f"📣 Рассылка завершена: доставлено {delivered}, не доставлено {failed}.")
+    with _broadcast_lock:
+        _broadcast_running = False
+    send_text(chat, f"📣 Рассылка завершена: доставлено {delivered}, не доставлено {failed}.")
 
 
 def set_my_commands():
@@ -1568,6 +1604,25 @@ def handle_callback_query(cb):
             return send_text(chat, "🎟 Отправьте промокод одним сообщением (например: THEATR2026).\n(для отмены напишите «отмена»)")
         return
 
+    global _broadcast_running
+
+    if data in ("adm:bcastgo", "adm:bcastno"):
+        if not is_admin(uid, sender.get("username")):
+            return send_text(chat, "Эта панель доступна администратору.")
+        if data == "adm:bcastno":
+            _pending_broadcast.pop(uid, None)
+            return send_text(chat, "Рассылка отменена.")
+        body = _pending_broadcast.pop(uid, None)
+        if not body:
+            return send_text(chat, "Предпросмотр не найден. Создай заново: /broadcast ТЕКСТ")
+        with _broadcast_lock:
+            if _broadcast_running:
+                return send_text(chat, "Предыдущая рассылка ещё идёт, подожди.")
+            _broadcast_running = True
+        threading.Thread(target=_run_broadcast, args=(chat, body), daemon=True,
+                         name="broadcast").start()
+        return send_text(chat, "📣 Рассылка запущена в фоне. Отчёт пришлю сюда.")
+
     if data.startswith("adm:"):
         if not is_admin(uid, sender.get("username")):
             return send_text(chat, "Эта панель доступна администратору.")
@@ -1582,8 +1637,9 @@ def handle_callback_query(cb):
             rows = get_store().payment_incidents()
             body = "\n".join(f"Событие {p['update_id']} | ID {p['user_id']} | {p['reason']}" for p in rows) or "Ошибок подтверждения оплаты нет."
         elif action == "broadcast_hint":
-            body = ("Формат: /broadcast ТЕКСТ\nСообщение с префиксом 📣 придёт всем пользователям бота.\n"
-                    "Бот сам соблюдает паузу, чтобы не упереться в лимит Telegram.")
+            body = ("Формат: /broadcast ТЕКСТ → бот покажет предпросмотр →\n"
+                    "кнопка «Отправить всем». Рассылка идёт в фоне,\n"
+                    "обработка билетов не останавливается.")
         else:  # refresh
             return send_admin_panel(chat)
         if msg_id:
@@ -1593,6 +1649,9 @@ def handle_callback_query(cb):
 
     if not has_access(uid):
         return show_status(chat, uid)
+
+    if not cooldown_ok(uid):
+        return  # тяжёлый рендер не чаще раза в 3 секунды
 
     if data.startswith("set:"):
         action = data.split(":", 1)[1]
@@ -1960,6 +2019,8 @@ def handle_callback_query(cb):
 
 
 def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
+    if not cooldown_ok(uid, 3.0):
+        return send_text(chat, "Слишком часто. Подожди пару секунд и повтори.")
     get_store().set_user_state(uid, None)
     cleaned_cmd = seat_input_text.strip()
     if cleaned_cmd.lower() in {"отмена", "cancel"}:
@@ -2185,6 +2246,15 @@ def handle(msg, update_id=None, queued=False):
             hint = str(error) if isinstance(error, ValueError) and str(error) else ""
             return send_text(chat, "Формат: /promogen КОД ДНИ [АКТИВАЦИИ]. " + hint)
         return send_text(chat, f"🎟 Промокод {code} создан. Активация: /promo {code}")
+    if command == "/promooff":
+        if not is_admin(uid, username):
+            return send_text(chat, "Эта команда доступна администратору.")
+        parts = text.split()
+        if len(parts) < 2:
+            return send_text(chat, "Формат: /promooff КОД")
+        if get_store().promo_delete(parts[1]):
+            return send_text(chat, f"🎟 Промокод {parts[1].upper()} удалён.")
+        return send_text(chat, "Такой промокод не найден.")
     if command == "/broadcast":
         if not is_admin(uid, username):
             return send_text(chat, "Эта команда доступна администратору.")
@@ -2424,12 +2494,23 @@ def handle(msg, update_id=None, queued=False):
 
 
 def worker_loop():
+    global _last_remind_check
     last_cleanup = 0.0
     while True:
         try:
             if time.monotonic() - last_cleanup >= 60:
                 cleanup_collections()
                 last_cleanup = time.monotonic()
+            if time.monotonic() - _last_remind_check >= 3600:
+                _last_remind_check = time.monotonic()
+                for r_uid in get_store().due_expiry_reminds():
+                    sent = send_text(
+                        r_uid, "⌛ Доступ к деду закончился. Продлить абонемент или ввести промокод?",
+                        {"inline_keyboard": [[
+                            {"text": "✍️ Продлить доступ", "callback_data": "welcome:subscribe"},
+                            {"text": "🎟 Промокод", "callback_data": "welcome:promo"}]]})
+                    if sent:
+                        get_store().mark_expiry_reminded(r_uid)
             job = get_store().claim()
             if not job:
                 _work_ready.wait(0.5)
@@ -2514,6 +2595,9 @@ def dispatch_update(update):
         except ValueError as error:
             store.record_payment_incident(ident, sender["id"], payment, str(error))
             log.error("payment event requires review: update=%s", ident)
+            for admin_id in CONFIG["admin_ids"]:
+                send_text(admin_id, f"⚠️ Инцидент оплаты: событие {ident}, пользователь {sender['id']}. "
+                                    f"Проверь: /payment_issues")
             notice = "Подтверждение оплаты требует проверки. Событие " + str(ident) + ". Свяжитесь с администратором: /paysupport."
         store.enqueue(ident, {"kind": "notice", "chat": chat["id"], "text": notice})
     else:
@@ -2565,32 +2649,14 @@ def loop():
 
 # --- самопроверка без токена ---------------------------------------------
 def self_test():
-    import os.path as osp
-    import tempfile
-    dl = os.path.expanduser("~/Downloads")
-    cases = [
-        ("ticket_1756181.pdf", True),
-        ("ticket_1756122.pdf", True),
-        ("ticket_1756128.pdf", True),
-        ("Afisha-Tickets-03107-722708.pdf", True),   # без изменений — исходный PDF
-        ("188007073.pdf", True),                     # Афиша/МХТ тоже поддерживается
-    ]
-    fails = 0
-    for name, expect_ok in cases:
-        path = osp.join(dl, name)
-        if not osp.exists(path):
-            print(f"  пропуск {name} (нет файла)")
-            continue
-        with open(path, "rb") as fh:
-            ok, res = clean_ticket(fh.read())
-        good = (ok == expect_ok)
-        if not good:
-            fails += 1
-        detail = f"{len(res)} байт" if ok else res[:70]
-        print(f"  {'ok  ' if good else 'BAD '} {name}: ok={ok} (ожидали {expect_ok}) — {detail}")
-
-    print("самопроверка:", "провалов нет" if not fails else f"{fails} провалов")
-    return 1 if fails else 0
+    """Полный офлайн-набор тестов tests/ (нужен движок Билетная)."""
+    import unittest
+    tests_dir = Path(HERE, "tests")
+    sys.path.insert(0, str(tests_dir))
+    suite = unittest.defaultTestLoader.discover(str(tests_dir), top_level_dir=str(tests_dir))
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    print("самопроверка:", "провалов нет" if result.wasSuccessful() else "ЕСТЬ ПРОВАЛЫ")
+    return 0 if result.wasSuccessful() else 1
 
 
 if __name__ == "__main__":

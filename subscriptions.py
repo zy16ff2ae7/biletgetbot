@@ -10,7 +10,7 @@ import time
 
 PERIOD = 30 * 86400
 
-SCHEMAS = {1: "subscriptions", 2: "payment_incidents", 3: "users_promo"}
+SCHEMAS = {1: "subscriptions", 2: "payment_incidents", 3: "users_promo", 4: "expiry_reminders"}
 
 
 class SubscriptionStore:
@@ -19,7 +19,7 @@ class SubscriptionStore:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self.db() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3):
+            if version not in (0, 1, 2, 3, 4):
                 raise RuntimeError("Unsupported subscription schema")
             for target in range(version + 1, len(SCHEMAS) + 1):
                 migration = Path(__file__).parent / f"migrations/{target:03d}_{SCHEMAS[target]}.sql"
@@ -508,6 +508,12 @@ class SubscriptionStore:
             db.execute("UPDATE promo_codes SET used=used+1 WHERE code=?", (code,))
             return expires, row["days"]
 
+    def promo_delete(self, code):
+        code = (code or "").strip().upper()
+        with self.db() as db:
+            cursor = db.execute("DELETE FROM promo_codes WHERE code=?", (code,))
+            return cursor.rowcount > 0
+
     def promo_list(self):
         with self.db() as db:
             return [dict(row) for row in db.execute(
@@ -530,6 +536,31 @@ class SubscriptionStore:
                        (user_id, expires, user_id))
             db.execute("INSERT INTO access_actions VALUES(?,?)", (action, expires))
             return expires, True
+
+    def due_expiry_reminds(self, fresh_hours=24, stale_hours=48):
+        """Пользователи, у которых доступ кончился в окне [stale, fresh] часов назад
+        и которым ещё не отправляли напоминание."""
+        now = int(time.time())
+        with self.db() as db:
+            rows = db.execute(
+                """
+                WITH acc AS (
+                    SELECT u.user_id AS uid,
+                           MAX(COALESCE((SELECT MAX(expires) FROM payments
+                                         WHERE user_id=u.user_id AND refunded=0), 0),
+                               COALESCE((SELECT expires FROM grants WHERE user_id=u.user_id), 0)) AS exp
+                    FROM users u GROUP BY u.user_id
+                )
+                SELECT uid FROM acc
+                WHERE exp > 0 AND exp BETWEEN ? AND ?
+                  AND uid NOT IN (SELECT user_id FROM expiry_reminders)
+                """, (now - stale_hours * 3600, now - fresh_hours * 3600)).fetchall()
+            return [row[0] for row in rows]
+
+    def mark_expiry_reminded(self, user_id):
+        with self.db() as db:
+            db.execute("INSERT OR REPLACE INTO expiry_reminders VALUES(?,?)",
+                       (user_id, int(time.time())))
 
     def admin_stats(self):
         now = int(time.time())
