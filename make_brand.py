@@ -1,14 +1,15 @@
 """Build ДЕД РЕДАЧИТ brand assets from brand/welcome_base.jpg.
 
 Outputs (next to the base image):
-  welcome.jpg  — static 16:9 cover with the gold title (sendPhoto fallback)
-  welcome.mp4  — dynamic greeting: camera push-in, lamp pulse, dust in the
-                 beam, flash scene transitions, pink sparks; the title appears
-                 as a whole with a cinematic fade and a soft upward drift,
-                 then the small-caps subtitle and the handle fade in
+  welcome.jpg  — static 16:9 cover (sendPhoto fallback)
+  welcome.mp4  — cinematic letterbox greeting: film bars slide in, the gold
+                 title fades inside the lower bar, then the small-caps
+                 subtitle and the handle; three scenes of the grandfather
+                 (typing -> laughing -> triumphant ticket), lamp pulse, dust,
+                 pink sparks, film grain on the scene only
   ded.jpg      — square avatar crop of the triumphant grandfather
 
-Typeface (SIL OFL, bundled in brand/): Prata — title, subtitle, handle.
+Typeface (SIL OFL, bundled in brand/): Prata — all text.
 """
 from pathlib import Path
 
@@ -26,25 +27,26 @@ FRAMES = 72
 TITLE = "ДЕД РЕДАЧИТ"
 SUBTITLE = "ПЕРЕПЕЧАТАЕМ БИЛЕТЫ НАЧИСТО"
 HANDLE = "@biletgetbot"
+
 GOLD_TOP = (252, 243, 222)
 GOLD_MID = (243, 211, 146)
 GOLD_DEEP = (198, 150, 86)
 GOLD_EDGE = (240, 205, 138)
-CREAM = (246, 235, 212)
-MUTED = (236, 228, 234)
+CREAM = (250, 242, 226)
+PLATINUM = (240, 233, 240)
+BAR = (6, 3, 8)
 
-TITLE_IN = (10, 22)     # окно фейда заголовка, кадры
-SUB_IN = (32, 40)       # окно фейда подзаголовка
-HANDLE_IN = (40, 46)    # окно фейда канала
+BAR_B = 132          # нижний литер-бар
+BAR_T = 42           # верхний бар
+TITLE_IN = (9, 18)
+SUB_IN = (20, 27)
+HANDLE_IN = (26, 32)
+BARS_IN = 10         # бары задвигаются за 10 кадров
 
 
-def clip01(v):
-    return max(0.0, min(1.0, v))
-
-
-def smooth(t):
-    t = clip01(t)
-    return t * t * (3 - 2 * t)
+def smooth(v):
+    v = max(0.0, min(1.0, v))
+    return v * v * (3 - 2 * v)
 
 
 def cover_crop(img, w, h, cx=0.5, cy=0.5, zoom=1.0):
@@ -158,7 +160,7 @@ class Sparks:
 
 
 def flash_overlay(img, local):
-    """Короткая тёплая вспышка между сценами (3 кадра), мягкая на пике."""
+    """Короткая тёплая вспышка между сценами (3 кадра)."""
     alpha = (140, 70, 25)[min(local, 2)]
     return Image.blend(img, Image.new("RGB", (W, H), (255, 244, 228)), alpha / 255)
 
@@ -180,116 +182,102 @@ def _gold_gradient(y0, y1):
     return Image.fromarray(np.repeat(row[:, None, :], W, axis=1), "RGB")
 
 
-def text_overlay(plate_alpha, title_alpha, sub_alpha, handle_alpha):
-    """Солидная «табличка театрального кресла»: тёмный непрозрачный диск
-    с золотой рамкой; заголовок золотом, капители и канал внутри.
-    Ничего не просвечивает — грязи на тексте не бывает по построению."""
-    if plate_alpha <= 0 and title_alpha <= 0 and sub_alpha <= 0 and handle_alpha <= 0:
-        return Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    title_font = _font(FONT_MAIN, 56)
-    sub_font = _font(FONT_MAIN, 23)
-    small_font = _font(FONT_MAIN, 24)
-    tracking = 10
-    sub_tracking = 5
+def _gold_text(ov, mask, alpha):
+    """Золотая заливка по фактическому bbox чернил + блик по верхней кромке."""
+    if alpha <= 0:
+        return ov
+    ink = mask.getbbox()
+    grad = _gold_gradient(ink[1], ink[3]).crop((ink[0], 0, ink[2], ink[3] - ink[1])).convert("RGBA")
+    gold = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gold.paste(grad, (ink[0], ink[1]), mask.crop(ink))
+    gold.putalpha(mask.point(lambda v: int(v * alpha)))
+    ov = Image.alpha_composite(ov, gold)
+    bevel = ImageChops.subtract(mask, ImageChops.offset(mask, 0, 1)).point(
+        lambda v: int(v * 0.5 * alpha))
+    ov.paste(Image.new("RGBA", (W, H), (255, 250, 236, 255)), (0, 0), bevel)
+    return ov
+
+
+def overlay(title_a, sub_a, handle_a, bars_e):
+    """Кинематографичный letterbox: чистые чёрные бары с тонкой золотой
+    кромкой; титры — внутри нижнего бара, на идеально чёрном фоне."""
+    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    if bars_e <= 0:
+        return ov
+    d = ImageDraw.Draw(ov)
+    bar_b = int(round(BAR_B * bars_e))
+    bar_t = int(round(BAR_T * bars_e))
+    d.rectangle([0, H - bar_b, W, H], fill=(*BAR, 255))
+    d.rectangle([0, 0, W, bar_t], fill=(*BAR, 255))
+    # Тонкая золотая кромка по внутренним краям баров.
+    line_a = int(150 * bars_e)
+    d.line([0, H - bar_b - 1, W, H - bar_b - 1], fill=(212, 170, 96, line_a), width=1)
+    d.line([0, bar_t, W, bar_t], fill=(212, 170, 96, int(line_a * 0.55)), width=1)
 
     probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
 
     def width_of(text, font, gap):
         return sum(probe.textlength(ch, font=font) + gap for ch in text) - gap
 
-    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    drift = int((1 - plate_alpha) * 14)          # мягкое всплытие планшки
-    px0, px1 = 150, 810
-    py0, py1 = 368 - drift, 530 - drift
+    title_font = _font(FONT_MAIN, 50)
+    sub_font = _font(FONT_MAIN, 19)
+    small_font = _font(FONT_MAIN, 20)
+    tracking = 10
+    top = H - bar_b
 
-    # Внешняя мягкая тень планшки — поднимает её над сценой.
-    plate_shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(plate_shadow).rounded_rectangle(
-        [px0 + 4, py0 + 10, px1 + 4, py1 + 10], radius=22, fill=(0, 0, 0, int(120 * plate_alpha)))
-    ov = Image.alpha_composite(ov, plate_shadow.filter(ImageFilter.GaussianBlur(12)))
+    # Заголовок золотом по центру бара.
+    if title_a > 0:
+        mask = Image.new("L", (W, H), 0)
+        md = ImageDraw.Draw(mask)
+        tw = width_of(TITLE, title_font, tracking)
+        x = (W - tw) / 2
+        for ch in TITLE:
+            md.text((x, top + 12), ch, font=title_font, fill=255)
+            x += probe.textlength(ch, font=title_font) + tracking
+        shadow = ImageChops.offset(mask.filter(ImageFilter.GaussianBlur(4)), 2, 3)
+        shadow = shadow.point(lambda v: int(v * 0.35 * title_a))
+        shl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        shl.paste(Image.new("RGBA", (W, H), (0, 0, 0, 255)), (0, 0), shadow)
+        ov = Image.alpha_composite(ov, shl)
+        ov = _gold_text(ov, mask, title_a)
 
-    # Корпус планшки: почти чёрная сливовая эмаль + двойная золотая рамка.
-    plate = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    pd = ImageDraw.Draw(plate)
-    pd.rounded_rectangle([px0, py0, px1, py1], radius=20,
-                         fill=(22, 11, 26, int(250 * plate_alpha)))
-    ov = Image.alpha_composite(ov, plate)
-    frame_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    fd = ImageDraw.Draw(frame_layer)
-    fd.rounded_rectangle([px0 + 5, py0 + 5, px1 - 5, py1 - 5], radius=16,
-                         outline=(212, 170, 96, int(230 * plate_alpha)), width=2)
-    fd.rounded_rectangle([px0 + 11, py0 + 11, px1 - 11, py1 - 11], radius=12,
-                         outline=(120, 92, 60, int(150 * plate_alpha)), width=1)
-    # Ромб-застёжка по центру верхней кромки.
-    cxm = W / 2
-    r = 6
-    fd.polygon([(cxm, py0 + 5 - r + 4), (cxm + r, py0 + 9), (cxm, py0 + 5 + r + 4), (cxm - r, py0 + 9)],
-               fill=(*GOLD_EDGE, int(240 * plate_alpha)))
-    ov = Image.alpha_composite(ov, frame_layer)
-
-    # Заголовок: золото по фактическому bbox чернил.
-    mask = Image.new("L", (W, H), 0)
-    md = ImageDraw.Draw(mask)
-    tw = width_of(TITLE, title_font, tracking)
-    tx = (W - tw) / 2
-    ty = py0 + 20
-    for ch in TITLE:
-        md.text((tx, ty), ch, font=title_font, fill=255)
-        tx += probe.textlength(ch, font=title_font) + tracking
-
-    ink = mask.getbbox()
-    shadow = ImageChops.offset(mask.filter(ImageFilter.GaussianBlur(5)), 2, 3)
-    shadow = shadow.point(lambda v: int(v * 0.30 * title_alpha))
-    shadow_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    shadow_layer.paste(Image.new("RGBA", (W, H), (0, 0, 0, 255)), (0, 0), shadow)
-    ov = Image.alpha_composite(ov, shadow_layer)
-    if title_alpha > 0:
-        gold_mask = mask.point(lambda v: int(v * title_alpha))
-        grad = _gold_gradient(ink[1], ink[3]).crop((ink[0], 0, ink[2], ink[3] - ink[1])).convert("RGBA")
-        gold_full = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        gold_full.paste(grad, (ink[0], ink[1]), mask.crop(ink))
-        ov = Image.alpha_composite(ov, gold_full)
-        bevel = ImageChops.subtract(mask, ImageChops.offset(mask, 0, 1)).point(
-            lambda v: int(v * 0.5 * title_alpha))
-        ov.paste(Image.new("RGBA", (W, H), (255, 250, 236, 255)), (0, 0), bevel)
-
-    d = ImageDraw.Draw(ov)
-
-    # Подзаголовок: кремовые капители на тёмной эмали — контраст максимум.
-    if sub_alpha > 0:
-        a = int(255 * sub_alpha)
-        sw = width_of(SUBTITLE, sub_font, sub_tracking)
+    # Подзаголовок: кремовые капители.
+    if sub_a > 0:
+        a = int(255 * sub_a)
+        d = ImageDraw.Draw(ov)
+        sw = width_of(SUBTITLE, sub_font, 4)
         sx = (W - sw) / 2
-        sy = py0 + 96
+        sy = top + 70
         for ch in SUBTITLE:
-            d.text((sx + 1, sy + 1), ch, font=sub_font, fill=(0, 0, 0, int(a * 0.7)))
-            d.text((sx, sy), ch, font=sub_font, fill=(250, 242, 226, a))
-            sx += probe.textlength(ch, font=sub_font) + sub_tracking
+            d.text((sx + 1, sy + 1), ch, font=sub_font, fill=(0, 0, 0, int(a * 0.8)))
+            d.text((sx, sy), ch, font=sub_font, fill=(*CREAM, a))
+            sx += probe.textlength(ch, font=sub_font) + 4
 
-    # Канал: платиновый, с золотыми ромбами по бокам.
-    if handle_alpha > 0:
-        a = int(255 * handle_alpha)
-        hy = py0 + 128
+    # Канал: платиновый, ромбы по бокам на одной строке.
+    if handle_a > 0:
+        a = int(255 * handle_a)
+        d = ImageDraw.Draw(ov)
         hw = probe.textlength(HANDLE, font=small_font)
         hx = (W - hw) / 2
+        hy = top + 98
         for gdx, gdy in ((1, 1), (-1, 1)):
-            d.text((hx + gdx, hy + gdy), HANDLE, font=small_font, fill=(0, 0, 0, int(a * 0.7)))
-        d.text((hx, hy), HANDLE, font=small_font, fill=(240, 233, 240, a))
-        line_y = hy + 15
+            d.text((hx + gdx, hy + gdy), HANDLE, font=small_font, fill=(0, 0, 0, int(a * 0.8)))
+        d.text((hx, hy), HANDLE, font=small_font, fill=(*PLATINUM, a))
+        cy = hy + 11
         for side in (-1, 1):
-            line_end = hx + (side * -16)
-            line_start = line_end + (side * -72)
-            d.line([line_start, line_y, line_end, line_y], fill=(198, 172, 182, int(a * 0.85)), width=1)
+            line_end = hx + (side * -14)
+            line_start = line_end + (side * -70)
+            d.line([line_start, cy, line_end, cy], fill=(198, 172, 182, int(a * 0.8)), width=1)
             mid = (line_start + line_end) / 2
-            rr = 3.0
-            d.polygon([(mid, line_y - rr), (mid + rr, line_y), (mid, line_y + rr), (mid - rr, line_y)],
+            r = 2.8
+            d.polygon([(mid, cy - r), (mid + r, cy), (mid, cy + r), (mid - r, cy)],
                       fill=(*GOLD_EDGE, a))
     return ov
 
 
-def compose_text(img, plate_alpha, title_alpha, sub_alpha, handle_alpha):
-    overlay = text_overlay(plate_alpha, title_alpha, sub_alpha, handle_alpha)
-    return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+def compose(img, title_a, sub_a, handle_a, bars_e):
+    o = overlay(title_a, sub_a, handle_a, bars_e)
+    return Image.alpha_composite(img.convert("RGBA"), o).convert("RGB")
 
 
 SRC = Image.open(BASE).convert("RGB")
@@ -302,8 +290,8 @@ poster = base_frame(1.04, 0.54, 0.52)
 poster = screen(poster, glow_layer(0.35))
 poster = Dust(seed=11).draw(poster, 8)
 poster = vignette(poster)
-poster = compose_text(poster, 1, 1, 1, 1)
-poster = ImageEnhance.Contrast(poster).enhance(1.03)
+poster = grain(poster, 3)
+poster = compose(poster, 1, 1, 1, 1)
 poster.save(BRAND / "welcome.jpg", quality=90)
 
 # --- аватар: триумфальный кадр с поднятым билетом ----------------------------
@@ -312,7 +300,7 @@ portrait = ImageEnhance.Color(portrait).enhance(1.06)
 portrait = ImageEnhance.Sharpness(portrait).enhance(1.15)
 portrait.save(BRAND / "ded.jpg", quality=90)
 
-# --- кадры видео: три сцены, титры появляются мягким фейдом ------------------
+# --- кадры видео -------------------------------------------------------------
 def scene_of(f):
     """(ключ сцены, локальный номер кадра) по глобальному кадру."""
     if f <= 27:
@@ -332,17 +320,17 @@ dust = Dust()
 sparks = Sparks()
 for f in range(FRAMES):
     scene, local = scene_of(f)
+    t_bars = smooth((f + 1) / BARS_IN)
     t_title = smooth((f - TITLE_IN[0]) / (TITLE_IN[1] - TITLE_IN[0]))
-    t_plate = smooth(min(1.0, t_title * 2.4))              # эмаль приходит первой
-    t_text = smooth(max(0.0, (t_title - 0.45) / 0.55))     # буквы — поверх готовой эмали
     t_sub = smooth((f - SUB_IN[0]) / (SUB_IN[1] - SUB_IN[0]))
     t_handle = smooth((f - HANDLE_IN[0]) / (HANDLE_IN[1] - HANDLE_IN[0]))
 
-    if scene == "flash1" or scene == "flash2":
+    if scene in ("flash1", "flash2"):
         frame = base_frame(1.05, 0.55, 0.52)
         frame = vignette(frame)
-        frame = compose_text(frame, t_plate, t_text, t_sub, t_handle)
-        frame = flash_overlay(frame, local)
+        frame = grain(frame, f)
+        frame = flash_overlay(frame, local)   # бары и титры остаются чёрными
+        frame = compose(frame, t_title, t_sub, t_handle, t_bars)
         frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
         continue
 
@@ -368,7 +356,7 @@ for f in range(FRAMES):
         frame = sparks.draw(frame, local)
     frame = vignette(frame)
     frame = grain(frame, f)
-    frame = compose_text(frame, t_plate, t_text, t_sub, t_handle)
+    frame = compose(frame, t_title, t_sub, t_handle, t_bars)
     frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
 
 print("frames:", FRAMES, "size:", W, "x", H)
