@@ -228,7 +228,7 @@ def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0):
     if free_a > 0 and cta_a < 1:
         ff = _font(FONT_MAIN, 16)
         fa = int(230 * free_a * (1 - cta_a))
-        fw = sum(probe_w(ff, ch) + 2 for ch in FREE_LINE) - 2
+        fw = _probe.textlength(FREE_LINE, font=ff)  # рисуется одной строкой — мерить так же
         fx = (W - fw) / 2
         fy = max(7, (bar_t - 19) // 2)
         d.text((fx, fy), FREE_LINE, font=ff, fill=(*GOLD_MID, fa))

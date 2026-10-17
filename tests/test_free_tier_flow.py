@@ -98,6 +98,15 @@ class FreeTierFlowTests(unittest.TestCase):
                         self._all_texts())
         self.assertEqual(2, self.store.daily_left(501))
 
+    def test_free_user_zip_refused_without_consuming_limit(self):
+        """ZIP = пачка: бесплатнику отказ, дневной лимит не тратится."""
+        self.stack.enter_context(patch.object(bot, "download_file",
+                                              side_effect=lambda fid: b"not a real pdf"))
+        bot.process_document(self._doc_msg("zip1", "pack.zip"), None, job_id=10)
+        self.assertTrue(any("Пачки — для абонемента" in t for t in self._all_texts()),
+                        self._all_texts())
+        self.assertEqual(2, self.store.daily_left(501))
+
 
 if __name__ == "__main__":
     unittest.main()

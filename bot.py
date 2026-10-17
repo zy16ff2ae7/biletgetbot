@@ -35,6 +35,21 @@ from url_delivery import Publisher
 from telegram_file_transport import TelegramFileTransport, MetadataAPIError, MetadataUnavailable
 from subscriptions import SubscriptionStore, PERIOD
 
+# Дневной бесплатный лимит (env BILET_DAILY_FREE) — чтобы копирайты не разошлись с ним.
+FREE_DAILY = SubscriptionStore.DAILY_LIMIT
+
+
+def tickets_word(count):
+    """Русская плюрализация: 1 билет / 2 билета / 5 билетов."""
+    if 11 <= count % 100 <= 14 or count % 10 in (0, 5, 6, 7, 8, 9):
+        return "билетов"
+    return "билет" if count % 10 == 1 else "билета"
+
+
+FREE_BATCH_TEXT = (f"📦 Пачки — для абонемента. Бесплатно — по {FREE_DAILY} "
+                   f"{tickets_word(FREE_DAILY)} в день, по одному за раз.")
+FREE_BATCH_KB = {"inline_keyboard": [[{"text": "✍️ Без лимита", "callback_data": "welcome:subscribe"}]]}
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Редактор «Билетная»: по умолчанию ~/Билетная, но на VDS его кладут куда
 # удобнее — путь можно перекрыть переменной окружения.
@@ -200,8 +215,8 @@ GREETING = (
     "будто сам Пушкин смотрит через плечо. "
     "Убирает чужие ФИО, лишние строки и блоки Пушкинской карты, "
     "сохраняет QR-коды, даты, места и цену.\n\n"
-    "Пришли PDF или ZIP с билетами — верну перепечатанные файлы прямо в чат.\n"
-    f"🎁 Каждый день — 2 билета бесплатно. Без лимита — с абонементом.\n\n"
+    "Пришли PDF-билет — верну перепечатанный файл прямо в чат. Пачки и ZIP — с абонементом.\n"
+    f"🎁 Каждый день — {FREE_DAILY} {tickets_word(FREE_DAILY)} бесплатно. Без лимита — с абонементом.\n\n"
     f"Абонемент: {CONFIG['price_stars']} Telegram Stars за 30 дней, без лимита билетов. "
     "Автопродление каждые 30 дней; отмена: /cancel_subscription.\n"
     "📖 Как пользоваться: /help\n"
@@ -214,7 +229,7 @@ GREETING = (
 
 HELP_TEXT = (
     f"📖 КАК ПОЛЬЗОВАТЬСЯ · {BRAND_NAME}\n\n"
-    "1️⃣ Каждый день перепечатываю 2 билета бесплатно — просто пришли файл.\n"
+    f"1️⃣ Каждый день перепечатываю {FREE_DAILY} {tickets_word(FREE_DAILY)} бесплатно — просто пришли файл.\n"
     "Без лимита: /subscribe (абонемент), /promo КОД или /trial (пробный день).\n\n"
     "2️⃣ Пришли PDF-билет документом (не фото) — или сразу несколько файлов подряд.\n\n"
     "3️⃣ Дед перепечатает билет: удалит чужие ФИО, лишние строки и блоки Пушкинской карты, "
@@ -999,7 +1014,7 @@ def send_profile(chat, user_id, username=None):
     hide = bool(settings.get("hide_price", 0))
     price_disp = f"{price} ₽" if price is not None else "исходная (/price)"
     try:
-        free_line = f"🎁 Бесплатно сегодня: {get_store().daily_left(user_id)} из 2 билетов\n"
+        free_line = f"🎁 Бесплатно сегодня: {get_store().daily_left(user_id)} из {FREE_DAILY} {tickets_word(FREE_DAILY)}\n"
     except Exception:
         free_line = ""
     text = (
@@ -1434,13 +1449,13 @@ def no_access_message(uid):
         left = 0
     if left > 0:
         return send_text(uid,
-            f"🎁 Сегодня осталось {left} из 2 бесплатных билетов — просто пришли PDF.\n"
+            f"🎁 Сегодня осталось {left} из {FREE_DAILY} бесплатных билетов — просто пришли PDF.\n"
             "Без лимита — с абонементом.",
             {"inline_keyboard": [[
                 {"text": "✍️ Без лимита", "callback_data": "welcome:subscribe"},
                 {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}]]})
     return send_text(uid,
-        "🎟 Бесплатные 2 билета на сегодня уже перепечатаны.\n"
+        f"🎟 Бесплатные {FREE_DAILY} {tickets_word(FREE_DAILY)} на сегодня уже перепечатаны.\n"
         "Лимит обновится завтра утром. А без лимита — прямо сейчас:",
         {"inline_keyboard": [[
             {"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
@@ -1556,6 +1571,10 @@ def process_document(msg, collection_id=None, job_id=None):
             progress.finish(f"В пачке: {count} PDF 🩷 Когда закончишь — /done.")
             return
         if name.lower().endswith(".zip"):
+            if not has_access(uid):
+                # ZIP обрабатывается как пачка: без гейта бесплатник получал бы
+                # пакеты билетов, не расходуя дневной лимит.
+                return _progress_error(progress, chat, FREE_BATCH_TEXT)
             try:
                 cleaner, notify = _batch_callbacks(progress, spectator_fio=user_fio, hide_price=hide_price, custom_price=custom_price)
                 result = batches.process_zip(data, cleaner, on_progress=notify)
@@ -1606,7 +1625,7 @@ def process_document(msg, collection_id=None, job_id=None):
                     progress.finish(f"Билет отправлен 🩷 Бесплатных осталось сегодня: {left_after}.")
                 else:
                     progress.finish("Билет отправлен 🩷 Бесплатный лимит на сегодня исчерпан.")
-                    send_text(chat, "Это были бесплатные 2 билета на сегодня.\n"
+                    send_text(chat, f"Это были бесплатные {FREE_DAILY} {tickets_word(FREE_DAILY)} на сегодня.\n"
                                     "Без лимита — с абонементом:",
                               {"inline_keyboard": [[{"text": "✍️ Оформить", "callback_data": "welcome:subscribe"}]]})
             except Exception:
@@ -2346,8 +2365,7 @@ def handle(msg, update_id=None, queued=False):
             return send_text(chat, "Формат: /grant ID_или_@username дни, /revoke ID_или_@username, /refund идентификатор_оплаты, /payments.")
     if command in {"/batch", "/done", "/cancelbatch"}:
         if not has_access(uid):
-            return send_text(chat, "📦 Пачки — для абонемента. Бесплатно — по 2 билета в день, по одному за раз.",
-                             {"inline_keyboard": [[{"text": "✍️ Без лимита", "callback_data": "welcome:subscribe"}]]})
+            return send_text(chat, FREE_BATCH_TEXT, FREE_BATCH_KB)
         collection = get_store().open_collection(uid, chat)
         if command == "/batch":
             get_store().create_collection(uid, chat)
