@@ -356,6 +356,46 @@ class SubscriptionStore:
         if "strip_pushkin" not in doc_cols:
             db.execute("ALTER TABLE doc_tokens ADD COLUMN strip_pushkin INTEGER DEFAULT 0")
         db.execute("CREATE INDEX IF NOT EXISTS idx_doc_tokens_created ON doc_tokens(created)")
+        db.execute("""CREATE TABLE IF NOT EXISTS batch_sessions (
+            token TEXT PRIMARY KEY,
+            user_id INTEGER,
+            chat_id INTEGER,
+            zip_file_id TEXT,
+            merged_file_id TEXT,
+            created INTEGER,
+            items_json TEXT
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_batch_sessions_created ON batch_sessions(created)")
+
+    def save_batch_session(self, token, user_id, chat_id, items, zip_file_id=None, merged_file_id=None):
+        with self.db() as db:
+            db.execute(
+                "INSERT INTO batch_sessions(token, user_id, chat_id, zip_file_id, merged_file_id, created, items_json) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(token) DO UPDATE SET "
+                "zip_file_id=COALESCE(excluded.zip_file_id, batch_sessions.zip_file_id), "
+                "merged_file_id=COALESCE(excluded.merged_file_id, batch_sessions.merged_file_id), "
+                "items_json=excluded.items_json",
+                (token, user_id, chat_id, zip_file_id, merged_file_id, int(time.time()), json.dumps(items, ensure_ascii=False))
+            )
+            db.execute("DELETE FROM batch_sessions WHERE created < ?", (int(time.time()) - 2 * 86400,))
+
+    def get_batch_session(self, token):
+        with self.db() as db:
+            row = db.execute("SELECT * FROM batch_sessions WHERE token=?", (token,)).fetchone()
+            if not row:
+                return None
+            res = dict(row)
+            try:
+                res["items"] = json.loads(res.get("items_json") or "[]")
+            except Exception:
+                res["items"] = []
+            return res
+
+    def get_user_last_batch_token(self, user_id):
+        with self.db() as db:
+            row = db.execute("SELECT token FROM batch_sessions WHERE user_id=? ORDER BY created DESC LIMIT 1", (user_id,)).fetchone()
+            return row["token"] if row else None
 
     def save_doc_token(self, token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None, del_texts=None, strip_pushkin=None):
         with self.db() as db:

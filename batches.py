@@ -124,6 +124,7 @@ def _process_items_impl(items, cleaner, on_progress=None):
         cleaned_entries.append({
             "orig_name": name,
             "orig_index": index,
+            "orig_data": data,
             "result": result,
             "meta": meta,
             "changed": info["changed"],
@@ -136,6 +137,7 @@ def _process_items_impl(items, cleaner, on_progress=None):
 
     sorted_entries = sorted(cleaned_entries, key=_batch_sort_key)
     processed_items = []
+    cleaned_items = []
 
     distinct_events = {
         ticket_meta.get_event_key(entry.get("meta")): entry.get("meta")
@@ -197,6 +199,14 @@ def _process_items_impl(items, cleaner, on_progress=None):
                 "meta": entry["meta"],
                 "changed": entry["changed"],
             })
+            cleaned_items.append({
+                "name": entry["orig_name"],
+                "output_name": output_name,
+                "orig_data": entry["orig_data"],
+                "result": entry["result"],
+                "meta": entry["meta"],
+                "changed": entry["changed"],
+            })
 
         report_text = ticket_meta.format_batch_report_table(processed_items)
         if errors:
@@ -213,6 +223,7 @@ def _process_items_impl(items, cleaner, on_progress=None):
         "failed": failed,
         "changed": changed,
         "items_meta": processed_items,
+        "cleaned_items": cleaned_items,
         "zip_name": zip_name,
     }
 
