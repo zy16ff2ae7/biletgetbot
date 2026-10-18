@@ -2074,8 +2074,14 @@ def _apply_mass_combo_to_batch(batch_token, raw_text):
 
     if is_multiline_list:
         for idx, line in enumerate(lines):
-            if idx >= total:
-                break
+            target_idx = idx
+            m_num = re.match(r"^(\d+)[.)\s-]+", line)
+            if m_num:
+                parsed_idx = int(m_num.group(1)) - 1
+                if 0 <= parsed_idx < total:
+                    target_idx = parsed_idx
+            if target_idx >= total:
+                continue
             q = seat_tools.parse_quick_edit(line)
             kwargs = {}
             if q["reset_all"]:
@@ -2101,7 +2107,7 @@ def _apply_mass_combo_to_batch(batch_token, raw_text):
                     kwargs["seat_info"] = seat_tools.format_seat_summary(q["seat_info"])
 
             if kwargs:
-                ok, res_item = _reprocess_batch_item(batch_token, idx, **kwargs)
+                ok, res_item = _reprocess_batch_item(batch_token, target_idx, **kwargs)
                 if ok:
                     count += 1
                     parts = []
@@ -2118,9 +2124,9 @@ def _apply_mass_combo_to_batch(batch_token, raw_text):
                         parts.append("цена скрыта")
                     elif res_item.get("custom_price") is not None:
                         parts.append(f"{res_item['custom_price']} ₽")
-                    reports.append(f"• Билет №{idx+1}: " + (" · ".join(parts) if parts else "обновлён"))
+                    reports.append(f"• Билет №{target_idx+1}: " + (" · ".join(parts) if parts else "обновлён"))
                 else:
-                    reports.append(f"• Билет №{idx+1}: ⚠️ ошибка ({res_item})")
+                    reports.append(f"• Билет №{target_idx+1}: ⚠️ ошибка ({res_item})")
     else:
         single_line = lines[0]
         q = seat_tools.parse_quick_edit(single_line)
@@ -3692,9 +3698,17 @@ def _reissue_ticket_with_quick(chat, uid, ref, text_input):
         return send_text(chat, "Не удалось скачать исходный файл. Пожалуйста, отправьте билет заново.")
 
     u_settings = _user_settings(uid)
-    hide_price = new_hide if new_hide is not None else bool(u_settings.get("hide_price", 0))
-    custom_price = new_price if new_price is not None else u_settings.get("custom_price")
-    cur_fio = new_fio if new_fio is not None else get_store().get_user_fio(uid)
+    if q["reset_all"] or q["reset_price"]:
+        hide_price = False
+        custom_price = None
+    else:
+        hide_price = new_hide if new_hide is not None else bool(u_settings.get("hide_price", 0))
+        custom_price = new_price if new_price is not None else u_settings.get("custom_price")
+
+    if q["reset_all"] or q["reset_fio"]:
+        cur_fio = None
+    else:
+        cur_fio = new_fio if new_fio is not None else get_store().get_user_fio(uid)
 
     summary_items = []
     if cur_fio:
