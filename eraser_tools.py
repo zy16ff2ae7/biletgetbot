@@ -2,7 +2,7 @@
 
 Designed for @biletgetbot to provide:
 1. /del <text> (force eraser for any user-specified text on ticket)
-2. '🧹 Снять Пушкинскую карту' (aggressive Pushkin card marker and banner removal)
+2. '🧹 Снять пометки Лукоморья' (aggressive Pushkin card marker and banner removal)
 3. '🛡 Для Авито' (safe marketplace preview with masked barcodes & anti-fraud watermarks)
 """
 from __future__ import annotations

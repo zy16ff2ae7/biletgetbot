@@ -1038,7 +1038,7 @@ def build_referral_card(user_id):
     bot_user = get_bot_username()
     ref_link = f"https://t.me/{bot_user}?start=ref_{user_id}"
     stats = get_store().get_referral_stats(user_id)
-    share_text = f"Перепечатывай билеты без чужих ФИО и Пушкинской карты: https://t.me/{bot_user}?start=ref_{user_id}"
+    share_text = f"Перепечатывай билеты без чужих ФИО и пометок Лукоморья: https://t.me/{bot_user}?start=ref_{user_id}"
     share_url = f"https://t.me/share/url?url={urllib.parse.quote(share_text)}"
 
     text = (
@@ -1678,7 +1678,7 @@ def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None):
     else:
         price_toggle_btn = {"text": "🎁 Скрыть цену", "callback_data": f"toggleprice:{token}:1"}
     preview_btn = {"text": "🖼 Фото: До и После", "callback_data": f"compare:{token}"}
-    pushkin_btn = {"text": "🧹 Снять Пушкинскую карту", "callback_data": f"pushkin:{token}"}
+    pushkin_btn = {"text": "🧹 Снять пометки Лукоморья", "callback_data": f"pushkin:{token}"}
 
     rows = [
         [quick_btn],
@@ -2607,7 +2607,7 @@ def process_document(msg, collection_id=None, job_id=None):
 
         def phase(stage):
             if stage == "clean":
-                progress.update(1, "Стираем чужие ФИО и блок Пушкинской карты ✍️")
+                progress.update(1, "Стираем чужие ФИО и пометки Лукоморья ✍️")
             else:
                 progress.update(2, "Сверяем QR-коды, дату, сектор, ряд и цену 🔍")
 
@@ -3866,7 +3866,7 @@ def _reissue_ticket_with_pushkin_strip(chat, uid, ref):
     hide_price = tok_hide if tok_hide is not None else bool(u_settings.get("hide_price", 0))
     custom_price = tok_price if tok_price is not None else u_settings.get("custom_price")
 
-    send_text(chat, "🧹 Снимаю Пушкинскую карту и перевожу билет в коммерческий вид...")
+    send_text(chat, "🧹 Снимаю пометки Лукоморья и перевожу билет в коммерческий вид...")
     ok, result, info = clean_ticket_with_report(
         data,
         spectator_fio=cur_fio,
@@ -3881,7 +3881,7 @@ def _reissue_ticket_with_pushkin_strip(chat, uid, ref):
 
     meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
     out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price)
-    caption = "🧹 Пушкинская карта снята с билета!\n\n" + ticket_meta.format_single_ticket_caption(meta, info)
+    caption = "🧹 Пометки Лукоморья сняты с билета!\n\n" + ticket_meta.format_single_ticket_caption(meta, info)
     new_token = secrets.token_hex(8)
     _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=tok_seat, del_texts=tok_del, strip_pushkin=True, uid=uid)
     pages_cnt = 1
@@ -4208,7 +4208,7 @@ def handle(msg, update_id=None, queued=False):
                 return send_text(
                     chat,
                     "✂️ **Универсальный ластик**\n\n"
-                    "Напишите текст, который нужно стереть с билета (например: Пушкинская карта, ФИО зрителя или Сервисный сбор):\n"
+                    "Напишите текст, который нужно стереть с билета (например: пометки Лукоморья, ФИО зрителя или Сервисный сбор):\n"
                     "Для сброса всех удалений напишите сброс\n"
                     "(для отмены напишите: отмена)"
                 )
@@ -4217,7 +4217,7 @@ def handle(msg, update_id=None, queued=False):
                     chat,
                     "✂️ **Универсальный ластик**\n\n"
                     "Сначала пришлите билет в PDF. Затем используйте команду:\n"
-                    "/del Пушкинская карта\n"
+                    "/del пометки Лукоморья\n"
                     "/del <любой лишний текст>"
                 )
         arg = parts[1].strip()
@@ -4820,7 +4820,7 @@ def dispatch_update(update):
         elif data.startswith("choose_sec"):
             text = "Выбор сектора..."
         elif data.startswith("pushkin"):
-            text = "Снимаю Пушкинскую карту..."
+            text = "Снимаю пометки Лукоморья..."
         elif data.startswith("avito"):
             text = "Генерирую защищённое фото..."
         elif data.startswith("quick") or data.startswith("bset:quick") or data.startswith("bmass:combo"):
