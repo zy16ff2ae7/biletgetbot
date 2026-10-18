@@ -1,4 +1,5 @@
 .token
+.cryptobot_token
 .env
 debts.json
 debts.json.tmp

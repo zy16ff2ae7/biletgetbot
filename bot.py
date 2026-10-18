@@ -1354,13 +1354,46 @@ def _send_brand_media(chat, path, kind, caption, markup):
         return False
 
 
+def format_welcome_greeting(user_id=None, username=None):
+    """Возвращает текст приветствия с динамической плашкой статуса пользователя."""
+    badge = ""
+    if user_id:
+        try:
+            if is_admin(user_id, username):
+                badge = "👑 Статус: Администратор (постоянный доступ)\n\n"
+            else:
+                st = get_store().status(user_id)
+                if st.get("active"):
+                    exp_ts = st.get("expires", 0)
+                    rem_sec = max(0, int(exp_ts - time.time()))
+                    days_left = rem_sec // 86400
+                    hours_left = (rem_sec % 86400) // 3600
+                    time_left_str = f"{days_left} дн." if days_left > 0 else f"{max(1, hours_left)} ч."
+                    badge = f"⚡️ Абонемент: АКТИВЕН (ещё {time_left_str}, до {date_label(exp_ts)})\n\n"
+                else:
+                    left = get_store().daily_left(user_id)
+                    if left > 0:
+                        badge = f"🎁 Сегодня доступно: {left} из {FREE_DAILY} {tickets_word(FREE_DAILY)} бесплатно\n\n"
+                    else:
+                        badge = f"🎁 Бесплатный лимит на сегодня исчерпан (0 из {FREE_DAILY}). Обновится ночью или оформите абонемент /subscribe\n\n"
+        except Exception as e:
+            log.warning("welcome badge err: %s", _safe_error(e))
+
+    header = f"✍️ {BRAND_NAME}\n"
+    if GREETING.startswith(header):
+        rest = GREETING[len(header):].lstrip("\n")
+        return f"{header}\n{badge}{rest}"
+    return f"{badge}{GREETING}"
+
+
 def send_welcome(chat, user_id=None, username=None):
     markup = get_main_markup(user_id, username)
-    if WELCOME_ANIMATION.exists() and _send_brand_media(chat, WELCOME_ANIMATION, "video", GREETING, markup):
+    welcome_text = format_welcome_greeting(user_id, username)
+    if WELCOME_ANIMATION.exists() and _send_brand_media(chat, WELCOME_ANIMATION, "video", welcome_text, markup):
         return True
     photo = _photo_or_none(WELCOME_IMAGE)
     if photo:
-        payload = {"chat_id": str(chat), "caption": GREETING[:1000], "reply_markup": json.dumps(markup)}
+        payload = {"chat_id": str(chat), "caption": welcome_text[:1000], "reply_markup": json.dumps(markup)}
         try:
             r = http_session().post(f"{API}/sendPhoto",
                                     files={"photo": ("welcome.jpg", io.BytesIO(photo), "image/jpeg")},
@@ -1369,7 +1402,7 @@ def send_welcome(chat, user_id=None, username=None):
                 return True
         except (requests.RequestException, ValueError) as e:
             log.warning("sendPhoto welcome: %s", _safe_error(e))
-    return send_text(chat, GREETING, markup=markup)
+    return send_text(chat, welcome_text, markup=markup)
 
 
 
@@ -2562,10 +2595,12 @@ def _send_batch_result(chat, result, progress, retry_message, uid=None):
                     if session:
                         get_store().save_batch_session(batch_token, uid, chat, session["items"], merged_file_id=sent_res)
                 progress.finish(f"Склеенный PDF отправлен 🩷 Билетов: {count}.")
-                if auto_preview:
+                try:
                     img_bytes = render_pdf_preview(merged_bytes)
                     if img_bytes:
-                        send_photo(chat, img_bytes, caption="🖼 Авто-превью первого билета")
+                        send_photo(chat, img_bytes, caption="🖼 Превью первого билета из пачки")
+                except Exception as e:
+                    log.warning("merge batch preview: %s", _safe_error(e))
                 return True
 
     sent_res = send_cleaned(chat, result["data"], zip_name, caption, reply_markup=reply_markup)
@@ -2578,7 +2613,7 @@ def _send_batch_result(chat, result, progress, retry_message, uid=None):
             get_store().save_batch_session(batch_token, uid, chat, session["items"], zip_file_id=sent_res)
     get_store().bump_processed(uid, result["ok"])
     progress.finish(f"ZIP отправлен 🩷 Готовых PDF: {result['ok']} · ошибок: {result['failed']}.")
-    if auto_preview and result.get("ok", 0) > 0:
+    if result.get("ok", 0) > 0:
         try:
             with zipfile.ZipFile(io.BytesIO(result["data"])) as archive:
                 for item in archive.infolist():
@@ -2586,10 +2621,10 @@ def _send_batch_result(chat, result, progress, retry_message, uid=None):
                         first_pdf = archive.read(item.filename)
                         img_bytes = render_pdf_preview(first_pdf)
                         if img_bytes:
-                            send_photo(chat, img_bytes, caption="🖼 Авто-превью первого билета")
+                            send_photo(chat, img_bytes, caption="🖼 Превью первого билета из пачки")
                         break
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("batch first ticket preview: %s", _safe_error(e))
     return True
 
 
@@ -4950,7 +4985,7 @@ def handle(msg, update_id=None, queued=False):
             get_store().enqueue(update_id, {"kind": "document", "message": minimal, "collection_id": ident})
             return send_text(chat, "Файл в очереди. Сообщу результат обработки.")
         return process_incoming_document(msg, job_id=update_id)
-    return send_text(chat, GREETING)
+    return send_text(chat, format_welcome_greeting(uid, username), markup=get_main_markup(uid, username))
 
 
 def worker_loop():
@@ -4964,22 +4999,46 @@ def worker_loop():
             if time.monotonic() - _last_remind_check >= 3600:
                 _last_remind_check = time.monotonic()
                 for r_uid in get_store().due_expiry_reminds():
-                    sent = send_text(
-                        r_uid, "⌛ Доступ к деду закончился. Продлить абонемент или ввести промокод?",
-                        {"inline_keyboard": [[
-                            {"text": "✍️ Продлить доступ", "callback_data": "welcome:subscribe"},
-                            {"text": "🎟 Промокод", "callback_data": "welcome:promo"}]]})
+                    expiry_text = (
+                        "⌛ **Доступ к абонементу завершён · ДЕД РЕДАЧИТ**\n\n"
+                        "Без абонемента действует базовый режим (2 бесплатных билета в день без пакетной обработки).\n\n"
+                        f"Продлите безлимитный доступ (**{CONFIG['price_stars']} ₽** за 30 дней) любым удобным способом:"
+                    )
+                    expiry_kb = {
+                        "inline_keyboard": [
+                            [{"text": f"✍️ Продлить абонемент — {CONFIG['price_stars']} ₽", "callback_data": "welcome:subscribe"}],
+                            [{"text": "💎 Оплатить через CryptoBot", "callback_data": "cbpay:create"}],
+                            [
+                                {"text": "💬 Оплата через @FreeDemin", "url": "https://t.me/FreeDemin"},
+                                {"text": "🎟 Промокод", "callback_data": "welcome:promo"},
+                            ],
+                            [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
+                        ]
+                    }
+                    sent = send_text(r_uid, expiry_text, markup=expiry_kb)
                     if sent:
                         get_store().mark_expiry_reminded(r_uid)
                 for s_uid in get_store().due_soon_expiring_reminds(24):
                     s_stat = get_store().status(s_uid)
                     exp_label = date_label(s_stat["expires"]) if s_stat.get("expires") else "скоро"
-                    sent = send_text(
-                        s_uid, f"⏳ Напоминание: ваш абонемент заканчивается через 24 часа ({exp_label}).\n\n"
-                               "Продлите доступ заранее, чтобы не терять безлимитную перепечатку билетов и сохранённые шаблоны настроек.",
-                        {"inline_keyboard": [[
-                            {"text": "✍️ Продлить абонемент", "callback_data": "welcome:subscribe"},
-                            {"text": "🎟 Промокод", "callback_data": "welcome:promo"}]]})
+                    soon_text = (
+                        f"⏳ **Напоминание: ваш абонемент заканчивается через 24 часа** ({exp_label}).\n\n"
+                        "Продлите доступ заранее, чтобы не терять безлимитную перепечатку билетов, пакетную обработку и сохранённые шаблоны настроек.\n\n"
+                        f"Стоимость продления: **{CONFIG['price_stars']} ₽** за 30 дней.\n"
+                        "Выберите удобный способ оплаты:"
+                    )
+                    soon_kb = {
+                        "inline_keyboard": [
+                            [{"text": f"✍️ Продлить абонемент — {CONFIG['price_stars']} ₽", "callback_data": "welcome:subscribe"}],
+                            [{"text": "💎 Оплатить через CryptoBot", "callback_data": "cbpay:create"}],
+                            [
+                                {"text": "💬 Оплата через @FreeDemin", "url": "https://t.me/FreeDemin"},
+                                {"text": "🎟 Промокод", "callback_data": "welcome:promo"},
+                            ],
+                            [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
+                        ]
+                    }
+                    sent = send_text(s_uid, soon_text, markup=soon_kb)
                     if sent:
                         get_store().mark_soon_expiry_reminded(s_uid)
             job = get_store().claim()
