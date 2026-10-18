@@ -28,7 +28,7 @@ if [ -n "${BILET_SSH_CONTROL:-}" ]; then
 fi
 bilet_stage=$("${bilet_ssh[@]}" theatra1ka 'umask 077; mktemp -d /opt/bilet-bot-stage.XXXXXX')
 "${bilet_scp[@]}" "$bilet_work/package.tgz" "theatra1ka:$bilet_stage/package.tgz"
-"${bilet_ssh[@]}" theatra1ka bash -s -- "$bilet_stage" "${BILET_DEPLOY_SETTINGS:-0}" "${BILET_GATEWAY_ONLY:-0}" "${BILET_ENABLE_URL_DELIVERY:-0}" <<'REMOTE'
+"${bilet_ssh[@]}" theatra1ka bash -s -- "$bilet_stage" "${BILET_DEPLOY_SETTINGS:-1}" "${BILET_GATEWAY_ONLY:-0}" "${BILET_ENABLE_URL_DELIVERY:-0}" <<'REMOTE'
 set -euo pipefail
 bilet_stage=$1
 bilet_settings=$2
@@ -183,7 +183,7 @@ cd "$bilet_root"
 BILETNAYA="$bilet_root/biletnaya" "$bilet_python" - <<'VERIFY'
 import bot
 bot.get_store()
-assert bot.CONFIG['price_stars'] == 1000
+assert bot.CONFIG['price_stars'] == 750
 assert 1464797266 in bot.CONFIG['admin_ids']
 assert 7868642254 in bot.CONFIG['admin_ids']
 assert 'freedemin' in bot.CONFIG['gift_usernames']

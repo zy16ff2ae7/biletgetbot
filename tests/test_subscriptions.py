@@ -137,7 +137,7 @@ class SubscriptionTests(unittest.TestCase):
         kwargs = tg.call_args.kwargs
         self.assertEqual("XTR", kwargs["currency"])
         self.assertEqual(PERIOD, kwargs["subscription_period"])
-        self.assertEqual(1000, kwargs["prices"][0]["amount"])
+        self.assertEqual(bot.CONFIG["price_stars"], kwargs["prices"][0]["amount"])
 
     def test_customer_cannot_grant_access(self):
         with patch.object(bot, "_store", self.store), patch.object(bot, "send_text"):
