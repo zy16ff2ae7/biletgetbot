@@ -366,6 +366,50 @@ class SubscriptionStore:
             items_json TEXT
         )""")
         db.execute("CREATE INDEX IF NOT EXISTS idx_batch_sessions_created ON batch_sessions(created)")
+        db.execute("""CREATE TABLE IF NOT EXISTS user_presets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            name TEXT,
+            fio TEXT,
+            custom_price INTEGER,
+            hide_price INTEGER DEFAULT 0,
+            batch_mode TEXT DEFAULT 'zip',
+            auto_preview INTEGER DEFAULT 0,
+            created INTEGER
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_user_presets_user ON user_presets(user_id)")
+
+    def get_user_presets(self, user_id):
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT * FROM user_presets WHERE user_id=? ORDER BY created ASC",
+                (user_id,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_user_preset(self, preset_id, user_id=None):
+        with self.db() as db:
+            if user_id is not None:
+                row = db.execute("SELECT * FROM user_presets WHERE id=? AND user_id=?", (preset_id, user_id)).fetchone()
+            else:
+                row = db.execute("SELECT * FROM user_presets WHERE id=?", (preset_id,)).fetchone()
+            return dict(row) if row else None
+
+    def save_user_preset(self, user_id, name, fio=None, custom_price=None, hide_price=0, batch_mode="zip", auto_preview=0):
+        with self.db() as db:
+            count = db.execute("SELECT COUNT(*) FROM user_presets WHERE user_id=?", (user_id,)).fetchone()[0]
+            if count >= 10:
+                raise ValueError("Лимит: максимум 10 сохранённых шаблонов.")
+            cur = db.execute(
+                "INSERT INTO user_presets (user_id, name, fio, custom_price, hide_price, batch_mode, auto_preview, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_id, name.strip()[:60], fio, custom_price, int(bool(hide_price)), batch_mode, int(bool(auto_preview)), int(time.time()))
+            )
+            return cur.lastrowid
+
+    def delete_user_preset(self, preset_id, user_id):
+        with self.db() as db:
+            db.execute("DELETE FROM user_presets WHERE id=? AND user_id=?", (preset_id, user_id))
 
     def save_batch_session(self, token, user_id, chat_id, items, zip_file_id=None, merged_file_id=None):
         with self.db() as db:
@@ -621,7 +665,7 @@ class SubscriptionStore:
         """Сколько бесплатных билетов осталось сегодня (МСК).
 
         У абонементчиков счётчик не расходуется — всегда полный лимит,
-        чтобы строка профиля не показывала «0 из 2» при активной подписке.
+        чтобы строка профиля не показывала 0 из 2 при активной подписке.
         """
         if self.status(user_id)["active"]:
             return self.DAILY_LIMIT

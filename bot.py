@@ -1161,6 +1161,7 @@ def set_my_commands():
         {"command": "trial", "description": "Бесплатный пробный день"},
         {"command": "promo", "description": "Активировать промокод"},
         {"command": "settings", "description": "Настройки билетов"},
+        {"command": "templates", "description": "Шаблоны настроек печати"},
         {"command": "fio", "description": "ФИО зрителя на билетах"},
         {"command": "price", "description": "Цена на билете"},
         {"command": "seat", "description": "Ряд, место, сектор"},
@@ -1220,6 +1221,159 @@ def split_pdf_tickets(pdf_bytes, srv=None, hide_price=False):
     return entries
 
 
+BUILTIN_PRESETS = {
+    "gift": {
+        "name": "🎁 Подарочный",
+        "hide_price": 1,
+        "auto_preview": 1,
+        "fio": None,
+        "custom_price": None,
+        "batch_mode": "zip",
+        "desc": "Скрыть цену, авто-превью вкл, пачки в ZIP",
+    },
+    "std": {
+        "name": "💼 Стандарт",
+        "hide_price": 0,
+        "auto_preview": 0,
+        "fio": None,
+        "custom_price": None,
+        "batch_mode": "zip",
+        "desc": "Цена исходная, превью выкл, пачки в ZIP",
+    },
+    "print": {
+        "name": "📑 Для печати",
+        "hide_price": 0,
+        "auto_preview": 1,
+        "fio": None,
+        "custom_price": None,
+        "batch_mode": "merge",
+        "desc": "Цена исходная, авто-превью вкл, пачки склеены в PDF",
+    },
+    "price2500": {
+        "name": "💎 Своя цена 2500 ₽",
+        "hide_price": 0,
+        "auto_preview": 0,
+        "fio": None,
+        "custom_price": 2500,
+        "batch_mode": "zip",
+        "desc": "Цена 2500 ₽, превью выкл, пачки в ZIP",
+    },
+}
+
+
+def _apply_preset_to_user(uid, preset):
+    store = get_store()
+    if "hide_price" in preset and preset["hide_price"] is not None:
+        store.update_user_setting(uid, "hide_price", int(bool(preset["hide_price"])))
+    if "batch_mode" in preset and preset["batch_mode"] is not None:
+        store.update_user_setting(uid, "batch_mode", preset["batch_mode"])
+    if "auto_preview" in preset and preset["auto_preview"] is not None:
+        store.update_user_setting(uid, "auto_preview", int(bool(preset["auto_preview"])))
+    if "custom_price" in preset:
+        store.update_user_setting(uid, "custom_price", preset["custom_price"])
+    if "fio" in preset and preset["fio"] is not None:
+        store.update_user_setting(uid, "fio", preset["fio"])
+
+
+def _apply_preset_to_batch(batch_token, preset):
+    session = get_store().get_batch_session(batch_token)
+    if not session:
+        return 0
+    items = session.get("items", [])
+    count = 0
+    for idx in range(len(items)):
+        kwargs = {}
+        if "hide_price" in preset and preset["hide_price"] is not None:
+            kwargs["hide_price"] = bool(preset["hide_price"])
+        if "custom_price" in preset and preset["custom_price"] is not None:
+            kwargs["custom_price"] = preset["custom_price"]
+        elif "custom_price" in preset and preset["custom_price"] is None and not preset.get("hide_price"):
+            kwargs["custom_price"] = "сброс"
+        if "fio" in preset and preset["fio"]:
+            kwargs["fio"] = preset["fio"]
+        ok, _ = _reprocess_batch_item(batch_token, idx, **kwargs)
+        if ok:
+            count += 1
+    return count
+
+
+def build_templates_card(uid, target_batch_token=None):
+    store = get_store()
+    custom_presets = store.get_user_presets(uid)
+
+    if target_batch_token:
+        title = "📂 **Шаблоны настроек для пачки**\n\n"
+        subtitle = "Выберите шаблон, чтобы применить его ко всем билетам в этой пачке:\n\n"
+        prefix = f"btpl:apply:{target_batch_token}:"
+    else:
+        title = "📂 **Шаблоны настроек печати**\n\n"
+        subtitle = "Выберите готовый шаблон или сохраните свои текущие настройки:\n\n"
+        prefix = "tpl:apply:"
+
+    body_parts = [title, subtitle, "⚡️ **Готовые шаблоны:**\n"]
+    for key, p in BUILTIN_PRESETS.items():
+        body_parts.append(f"• **{p['name']}** — {p['desc']}\n")
+
+    if custom_presets:
+        body_parts.append("\n⭐ **Ваши сохранённые шаблоны:**\n")
+        for p in custom_presets:
+            details = []
+            if p.get("hide_price"):
+                details.append("скрыть цену")
+            elif p.get("custom_price") is not None:
+                details.append(f"{p['custom_price']} ₽")
+            if p.get("fio"):
+                details.append(f"ФИО: {p['fio']}")
+            if p.get("batch_mode"):
+                details.append(f"пачки: {p['batch_mode']}")
+            if p.get("auto_preview"):
+                details.append("превью")
+            det_str = f" ({', '.join(details)})" if details else ""
+            body_parts.append(f"• **{p['name']}**{det_str}\n")
+    else:
+        body_parts.append("\n_(У вас пока нет своих сохранённых шаблонов)_\n")
+
+    text = "".join(body_parts)
+
+    kb = []
+    # Built-in buttons
+    builtins_row1 = [
+        {"text": BUILTIN_PRESETS["gift"]["name"], "callback_data": f"{prefix}builtin_gift"},
+        {"text": BUILTIN_PRESETS["std"]["name"], "callback_data": f"{prefix}builtin_std"},
+    ]
+    builtins_row2 = [
+        {"text": BUILTIN_PRESETS["print"]["name"], "callback_data": f"{prefix}builtin_print"},
+        {"text": BUILTIN_PRESETS["price2500"]["name"], "callback_data": f"{prefix}builtin_price2500"},
+    ]
+    kb.append(builtins_row1)
+    kb.append(builtins_row2)
+
+    # Custom preset buttons (up to 2 per row)
+    if custom_presets:
+        row = []
+        for p in custom_presets:
+            btn_text = f"⭐ {p['name'][:18]}"
+            row.append({"text": btn_text, "callback_data": f"{prefix}custom_{p['id']}"})
+            if len(row) == 2:
+                kb.append(row)
+                row = []
+        if row:
+            kb.append(row)
+
+    if target_batch_token:
+        kb.append([{"text": "⬅️ Вернуться к пачке", "callback_data": f"bcfg:{target_batch_token}"}])
+    else:
+        action_row = [
+            {"text": "💾 Сохранить текущие как шаблон", "callback_data": "tpl:save"},
+        ]
+        if custom_presets:
+            action_row.append({"text": "🗑 Удалить шаблон", "callback_data": "tpl:del_menu"})
+        kb.append(action_row)
+        kb.append([{"text": "⚙️ Назад в настройки", "callback_data": "welcome:settings"}])
+
+    return text, {"inline_keyboard": kb}
+
+
 def build_settings_card(uid):
     settings = _user_settings(uid)
     fio = settings.get("fio") or "не установлено (очищается)"
@@ -1258,6 +1412,7 @@ def build_settings_card(uid):
             [{"text": price_btn, "callback_data": "set:price"}],
             [{"text": batch_btn, "callback_data": "set:batch"}],
             [{"text": preview_btn, "callback_data": "set:preview"}],
+            [{"text": "📂 Шаблоны настроек", "callback_data": "tpl:menu"}],
             [{"text": "🔄 Сбросить настройки", "callback_data": "set:reset"}],
         ]
     }
@@ -1460,6 +1615,9 @@ def _build_batch_dashboard(batch_token, page=0):
     kb.append([
         {"text": "💰 Задать цену всем", "callback_data": f"bmass:price:{batch_token}"},
         {"text": "🎁 Скрыть все цены", "callback_data": f"bmass:hideprice:{batch_token}"},
+    ])
+    kb.append([
+        {"text": "📂 Применить шаблон к пачке", "callback_data": f"btpl:menu:{batch_token}"}
     ])
     kb.append([
         {"text": "📦 Скачать новый ZIP", "callback_data": f"bzip:{batch_token}"},
@@ -2148,7 +2306,8 @@ def handle_callback_query(cb):
     if not any(data == x or data.startswith(f"{x}:") for x in (
         "unpack", "merge", "preview", "compare", "price", "fio", "seat", "choose_sec",
         "pushkin", "avito", "set", "toggleprice", "split", "welcome", "adm",
-        "bcfg", "bedit", "bset", "btog", "bprev", "bmass", "bzip", "bmerge", "bunpack", "bsend"
+        "bcfg", "bedit", "bset", "btog", "bprev", "bmass", "bzip", "bmerge", "bunpack", "bsend",
+        "tpl", "btpl"
     )):
         return
 
@@ -2172,6 +2331,12 @@ def handle_callback_query(cb):
             return send_profile(chat, uid, sender.get("username"))
         if action == "settings":
             text_card, markup = build_settings_card(uid)
+            if msg_id:
+                try:
+                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_card, reply_markup=markup)
+                    return
+                except Exception:
+                    pass
             return send_text(chat, text_card, markup=markup)
         if action == "promo":
             get_store().set_user_state(uid, "waiting_promo")
@@ -2226,6 +2391,103 @@ def handle_callback_query(cb):
 
     if not cooldown_ok(uid):
         return  # тяжёлый рендер не чаще раза в 3 секунды
+
+    if data.startswith("tpl:"):
+        action = data[4:]
+        if action == "menu":
+            text_card, markup = build_templates_card(uid)
+            if msg_id:
+                try:
+                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_card, reply_markup=markup)
+                    return
+                except Exception:
+                    pass
+            return send_text(chat, text_card, markup=markup)
+        if action == "save":
+            store = get_store()
+            custom_presets = store.get_user_presets(uid)
+            if len(custom_presets) >= 10:
+                return send_text(chat, "⚠️ Достигнут лимит: максимум 10 сохранённых шаблонов. Удалите ненужные, чтобы сохранить новый.")
+            store.set_user_state(uid, "waiting_preset_name")
+            return send_text(chat, "💾 Введите название для шаблона (например: Мой театр):\n(для отмены напишите: отмена)")
+        if action == "del_menu":
+            store = get_store()
+            custom_presets = store.get_user_presets(uid)
+            if not custom_presets:
+                return send_text(chat, "У вас нет сохранённых шаблонов.")
+            kb = []
+            for p in custom_presets:
+                kb.append([{"text": f"🗑 {p['name']}", "callback_data": f"tpl:del:{p['id']}"}])
+            kb.append([{"text": "⬅️ Назад к шаблонам", "callback_data": "tpl:menu"}])
+            text_del = "🗑 **Удаление шаблона**\n\nВыберите шаблон, который хотите удалить:"
+            if msg_id:
+                try:
+                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_del, reply_markup={"inline_keyboard": kb})
+                    return
+                except Exception:
+                    pass
+            return send_text(chat, text_del, markup={"inline_keyboard": kb})
+        if action.startswith("del:"):
+            pid = int(action.split(":", 1)[1])
+            store = get_store()
+            store.delete_user_preset(pid, uid)
+            send_text(chat, "🗑 Шаблон успешно удалён.")
+            text_card, markup = build_templates_card(uid)
+            return send_text(chat, text_card, markup=markup)
+        if action.startswith("apply:"):
+            preset_key = action.split(":", 1)[1]
+            store = get_store()
+            preset = None
+            if preset_key.startswith("builtin_"):
+                bkey = preset_key.replace("builtin_", "")
+                preset = BUILTIN_PRESETS.get(bkey)
+            elif preset_key.startswith("custom_"):
+                pid = int(preset_key.replace("custom_", ""))
+                preset = store.get_user_preset(pid, uid)
+
+            if not preset:
+                return send_text(chat, "⚠️ Шаблон не найден.")
+
+            _apply_preset_to_user(uid, preset)
+            send_text(chat, f"✅ Применён шаблон: {preset['name']}")
+            text_card, markup = build_settings_card(uid)
+            return send_text(chat, text_card, markup=markup)
+        return
+
+    if data.startswith("btpl:"):
+        sub = data[5:]
+        if sub.startswith("menu:"):
+            batch_token = sub.split(":", 1)[1]
+            text_card, markup = build_templates_card(uid, target_batch_token=batch_token)
+            if msg_id:
+                try:
+                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_card, reply_markup=markup)
+                    return
+                except Exception:
+                    pass
+            return send_text(chat, text_card, markup=markup)
+        if sub.startswith("apply:"):
+            parts = sub.split(":", 2)
+            batch_token = parts[1]
+            preset_key = parts[2]
+            store = get_store()
+            preset = None
+            if preset_key.startswith("builtin_"):
+                bkey = preset_key.replace("builtin_", "")
+                preset = BUILTIN_PRESETS.get(bkey)
+            elif preset_key.startswith("custom_"):
+                pid = int(preset_key.replace("custom_", ""))
+                preset = store.get_user_preset(pid, uid)
+
+            if not preset:
+                return send_text(chat, "⚠️ Шаблон не найден.")
+
+            send_text(chat, f"⚙️ Применяю шаблон {preset['name']} ко всем билетам пачки...")
+            count = _apply_preset_to_batch(batch_token, preset)
+            send_text(chat, f"✅ Шаблон {preset['name']} применён к {count} {tickets_word(count)}!")
+            text_dash, kb = _build_batch_dashboard(batch_token)
+            return send_text(chat, text_dash, markup=kb)
+        return
 
     if data.startswith("set:"):
         action = data.split(":", 1)[1]
@@ -3182,6 +3444,9 @@ def handle(msg, update_id=None, queued=False):
     if command in {"/settings", "/menu"}:
         text_card, markup = build_settings_card(uid)
         return send_text(chat, text_card, markup=markup)
+    if command in {"/templates", "/template", "/tpl"}:
+        text_card, markup = build_templates_card(uid)
+        return send_text(chat, text_card, markup=markup)
     if command in {"/subscribe", "/buy"}:
         return subscribe(chat, uid)
     if command in {"/subscription", "/balance", "/dolg"}:
@@ -3406,6 +3671,26 @@ def handle(msg, update_id=None, queued=False):
         if text.lower() in {"отмена", "cancel"}:
             return send_text(chat, "Ввод промокода отменён.")
         return cmd_promo(chat, uid, text.strip())
+    if state == "waiting_preset_name" and text and not command.startswith("/"):
+        get_store().set_user_state(uid, None)
+        if text.lower() in {"отмена", "cancel"}:
+            return send_text(chat, "Сохранение шаблона отменено.")
+        cur_set = get_store().get_user_settings(uid)
+        try:
+            get_store().save_user_preset(
+                uid,
+                name=text.strip(),
+                fio=cur_set.get("fio"),
+                custom_price=cur_set.get("custom_price"),
+                hide_price=cur_set.get("hide_price", 0),
+                batch_mode=cur_set.get("batch_mode", "zip"),
+                auto_preview=cur_set.get("auto_preview", 0)
+            )
+            send_text(chat, f"✅ Шаблон {text.strip()} успешно сохранён!")
+            text_card, markup = build_templates_card(uid)
+            return send_text(chat, text_card, markup=markup)
+        except ValueError as e:
+            return send_text(chat, f"⚠️ Не удалось сохранить шаблон: {e}")
     if state == "waiting_fio_settings" and text and not command.startswith("/"):
         get_store().set_user_state(uid, None)
         if text.lower() in {"отмена", "cancel"}:

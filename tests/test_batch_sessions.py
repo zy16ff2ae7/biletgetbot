@@ -374,6 +374,118 @@ class BatchSessionsTests(unittest.TestCase):
                 })
                 self.assertTrue(len(delivered_files) >= 4)
 
+    def test_user_presets_store(self):
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            store = bot.SubscriptionStore(td_path / "subscriptions.sqlite3")
+
+            # Initially empty
+            self.assertEqual([], store.get_user_presets(2001))
+
+            # Save preset
+            pid1 = store.save_user_preset(2001, "Мой Большой", fio="Иванов И.И.", custom_price=5000, hide_price=0, batch_mode="zip", auto_preview=1)
+            self.assertIsNotNone(pid1)
+
+            presets = store.get_user_presets(2001)
+            self.assertEqual(1, len(presets))
+            self.assertEqual("Мой Большой", presets[0]["name"])
+            self.assertEqual("Иванов И.И.", presets[0]["fio"])
+            self.assertEqual(5000, presets[0]["custom_price"])
+            self.assertEqual(0, presets[0]["hide_price"])
+            self.assertEqual("zip", presets[0]["batch_mode"])
+            self.assertEqual(1, presets[0]["auto_preview"])
+
+            # Get single preset
+            p = store.get_user_preset(pid1, 2001)
+            self.assertIsNotNone(p)
+            self.assertEqual("Мой Большой", p["name"])
+
+            # Delete preset
+            store.delete_user_preset(pid1, 2001)
+            self.assertEqual([], store.get_user_presets(2001))
+
+            # Limit: max 10
+            for i in range(10):
+                store.save_user_preset(2001, f"Пресет {i+1}")
+            with self.assertRaises(ValueError):
+                store.save_user_preset(2001, "Лишний пресет")
+
+    def test_templates_card_and_application(self):
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            store = bot.SubscriptionStore(td_path / "subscriptions.sqlite3")
+            store.grant(2002, 30, 2002)
+
+            with patch.object(bot, "STATE_DIR", td_path), patch.object(bot, "_store", store):
+                # Check templates card text and buttons
+                text, markup = bot.build_templates_card(2002)
+                self.assertIn("Шаблоны настроек печати", text)
+                self.assertIn("Подарочный", text)
+                self.assertIn("Стандарт", text)
+                self.assertIn("Для печати", text)
+                buttons = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
+                self.assertIn("🎁 Подарочный", buttons)
+                self.assertIn("💼 Стандарт", buttons)
+                self.assertIn("📑 Для печати", buttons)
+                self.assertIn("💎 Своя цена 2500 ₽", buttons)
+                self.assertIn("💾 Сохранить текущие как шаблон", buttons)
+
+                # Apply gift preset to user
+                bot._apply_preset_to_user(2002, bot.BUILTIN_PRESETS["gift"])
+                u_set = store.get_user_settings(2002)
+                self.assertEqual(1, u_set["hide_price"])
+                self.assertEqual(1, u_set["auto_preview"])
+                self.assertEqual("zip", u_set["batch_mode"])
+
+                # Apply print preset to user
+                bot._apply_preset_to_user(2002, bot.BUILTIN_PRESETS["print"])
+                u_set = store.get_user_settings(2002)
+                self.assertEqual(0, u_set["hide_price"])
+                self.assertEqual("merge", u_set["batch_mode"])
+
+                # Custom preset apply
+                pid = store.save_user_preset(2002, "Тест VIP", custom_price=9900, hide_price=0, batch_mode="separate", auto_preview=1)
+                custom_p = store.get_user_preset(pid, 2002)
+                bot._apply_preset_to_user(2002, custom_p)
+                u_set = store.get_user_settings(2002)
+                self.assertEqual(9900, u_set["custom_price"])
+                self.assertEqual("separate", u_set["batch_mode"])
+
+    def test_templates_apply_to_batch(self):
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            store = bot.SubscriptionStore(td_path / "subscriptions.sqlite3")
+            store.grant(2003, 30, 2003)
+
+            t1 = self._sample_ticket_pdf(title="Ревизор", row="1", seat="1", price=1500)
+            t2 = self._sample_ticket_pdf(title="Ревизор", row="1", seat="2", price=1500)
+
+            batch_res = {
+                "ok": 2,
+                "failed": 0,
+                "changed": 2,
+                "cleaned_items": [
+                    {"name": "t1.pdf", "output_name": "t1.pdf", "orig_data": t1, "result": t1, "meta": {"title": "Ревизор", "price": 1500}},
+                    {"name": "t2.pdf", "output_name": "t2.pdf", "orig_data": t2, "result": t2, "meta": {"title": "Ревизор", "price": 1500}},
+                ]
+            }
+
+            with patch.object(bot, "STATE_DIR", td_path), patch.object(bot, "_store", store):
+                token = bot._init_batch_session(2003, 2003, batch_res)
+
+                # Apply gift preset to batch
+                count = bot._apply_preset_to_batch(token, bot.BUILTIN_PRESETS["gift"])
+                self.assertEqual(2, count)
+                session = store.get_batch_session(token)
+                self.assertTrue(all(it["hide_price"] for it in session["items"]))
+
+                # Apply price2500 preset to batch
+                count = bot._apply_preset_to_batch(token, bot.BUILTIN_PRESETS["price2500"])
+                self.assertEqual(2, count)
+                session = store.get_batch_session(token)
+                self.assertTrue(all(not it["hide_price"] for it in session["items"]))
+                self.assertTrue(all(it["custom_price"] == 2500 for it in session["items"]))
+
 
 if __name__ == "__main__":
     unittest.main()
