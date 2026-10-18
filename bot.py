@@ -958,14 +958,29 @@ def subscribe(chat, user_id):
                  payload=invoice["payload"], provider_token="", currency="XTR",
                  prices=[{"label": f"30 дней со скидкой ({CONFIG['price_stars']} ₽)", "amount": invoice["price"]}], subscription_period=PERIOD)
         if not url:
-            return send_text(chat, "Не удалось создать счёт. Попробуйте /subscribe позже.")
+            return send_text(
+                chat,
+                f"🏷 Абонемент: {CONFIG['price_stars']} рублей за 30 дней безлимита.\n\n"
+                f"💬 Для прямой оплаты напишите администратору @FreeDemin (СБП / перевод на карту).",
+                {"inline_keyboard": [
+                    [{"text": "💬 Оплата через админа (@FreeDemin)", "url": "https://t.me/FreeDemin"}],
+                    [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
+                ]}
+            )
         get_store().save_url(invoice["payload"], url)
     return send_text(
         chat,
-        f"🏷 Специальный тариф: {CONFIG['price_stars']} рублей за 30 дней (вместо 1500 ₽)\n"
+        f"🏷 **Специальный тариф:** {CONFIG['price_stars']} рублей за 30 дней (вместо 1500 ₽)\n"
         f"⏳ Временная скидка 50% — успейте взять, скоро повышение стоимости!\n\n"
-        f"Полный безлимит билетов и пачек, замена ФИО и кодов. Автопродление каждые 30 дней; отмена: /cancel_subscription.",
-        {"inline_keyboard": [[{"text": f"💳 Оформить абонемент — {CONFIG['price_stars']} руб.", "url": url}]]}
+        f"Полный безлимит билетов и пачек, замена ФИО и кодов.\n\n"
+        f"💳 **Выберите удобный способ оплаты:**\n"
+        f"1️⃣ В боте картой через Telegram (мгновенная активация)\n"
+        f"2️⃣ Напрямую через админа @FreeDemin (СБП / перевод на карту)",
+        {"inline_keyboard": [
+            [{"text": f"💳 Оплатить в Telegram — {CONFIG['price_stars']} руб.", "url": url}],
+            [{"text": "💬 Оплата через админа (@FreeDemin)", "url": "https://t.me/FreeDemin"}],
+            [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
+        ]}
     )
 
 
@@ -1031,6 +1046,7 @@ def build_subscription_card(user_id):
         )
         kb.append([
             {"text": f"✍️ Продлить за {CONFIG['price_stars']} руб. (скидка)", "callback_data": "welcome:subscribe"},
+            {"text": "💬 Оплата через @FreeDemin", "url": "https://t.me/FreeDemin"},
         ])
         kb.append([
             {"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"},
@@ -1052,13 +1068,15 @@ def build_subscription_card(user_id):
             f"• Моментальное фото До/После и авто-превью\n"
             f"• Сохранение персональных шаблонов настроек\n\n"
             f"🏷 **Специальный тариф:** {CONFIG['price_stars']} рублей / 30 дней (вместо 1500 ₽)\n"
-            f"⏳ Временная скидка 50% — успейте взять, скоро повышение стоимости!"
+            f"⏳ Временная скидка 50% — успейте взять, скоро повышение стоимости!\n"
+            f"💬 Оплата: в боте или переводом через админа @FreeDemin (СБП/карта)."
         )
         kb.append([
             {"text": f"✍️ Оформить за {CONFIG['price_stars']} руб. (скидка)", "callback_data": "welcome:subscribe"},
             {"text": "🎁 Пробный день", "callback_data": "welcome:trial"},
         ])
         kb.append([
+            {"text": "💬 Оплата через @FreeDemin", "url": "https://t.me/FreeDemin"},
             {"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"},
         ])
         kb.append([{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}])
@@ -1269,6 +1287,7 @@ def send_profile(chat, user_id, username=None):
         ])
     markup_rows.append([
         {"text": "🎟 Мой абонемент", "callback_data": "welcome:status"},
+        {"text": "💬 Оплата через @FreeDemin", "url": "https://t.me/FreeDemin"},
     ])
     markup_rows.append([
         {"text": "🕒 История билетов", "callback_data": "history:menu"},
@@ -1427,7 +1446,7 @@ def set_my_commands():
         {"command": "seat", "description": "Ряд, место, сектор"},
         {"command": "batch", "description": "Собрать пачку PDF"},
         {"command": "id", "description": "Мой Telegram ID"},
-        {"command": "paysupport", "description": "Помощь с оплатой"},
+        {"command": "paysupport", "description": "Оплата через админа (@FreeDemin)"},
     ]
     try:
         tg("setMyCommands", commands=commands)
@@ -4284,9 +4303,20 @@ def handle(msg, update_id=None, queued=False):
         return _send_avito_preview(chat, uid, recent_token)
     if command == "/terms":
         return send_text(chat, f"Абонемент: {CONFIG['price_stars']} рублей за 30 дней без лимита билетов (скидка до планового повышения до 1500 рублей). Автопродление — каждые 30 дней; отмена /cancel_subscription. В одной пачке до 50 PDF и 100 МБ распакованных данных. Входящий файл до 20 МБ. Исходные файлы пачки хранятся на сервере не более часа и удаляются после отправки. По вопросам оплаты: /paysupport.")
-    if command == "/paysupport":
-        return send_text(chat, "Свяжитесь с администратором по вопросам обработки билетов, оплаты или возврата.",
-                         {"inline_keyboard": [[{"text": "Администратор", "url": "tg://user?id="+str(CONFIG['admin_ids'][0])}]]})
+    if command in {"/paysupport", "/pay", "/payadmin"}:
+        return send_text(
+            chat,
+            f"💳 **ОПЛАТА И СВЯЗЬ С АДМИНИСТРАТОРОМ · {BRAND_NAME}**\n\n"
+            f"• Абонемент: **{CONFIG['price_stars']} ₽** за 30 дней (полный безлимит билетов и пачек).\n"
+            f"• Способ 1: Оформить в боте — /subscribe (оплата картой через Telegram).\n"
+            f"• Способ 2: Напрямую через админа — напишите **@FreeDemin** (СБП, перевод на карту).\n\n"
+            f"Ваш Telegram ID: `{uid}` (отправьте его админу при оплате для мгновенной активации).",
+            {"inline_keyboard": [
+                [{"text": "💬 Оплатить через @FreeDemin", "url": "https://t.me/FreeDemin"}],
+                [{"text": "💳 Оплатить в боте", "callback_data": "welcome:subscribe"}],
+                [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
+            ]}
+        )
     if command in {"/admin", "/panel", "/owner"}:
         if not is_admin(uid, username):
             return send_text(chat, "Эта команда доступна администратору.")
