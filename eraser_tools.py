@@ -119,12 +119,19 @@ def strip_pushkin_card_from_doc(doc: fitz.Document, srv: Any = None) -> tuple[in
                 removal_count += 1
                 removed_texts.append(phrase)
 
-        # Check for Pushkin header banner image (175x50 etc.)
+        # Check for Pushkin header banner image (175x50 etc.) or Kassir magenta Pushkin logo
         for im in page.get_image_info(xrefs=True):
             r = fitz.Rect(im["bbox"])
-            # Proportions of the Pushkin Card top logo / banner
-            if r.y0 < 120 and r.width >= 70 and r.height <= 100 and r.width >= 1.6 * r.height:
-                # If banner is near top of page and resembles Pushkin badge
+            is_banner = r.y0 < 120 and r.width >= 70 and r.height <= 100 and r.width >= 1.6 * r.height
+            is_kassir_head = r.y0 < 90 and 250 <= r.x0 <= 430 and 15 <= r.width <= 75 and 15 <= r.height <= 75
+            if is_banner or is_kassir_head:
+                if im.get("xref"):
+                    try:
+                        page.delete_image(im["xref"])
+                        removal_count += 1
+                        continue
+                    except Exception:
+                        pass
                 box = (r + (-1.0, -1.0, 1.0, 1.0)) & page_rect
                 page.add_redact_annot(box, fill=(1, 1, 1))
                 removal_count += 1
