@@ -44,7 +44,7 @@ SUB_IN = (46, 62)
 HANDLE_IN = (58, 72)
 FREE_LINE = "2 БИЛЕТА В ДЕНЬ БЕСПЛАТНО · КАЖДОМУ"
 PUSHKIN_LINE = "АЛЕКСАНДР СЕРГЕЕВИЧ БЫЛ БЫ ДОВОЛЕН"
-CTA_LINE = "ПАЧКИ И БЕЗЛИМИТ · 1000 ЗВЁЗД · /subscribe"
+CTA_LINE = "ПАЧКИ И БЕЗЛИМИТ · 750 ЗВЁЗД ВМЕСТО 1500 · /subscribe"
 BARS_IN = 18          # бары задвигаются за 18 кадров
 
 
@@ -291,7 +291,7 @@ def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0, pushkin_a=0
 
         ov = Image.alpha_composite(ov, p_layer)
 
-    # Акт 3: "АБОНЕМЕНТ · 1000 ЗВЁЗД · /subscribe"
+    # Акт 3: "ПАЧКИ И БЕЗЛИМИТ · 750 ЗВЁЗД ВМЕСТО 1500 · /subscribe"
     if cta_a > 0:
         ca = int(255 * cta_a)
         gap = 2
@@ -302,9 +302,29 @@ def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0, pushkin_a=0
                    (cx - 16, cy + diam_r), (cx - 16 - diam_r, cy)], fill=(*GOLD_EDGE, ca))
         d.polygon([(cx + cw + 16, cy - diam_r), (cx + cw + 16 + diam_r, cy),
                    (cx + cw + 16, cy + diam_r), (cx + cw + 16 - diam_r, cy)], fill=(*GOLD_EDGE, ca))
+
+        c_mask = Image.new("L", (W, H), 0)
+        c_md = ImageDraw.Draw(c_mask)
+        cur_x = cx
         for ch in CTA_LINE:
-            d.text((cx, fy), ch, font=top_font, fill=(*GOLD_MID, ca))
-            cx += probe.textlength(ch, font=top_font) + gap
+            c_md.text((cur_x, fy), ch, font=top_font, fill=255)
+            cur_x += probe.textlength(ch, font=top_font) + gap
+        c_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        c_fill = Image.new("RGBA", (W, H), (*GOLD_MID, ca))
+        c_layer.paste(c_fill, (0, 0), c_mask)
+
+        if f is not None and 130 <= f <= 165:
+            g_pos = (f - 130) / 35.0
+            gx = cx + g_pos * cw
+            gm = Image.new("L", (W, H), 0)
+            gd = ImageDraw.Draw(gm)
+            gd.polygon([(gx - 25, 0), (gx + 25, 0), (gx + 40, bar_t), (gx - 10, bar_t)], fill=255)
+            gm = gm.filter(ImageFilter.GaussianBlur(8))
+            gleam_text = ImageChops.multiply(c_mask, gm)
+            gleam_fill = Image.new("RGBA", (W, H), (*GOLD_TOP, ca))
+            c_layer.paste(gleam_fill, (0, 0), gleam_text)
+
+        ov = Image.alpha_composite(ov, c_layer)
 
     # Определение фазы светового блика (shimmer) по номеру кадра:
     gleam_pos = None
