@@ -228,7 +228,7 @@ class AdvancedFeaturesTests(unittest.TestCase):
             photo_bytes = mock_send_photo.call_args[0][1]
             caption = mock_send_photo.call_args[1].get("caption", "")
             self.assertTrue(photo_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
-            self.assertIn("Авито", caption)
+            self.assertIn("Защищённое фото", caption)
 
 
 if __name__ == "__main__":
