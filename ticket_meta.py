@@ -43,6 +43,7 @@ THEATER_ALIASES = [
     (re.compile(r"\bрамт\b", re.I), "РАМТ"),
     (re.compile(r"бдт|товстоногов", re.I), "БДТ"),
     (re.compile(r"табаков|табакерк", re.I), "Театр Табакова"),
+    (re.compile(r"нижегородский.*театр|operann", re.I), "Нижегородский театр оперы и балета"),
     (re.compile(r"пушкин", re.I), "Театр Пушкина"),
     (re.compile(r"драматический театр рб|гардт рб", re.I), "Русский драмтеатр РБ"),
     (re.compile(r"русский драмтеатр|русский драматический театр", re.I), "Русский драмтеатр"),
@@ -210,20 +211,36 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
                 theater = t_name
                 break
 
+    # Operann / Нижегородский театр оперы и балета
+    is_operann = (
+        "operann.ru" in text.lower()
+        or "оперы и балета им. а.с.пушкина" in text.lower()
+        or "оперы и балета им. а.с. пушкина" in text.lower()
+    )
+    if is_operann:
+        theater = "Нижегородский театр оперы и балета"
+        for i, line in enumerate(lines):
+            if re.match(r"^\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2}$", line.strip()) and i + 1 < len(lines):
+                cand = clean_show_title(lines[i + 1])
+                if cand and not clean_theater_name(lines[i + 1]):
+                    title = cand
+                    break
+
     # Show title search: 1. check labels
-    for i, line in enumerate(lines):
-        norm = line.lower()
-        if norm in {"наименование", "мероприятие", "спектакль", "событие"} and i + 1 < len(lines):
-            cand = clean_show_title(lines[i + 1])
-            if cand:
-                title = cand
-                break
+    if not title:
+        for i, line in enumerate(lines):
+            norm = line.lower()
+            if norm in {"наименование", "мероприятие", "спектакль", "событие"} and i + 1 < len(lines):
+                cand = clean_show_title(lines[i + 1])
+                if cand:
+                    title = cand
+                    break
 
     # Show title search: 2. check top lines
     if not title:
         for line in lines[:15]:
             cand = clean_show_title(line)
-            if cand and not clean_theater_name(cand):
+            if cand and not clean_theater_name(cand) and not clean_theater_name(line):
                 title = cand
                 break
 

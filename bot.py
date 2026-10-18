@@ -274,6 +274,8 @@ def _cleanup_targets(doc):
         personal = srv._ticketland_name_rows(page, lines)
         if srv._is_intickets_template(page, lines):
             personal = srv._intickets_name_rows(page, lines)
+        elif hasattr(srv, "_is_operann_template") and srv._is_operann_template(page, lines):
+            personal = srv._operann_name_rows(page, lines)
         elif payment is not None:
             personal = {buyer} if buyer is not None else set()
         elif family:
@@ -296,6 +298,8 @@ def _find_name_slots(source):
         ticketland_ages, banners = srv._ticketland_pushkin_block(page, lines)
         intickets = srv._is_intickets_template(page, lines)
         intickets_names = srv._intickets_name_rows(page, lines)
+        is_operann = hasattr(srv, "_is_operann_template") and srv._is_operann_template(page, lines)
+        operann_names = srv._operann_name_rows(page, lines) if is_operann else set()
         payment, buyer = srv._chelny_fields(page, lines)
         family = payment is not None or srv._is_kassa24_family(lines)
         t_names = srv._ticketland_name_rows(page, lines)
@@ -305,12 +309,17 @@ def _find_name_slots(source):
         for i, l in enumerate(lines):
             if intickets and i not in intickets_names:
                 continue
-            if not (family or is_af) and i not in (t_names | intickets_names):
+            if is_operann and i not in operann_names:
+                continue
+            if not (family or is_af or is_operann) and i not in (t_names | intickets_names):
                 continue
             if payment is not None and i != buyer:
                 continue
             what = srv._personal_line_what(l)
-            if not what and is_af and 208 <= l["bbox"][1] <= 235 and 150 <= l["bbox"][0] <= 450:
+            if is_operann and i in operann_names:
+                if not srv.PUSHKIN_TEXT_RE.search(l["text"]) and not re.search(r"в рамках программы", l["text"], re.I):
+                    what = "operann"
+            elif not what and is_af and 208 <= l["bbox"][1] <= 235 and 150 <= l["bbox"][0] <= 450:
                 if not any(k in l["text"].lower() for k in ["заказ", "сектор", "ряд", "место"]):
                     what = "afisha"
             if i in t_names:
@@ -334,6 +343,29 @@ def _find_name_slots(source):
             ]
             if fallback_candidates:
                 chosen = fallback_candidates[0]
+        if is_operann:
+            order_line = None
+            for l in lines:
+                if re.search(r"номер заказа", l["text"], re.I):
+                    order_line = l
+                    break
+            right_x = order_line["bbox"][2] if order_line else 540.8
+            origin_y = chosen["origin"][1] if chosen else 366.5
+            if not chosen:
+                chosen = {
+                    "text": "",
+                    "bbox": [right_x - 120, origin_y - 10, right_x, origin_y + 2],
+                    "size": 11.0,
+                    "bold": False,
+                    "serif": False,
+                    "color": 0,
+                    "origin": [right_x - 120, origin_y],
+                    "font": "PTAstraSans-Regular",
+                    "tags": ["name"],
+                }
+            chosen = dict(chosen)
+            chosen["align_right"] = right_x
+            chosen["size"] = 11.0
         slots.append(chosen)
     return slots
 
@@ -450,6 +482,9 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                         size = slot.get("size", 8.0)
                         color = srv.int_to_rgb(slot.get("color", 0))
                         text_to_write = fio_val.upper() if slot.get("text", "").isupper() else fio_val
+                        if slot.get("align_right"):
+                            text_w = srv.FONT_REG.text_length(text_to_write, fontsize=size)
+                            origin = (slot["align_right"] - text_w, origin[1])
                         writer = fitz.TextWriter(page.rect)
                         writer.append(origin, text_to_write, font=srv.FONT_REG, fontsize=size)
                         writer.write_text(page, color=color)
