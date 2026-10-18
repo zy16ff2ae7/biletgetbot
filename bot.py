@@ -600,6 +600,24 @@ def send_text(chat, text, markup=None):
     return tg("sendMessage", **payload)
 
 
+def edit_or_send(chat, msg_id, text, markup=None):
+    """Edit message text in-place if possible (for text messages),
+    otherwise seamlessly send a new message (e.g. when triggered from media captions,
+    stale messages, or when edit fails)."""
+    if msg_id:
+        try:
+            payload = {"chat_id": chat, "message_id": msg_id, "text": text[:4000]}
+            if markup is not None:
+                payload["reply_markup"] = markup
+            res = tg("editMessageText", **payload)
+            if res:
+                return res
+        except Exception:
+            pass
+    return send_text(chat, text, markup=markup)
+
+
+
 def progress_request(method, **payload):
     """Single short attempt: progress must not delay checkout or file work."""
     try:
@@ -941,7 +959,11 @@ def build_subscription_card(user_id):
             f"⚡️ Безлимитная перепечатка билетов и пачек\n"
             f"Оплата и подписка не требуются."
         )
-        return text, None
+        kb = [
+            [{"text": "👑 Панель владельца", "callback_data": "welcome:admin"}],
+            [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
+        ]
+        return text, {"inline_keyboard": kb}
 
     status = get_store().status(user_id)
     now = time.time()
@@ -982,6 +1004,7 @@ def build_subscription_card(user_id):
         ])
         if auto_renew:
             kb.append([{"text": "❌ Отключить автопродление", "callback_data": "sub:cancel"}])
+        kb.append([{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}])
     else:
         left = get_store().daily_left(user_id)
         text = (
@@ -1005,6 +1028,8 @@ def build_subscription_card(user_id):
             {"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"},
             {"text": "👥 Пригласить коллегу (+3 дня)", "callback_data": "ref:menu"},
         ])
+        kb.append([{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}])
+
 
     return text, {"inline_keyboard": kb}
 
@@ -1032,6 +1057,7 @@ def build_referral_card(user_id):
             [{"text": "↗️ Поделиться ссылкой", "url": share_url}],
             [{"text": "🎟 Мой абонемент", "callback_data": "welcome:status"},
              {"text": "👤 В профиль", "callback_data": "welcome:profile"}],
+            [{"text": "⬅️ В главное меню", "callback_data": "welcome:menu"}],
         ]
     }
     return text, kb
@@ -1046,7 +1072,10 @@ def build_history_card(user_id):
             f"Отправьте PDF-билет в чат — дед сохранит его в историю, "
             f"чтобы вы могли вернуться к нему в любой момент!"
         )
-        kb = {"inline_keyboard": [[{"text": "👤 В профиль", "callback_data": "welcome:profile"}]]}
+        kb = {"inline_keyboard": [
+            [{"text": "👤 В профиль", "callback_data": "welcome:profile"},
+             {"text": "⬅️ В главное меню", "callback_data": "welcome:menu"}]
+        ]}
         return text, kb
 
     lines = ["🕒 **Недавние билеты:**\n"]
@@ -1070,7 +1099,10 @@ def build_history_card(user_id):
     if btn_row:
         kb_rows.append(btn_row)
 
-    kb_rows.append([{"text": "👤 В профиль", "callback_data": "welcome:profile"}])
+    kb_rows.append([
+        {"text": "👤 В профиль", "callback_data": "welcome:profile"},
+        {"text": "⬅️ В главное меню", "callback_data": "welcome:menu"}
+    ])
     return "\n".join(lines), {"inline_keyboard": kb_rows}
 
 
@@ -1079,20 +1111,27 @@ def show_status(chat, user_id):
     return send_text(chat, text, markup=kb)
 
 
-MAIN_MARKUP = {"inline_keyboard": [
-    [{"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
-     {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}],
-    [{"text": "⚙️ Настройки (ФИО / цена)", "callback_data": "welcome:settings"},
-     {"text": "📂 Шаблоны", "callback_data": "tpl:menu"}],
-    [{"text": "🎁 Пригласить друга (+3 дня)", "callback_data": "ref:menu"},
-     {"text": "🎟 Промокод", "callback_data": "welcome:promo"}],
-    [{"text": "📖 Как пользоваться", "callback_data": "welcome:help"},
-     {"text": "👤 Профиль", "callback_data": "welcome:profile"}],
-]}
+def get_main_markup(user_id=None, username=None):
+    rows = [
+        [{"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
+         {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}],
+        [{"text": "⚙️ Настройки (ФИО / цена)", "callback_data": "welcome:settings"},
+         {"text": "📂 Шаблоны", "callback_data": "tpl:menu"}],
+        [{"text": "🎁 Пригласить друга (+3 дня)", "callback_data": "ref:menu"},
+         {"text": "🎟 Промокод", "callback_data": "welcome:promo"}],
+        [{"text": "📖 Как пользоваться", "callback_data": "welcome:help"},
+         {"text": "👤 Профиль", "callback_data": "welcome:profile"}],
+    ]
+    if user_id and is_admin(user_id, username):
+        rows.append([{"text": "👑 Панель владельца", "callback_data": "welcome:admin"}])
+    return {"inline_keyboard": rows}
 
 
-def send_help(chat, user_id=None):
-    return send_text(chat, HELP_TEXT, markup=None if (user_id and is_admin(user_id)) else MAIN_MARKUP)
+MAIN_MARKUP = get_main_markup()
+
+
+def send_help(chat, user_id=None, username=None):
+    return send_text(chat, HELP_TEXT, markup=get_main_markup(user_id, username))
 
 
 def _send_brand_media(chat, path, kind, caption, markup):
@@ -1134,12 +1173,13 @@ def _send_brand_media(chat, path, kind, caption, markup):
         return False
 
 
-def send_welcome(chat, user_id):
-    if WELCOME_ANIMATION.exists() and _send_brand_media(chat, WELCOME_ANIMATION, "video", GREETING, MAIN_MARKUP):
+def send_welcome(chat, user_id=None, username=None):
+    markup = get_main_markup(user_id, username)
+    if WELCOME_ANIMATION.exists() and _send_brand_media(chat, WELCOME_ANIMATION, "video", GREETING, markup):
         return True
     photo = _photo_or_none(WELCOME_IMAGE)
     if photo:
-        payload = {"chat_id": str(chat), "caption": GREETING[:1000], "reply_markup": json.dumps(MAIN_MARKUP)}
+        payload = {"chat_id": str(chat), "caption": GREETING[:1000], "reply_markup": json.dumps(markup)}
         try:
             r = http_session().post(f"{API}/sendPhoto",
                                     files={"photo": ("welcome.jpg", io.BytesIO(photo), "image/jpeg")},
@@ -1148,7 +1188,8 @@ def send_welcome(chat, user_id):
                 return True
         except (requests.RequestException, ValueError) as e:
             log.warning("sendPhoto welcome: %s", _safe_error(e))
-    return send_text(chat, GREETING, markup=MAIN_MARKUP)
+    return send_text(chat, GREETING, markup=markup)
+
 
 
 def send_profile(chat, user_id, username=None):
@@ -1189,7 +1230,7 @@ def send_profile(chat, user_id, username=None):
         f"• Отображение цены: {'скрыта 🎁' if hide else 'показывается'}\n"
     )
     markup_rows = []
-    if not status["active"] and not is_admin(user_id):
+    if not status["active"] and not is_admin(user_id, username):
         markup_rows.append([
             {"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
             {"text": "🎁 Пробный день", "callback_data": "welcome:trial"},
@@ -1205,6 +1246,13 @@ def send_profile(chat, user_id, username=None):
     markup_rows.append([
         {"text": "⚙️ Настройки печати", "callback_data": "welcome:settings"},
         {"text": "📖 Помощь", "callback_data": "welcome:help"},
+    ])
+    if is_admin(user_id, username):
+        markup_rows.append([
+            {"text": "👑 Панель владельца", "callback_data": "welcome:admin"},
+        ])
+    markup_rows.append([
+        {"text": "🏠 В главное меню", "callback_data": "welcome:menu"},
     ])
     markup = {"inline_keyboard": markup_rows}
     photo = _photo_or_none(BRAND_AVATAR)
@@ -1272,12 +1320,14 @@ def admin_panel_markup():
         [{"text": "🎟 Промокоды", "callback_data": "adm:promos"},
          {"text": "⚠️ Инциденты оплат", "callback_data": "adm:incidents"}],
         [{"text": "📣 Как разослать объявление", "callback_data": "adm:broadcast_hint"}],
-        [{"text": "🔄 Обновить", "callback_data": "adm:refresh"}],
+        [{"text": "🔄 Обновить", "callback_data": "adm:refresh"},
+         {"text": "⬅️ В главное меню", "callback_data": "welcome:menu"}],
     ]}
 
 
-def send_admin_panel(chat):
-    return send_text(chat, ADMIN_PANEL_TEXT, markup=admin_panel_markup())
+def send_admin_panel(chat, msg_id=None):
+    return edit_or_send(chat, msg_id, ADMIN_PANEL_TEXT, markup=admin_panel_markup())
+
 
 
 def admin_payments_text():
@@ -1549,7 +1599,10 @@ def build_templates_card(uid, target_batch_token=None):
         if custom_presets:
             action_row.append({"text": "🗑 Удалить шаблон", "callback_data": "tpl:del_menu"})
         kb.append(action_row)
-        kb.append([{"text": "⚙️ Назад в настройки", "callback_data": "welcome:settings"}])
+        kb.append([
+            {"text": "⚙️ Назад в настройки", "callback_data": "welcome:settings"},
+            {"text": "⬅️ В главное меню", "callback_data": "welcome:menu"},
+        ])
 
     return text, {"inline_keyboard": kb}
 
@@ -1594,6 +1647,7 @@ def build_settings_card(uid):
             [{"text": preview_btn, "callback_data": "set:preview"}],
             [{"text": "📂 Шаблоны настроек", "callback_data": "tpl:menu"}],
             [{"text": "🔄 Сбросить настройки", "callback_data": "set:reset"}],
+            [{"text": "⬅️ В главное меню", "callback_data": "welcome:menu"}],
         ]
     }
     return text, reply_markup
@@ -2514,27 +2568,21 @@ def handle_callback_query(cb):
         if action == "trial":
             return cmd_trial(chat, uid)
         if action == "help":
-            return send_help(chat, uid)
+            return send_help(chat, uid, sender.get("username"))
         if action == "profile":
             return send_profile(chat, uid, sender.get("username"))
+        if action == "menu":
+            return send_welcome(chat, uid, sender.get("username"))
+        if action == "admin":
+            if not is_admin(uid, sender.get("username")):
+                return send_text(chat, "Панель доступна только администраторам бота.")
+            return send_admin_panel(chat, msg_id=msg_id)
         if action == "status":
             text_card, markup = build_subscription_card(uid)
-            if msg_id:
-                try:
-                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_card, reply_markup=markup)
-                    return
-                except Exception:
-                    pass
-            return send_text(chat, text_card, markup=markup)
+            return edit_or_send(chat, msg_id, text_card, markup=markup)
         if action == "settings":
             text_card, markup = build_settings_card(uid)
-            if msg_id:
-                try:
-                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_card, reply_markup=markup)
-                    return
-                except Exception:
-                    pass
-            return send_text(chat, text_card, markup=markup)
+            return edit_or_send(chat, msg_id, text_card, markup=markup)
         if action == "promo":
             get_store().set_user_state(uid, "waiting_promo")
             return send_text(chat, "🎟 Отправьте промокод одним сообщением (например: THEATR2026).\n(для отмены напишите: отмена)")
@@ -2577,31 +2625,16 @@ def handle_callback_query(cb):
                     "кнопка Отправить всем. Рассылка идёт в фоне,\n"
                     "обработка билетов не останавливается.")
         else:  # refresh
-            return send_admin_panel(chat)
-        if msg_id:
-            return tg("editMessageText", chat_id=chat, message_id=msg_id, text=body[:4000],
-                      reply_markup=admin_panel_markup())
-        return send_text(chat, body[:4000], markup=admin_panel_markup())
+            return send_admin_panel(chat, msg_id=msg_id)
+        return edit_or_send(chat, msg_id, body[:4000], markup=admin_panel_markup())
 
     if data.startswith("ref:"):
         text, markup = build_referral_card(uid)
-        if msg_id:
-            try:
-                tg("editMessageText", chat_id=chat, message_id=msg_id, text=text, reply_markup=markup)
-                return
-            except Exception:
-                pass
-        return send_text(chat, text, markup=markup)
+        return edit_or_send(chat, msg_id, text, markup=markup)
 
     if data.startswith("history:"):
         text, markup = build_history_card(uid)
-        if msg_id:
-            try:
-                tg("editMessageText", chat_id=chat, message_id=msg_id, text=text, reply_markup=markup)
-                return
-            except Exception:
-                pass
-        return send_text(chat, text, markup=markup)
+        return edit_or_send(chat, msg_id, text, markup=markup)
 
     if data.startswith("hist:open:"):
         tok = data.split(":", 2)[2]
@@ -2626,32 +2659,14 @@ def handle_callback_query(cb):
             get_store().canceled(invoice["payload"])
             send_text(chat, "✅ Автопродление абонемента отменено. Доступ сохранится до конца оплаченного срока.")
             text_card, markup = build_subscription_card(uid)
-            if msg_id:
-                try:
-                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_card, reply_markup=markup)
-                    return
-                except Exception:
-                    pass
-            return send_text(chat, text_card, markup=markup)
+            return edit_or_send(chat, msg_id, text_card, markup=markup)
         return send_text(chat, "Telegram не подтвердил отмену. Попробуйте позже или откройте управление подписками в Telegram.")
-
-    if not has_access(uid):
-        return show_status(chat, uid)
-
-    if not cooldown_ok(uid):
-        return  # тяжёлый рендер не чаще раза в 3 секунды
 
     if data.startswith("tpl:"):
         action = data[4:]
         if action == "menu":
             text_card, markup = build_templates_card(uid)
-            if msg_id:
-                try:
-                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_card, reply_markup=markup)
-                    return
-                except Exception:
-                    pass
-            return send_text(chat, text_card, markup=markup)
+            return edit_or_send(chat, msg_id, text_card, markup=markup)
         if action == "save":
             store = get_store()
             custom_presets = store.get_user_presets(uid)
@@ -2669,20 +2684,14 @@ def handle_callback_query(cb):
                 kb.append([{"text": f"🗑 {p['name']}", "callback_data": f"tpl:del:{p['id']}"}])
             kb.append([{"text": "⬅️ Назад к шаблонам", "callback_data": "tpl:menu"}])
             text_del = "🗑 **Удаление шаблона**\n\nВыберите шаблон, который хотите удалить:"
-            if msg_id:
-                try:
-                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_del, reply_markup={"inline_keyboard": kb})
-                    return
-                except Exception:
-                    pass
-            return send_text(chat, text_del, markup={"inline_keyboard": kb})
+            return edit_or_send(chat, msg_id, text_del, markup={"inline_keyboard": kb})
         if action.startswith("del:"):
             pid = int(action.split(":", 1)[1])
             store = get_store()
             store.delete_user_preset(pid, uid)
             send_text(chat, "🗑 Шаблон успешно удалён.")
             text_card, markup = build_templates_card(uid)
-            return send_text(chat, text_card, markup=markup)
+            return edit_or_send(chat, msg_id, text_card, markup=markup)
         if action.startswith("apply:"):
             preset_key = action.split(":", 1)[1]
             store = get_store()
@@ -2700,7 +2709,7 @@ def handle_callback_query(cb):
             _apply_preset_to_user(uid, preset)
             send_text(chat, f"✅ Применён шаблон: {preset['name']}")
             text_card, markup = build_settings_card(uid)
-            return send_text(chat, text_card, markup=markup)
+            return edit_or_send(chat, msg_id, text_card, markup=markup)
         return
 
     if data.startswith("btpl:"):
@@ -2708,14 +2717,10 @@ def handle_callback_query(cb):
         if sub.startswith("menu:"):
             batch_token = sub.split(":", 1)[1]
             text_card, markup = build_templates_card(uid, target_batch_token=batch_token)
-            if msg_id:
-                try:
-                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_card, reply_markup=markup)
-                    return
-                except Exception:
-                    pass
-            return send_text(chat, text_card, markup=markup)
+            return edit_or_send(chat, msg_id, text_card, markup=markup)
         if sub.startswith("apply:"):
+            if not has_access(uid):
+                return show_status(chat, uid)
             parts = sub.split(":", 2)
             batch_token = parts[1]
             preset_key = parts[2]
@@ -2735,7 +2740,7 @@ def handle_callback_query(cb):
             count = _apply_preset_to_batch(batch_token, preset)
             send_text(chat, f"✅ Шаблон {preset['name']} применён к {count} {tickets_word(count)}!")
             text_dash, kb = _build_batch_dashboard(batch_token)
-            return send_text(chat, text_dash, markup=kb)
+            return edit_or_send(chat, msg_id, text_dash, markup=kb)
         return
 
     if data.startswith("set:"):
@@ -2765,11 +2770,14 @@ def handle_callback_query(cb):
             get_store().update_user_setting(uid, "auto_preview", 0)
             get_store().set_user_state(uid, None)
         text_card, markup = build_settings_card(uid)
-        if msg_id:
-            tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_card, reply_markup=markup)
-        else:
-            send_text(chat, text_card, markup=markup)
-        return
+        return edit_or_send(chat, msg_id, text_card, markup=markup)
+
+    if not has_access(uid):
+        return show_status(chat, uid)
+
+    if not cooldown_ok(uid):
+        return  # тяжёлый рендер не чаще раза в 3 секунды
+
 
     if data.startswith("toggleprice:"):
         parts = data.split(":")
@@ -3689,9 +3697,9 @@ def handle(msg, update_id=None, queued=False):
                     send_text(referrer_id, f"🎉 По вашей ссылке присоединился коллега (ID {uid})! Вам начислено +3 дня к доступу.")
             except Exception:
                 pass
-        return send_welcome(chat, uid)
+        return send_welcome(chat, uid, username)
     if command == "/help":
-        return send_help(chat, uid)
+        return send_help(chat, uid, username)
     if command == "/profile":
         return send_profile(chat, uid, username)
     if command in {"/ref", "/referral", "/invite"}:
@@ -3841,7 +3849,7 @@ def handle(msg, update_id=None, queued=False):
     if command == "/paysupport":
         return send_text(chat, "Свяжитесь с администратором по вопросам обработки билетов, оплаты или возврата.",
                          {"inline_keyboard": [[{"text": "Администратор", "url": "tg://user?id="+str(CONFIG['admin_ids'][0])}]]})
-    if command in {"/admin", "/panel"}:
+    if command in {"/admin", "/panel", "/owner"}:
         if not is_admin(uid, username):
             return send_text(chat, "Эта команда доступна администратору.")
         return send_admin_panel(chat)
@@ -4335,12 +4343,12 @@ def dispatch_update(update):
         cb = update["callback_query"]
         cb_id = cb.get("id")
         data = cb.get("data") or ""
-        text = "Обрабатываю..."
-        if data == "unpack":
+        text = None
+        if data in ("unpack", "bunpack"):
             text = "Распаковываю билеты..."
-        elif data == "merge":
+        elif data in ("merge", "bmerge"):
             text = "Склеиваю билеты в один PDF..."
-        elif data.startswith("preview"):
+        elif data.startswith("preview") or data.startswith("bprev"):
             text = "Генерирую фото-превью..."
         elif data.startswith("fio"):
             text = "Редактирование ФИО..."
@@ -4351,7 +4359,11 @@ def dispatch_update(update):
         elif data.startswith("avito"):
             text = "Генерирую защищённое фото..."
         if cb_id:
-            tg("answerCallbackQuery", callback_query_id=cb_id, text=text)
+            payload = {"callback_query_id": cb_id}
+            if text:
+                payload["text"] = text
+            tg("answerCallbackQuery", **payload)
+
         store.enqueue(ident, {"kind": "callback_query", "callback": cb})
         _work_ready.set()
         return
