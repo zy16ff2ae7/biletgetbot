@@ -2704,7 +2704,7 @@ def process_document(msg, collection_id=None, job_id=None):
 def handle_callback_query(cb):
     data = cb.get("data") or ""
     if not any(data == x or data.startswith(f"{x}:") for x in (
-        "unpack", "merge", "preview", "compare", "price", "fio", "seat", "choose_sec",
+        "quick", "unpack", "merge", "preview", "compare", "price", "fio", "seat", "choose_sec",
         "pushkin", "avito", "set", "toggleprice", "split", "welcome", "adm",
         "bcfg", "bedit", "bset", "btog", "bprev", "bmass", "bzip", "bmerge", "bunpack", "bsend",
         "tpl", "btpl", "ref", "hist", "history", "sub"
@@ -3234,9 +3234,7 @@ def handle_callback_query(cb):
         text, markup = _build_batch_dashboard(batch_token, page=page)
         if not markup:
             return send_text(chat, text)
-        if msg_id:
-            return tg("editMessageText", chat_id=chat, message_id=msg_id, text=text, reply_markup=markup)
-        return send_text(chat, text, markup=markup)
+        return edit_or_send(chat, msg_id, text, markup)
 
     if data.startswith("bedit:"):
         parts = data.split(":")
@@ -3245,9 +3243,7 @@ def handle_callback_query(cb):
         text, markup = _build_batch_item_card(batch_token, idx)
         if not markup:
             return send_text(chat, text)
-        if msg_id:
-            return tg("editMessageText", chat_id=chat, message_id=msg_id, text=text, reply_markup=markup)
-        return send_text(chat, text, markup=markup)
+        return edit_or_send(chat, msg_id, text, markup)
 
     if data.startswith("bset:"):
         parts = data.split(":")
@@ -3314,9 +3310,7 @@ def handle_callback_query(cb):
         if not ok:
             return send_text(chat, f"Не удалось обновить цену: {res}")
         text, markup = _build_batch_item_card(batch_token, idx)
-        if msg_id:
-            return tg("editMessageText", chat_id=chat, message_id=msg_id, text=text, reply_markup=markup)
-        return send_text(chat, text, markup=markup)
+        return edit_or_send(chat, msg_id, text, markup)
 
     if data.startswith("bprev:"):
         parts = data.split(":")
@@ -4829,6 +4823,8 @@ def dispatch_update(update):
             text = "Снимаю Пушкинскую карту..."
         elif data.startswith("avito"):
             text = "Генерирую защищённое фото..."
+        elif data.startswith("quick") or data.startswith("bset:quick") or data.startswith("bmass:combo"):
+            text = "⚡️ Открываю быструю правку..."
         if cb_id:
             payload = {"callback_query_id": cb_id}
             if text:

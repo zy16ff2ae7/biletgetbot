@@ -260,6 +260,21 @@ class QuickAndComboEditTests(unittest.TestCase):
         q = seat_tools.parse_quick_edit("0 руб")
         self.assertEqual(q.get("custom_price"), 0)
 
+    def test_quick_callback_query_routing(self):
+        cb = {
+            "id": "query_123",
+            "data": "quick:test_token_abc",
+            "from": {"id": 12345},
+            "message": {"message_id": 99, "chat": {"id": 12345}},
+        }
+        bot._save_doc_token("test_token_abc", "fid", uid=12345)
+        with patch.object(bot, "send_text") as mock_send, \
+             patch.object(bot, "has_access", return_value=True):
+            bot.handle_callback_query(cb)
+            self.assertTrue(mock_send.called)
+            # User state should now be waiting_quick:test_token_abc
+            self.assertEqual(self.store.get_user_state(12345), "waiting_quick:test_token_abc")
+
 
 if __name__ == "__main__":
     unittest.main()
