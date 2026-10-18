@@ -630,7 +630,7 @@ def format_batch_report_table(items_meta: list[dict[str, Any]]) -> str:
     """Format structured plaintext table for report.txt inside ZIP."""
     lines = [
         "=" * 88,
-        "РЕЕСТР ОБРАБОТАННЫХ БИЛЕТОВ (ДЕД РЕДАЧИТ · @biletgetbot)",
+        "РЕЕСТР ОБРАБОТАННЫХ БИЛЕТОВ (ДЕД РЕДАЧИТ · @ded_bilet_bot)",
         "=" * 88,
         "",
         f"{'№':<3} | {'Спектакль':<24} | {'Театр':<16} | {'Дата':<10} | {'Места':<22} | {'Номинал':<10} | {'Имя файла'}",

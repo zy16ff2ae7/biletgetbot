@@ -930,7 +930,7 @@ def get_bot_username():
             return _BOT_USERNAME
     except Exception:
         pass
-    return "biletgetbot"
+    return "ded_bilet_bot"
 
 
 def build_subscription_card(user_id):

@@ -27,7 +27,7 @@ FPS = 24
 FRAMES = 204
 TITLE = "ДЕД РЕДАЧИТ"
 SUBTITLE = "перепечатаем начисто · сохраним главное"
-HANDLE = "@biletgetbot"
+HANDLE = "@ded_bilet_bot"
 
 GOLD_TOP = (255, 248, 230)
 GOLD_MID = (245, 215, 150)

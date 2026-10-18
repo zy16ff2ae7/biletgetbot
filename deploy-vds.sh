@@ -1,5 +1,5 @@
 #!/bin/bash
-# Update only @biletgetbot; preserve credentials and subscription receipts.
+# Update @ded_bilet_bot; preserve credentials and subscription receipts.
 set -euo pipefail
 bilet_root=$(cd "$(dirname "$0")" && pwd)
 bilet_editor=${BILET_EDITOR:-/Users/mac/Билетная}
