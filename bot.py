@@ -1306,7 +1306,7 @@ def admin_stats_text():
         f"📊 СТАТИСТИКА · {BRAND_NAME}\n\n"
         f"Пользователей: {s['users_total']} (+{s['users_week']} за 7 дней)\n"
         f"Доступ активен: {s['active_now']}\n"
-        f"Оплачено: {s['paid_stars']} Stars · возвратов: {s['refunded_stars']} Stars\n"
+        f"Оплачено: {s['paid_stars']} руб. · возвратов: {s['refunded_stars']} руб.\n"
         f"Билетов перепечатано: {s['processed_total']}\n"
         f"Промокодов: {s['promos_active']} активных из {s['promos_total']}\n"
         f"Инцидентов оплат: {s['incidents']}"
@@ -1334,7 +1334,7 @@ def admin_payments_text():
     rows = get_store().payments()
     if not rows:
         return "Оплат пока нет."
-    return "\n".join(f"ID {p['user_id']} | {p['amount']} Stars | {p['charge_id']} | возврат={p['refunded']}" for p in rows)
+    return "\n".join(f"ID {p['user_id']} | {p['amount']} руб. | {p['charge_id']} | возврат={p['refunded']}" for p in rows)
 
 
 def admin_promos_text():
@@ -4295,7 +4295,7 @@ def handle(msg, update_id=None, queued=False):
                 get_store().revoke_grant(int(target))
                 return send_text(chat, "Ручной доступ удалён. Оплаченный абонемент сохраняется до конца срока.")
             if command == "/payments":
-                return send_text(chat, "\n".join(f"ID {p['user_id']} | {p['amount']} Stars | {p['charge_id']} | возврат={p['refunded']}" for p in get_store().payments()) or "Оплат пока нет.")
+                return send_text(chat, "\n".join(f"ID {p['user_id']} | {p['amount']} руб. | {p['charge_id']} | возврат={p['refunded']}" for p in get_store().payments()) or "Оплат пока нет.")
             if command == "/payment_issues":
                 return send_text(chat, "\n".join(f"Событие {p['update_id']} | ID {p['user_id']} | {p['reason']}" for p in get_store().payment_incidents()) or "Ошибок подтверждения оплаты нет.")
             payment = get_store().payment(parts[1])
