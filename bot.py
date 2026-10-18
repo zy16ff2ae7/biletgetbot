@@ -31,6 +31,7 @@ import validation
 import ticket_meta
 import seat_tools
 import eraser_tools
+import cryptobot
 from progress import Progress, PDF_STEPS, BATCH_STEPS, COLLECT_STEPS
 from delivery_cache import DeliveryCache, key_for
 from url_delivery import Publisher
@@ -961,8 +962,11 @@ def subscribe(chat, user_id):
             return send_text(
                 chat,
                 f"🏷 Абонемент: {CONFIG['price_stars']} рублей за 30 дней безлимита.\n\n"
-                f"💬 Для прямой оплаты напишите администратору @FreeDemin (СБП / перевод на карту).",
+                f"💳 **Выберите удобный способ оплаты:**\n"
+                f"1️⃣ Через CryptoBot (USDT, TON, карты)\n"
+                f"2️⃣ Напрямую через админа @FreeDemin (СБП / перевод на карту)",
                 {"inline_keyboard": [
+                    [{"text": f"💎 Оплатить через CryptoBot — {CONFIG['price_stars']} руб.", "callback_data": "cbpay:create"}],
                     [{"text": "💬 Оплата через админа (@FreeDemin)", "url": "https://t.me/FreeDemin"}],
                     [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
                 ]}
@@ -974,14 +978,77 @@ def subscribe(chat, user_id):
         f"⏳ Временная скидка 50% — успейте взять, скоро повышение стоимости!\n\n"
         f"Полный безлимит билетов и пачек, замена ФИО и кодов.\n\n"
         f"💳 **Выберите удобный способ оплаты:**\n"
-        f"1️⃣ В боте картой через Telegram (мгновенная активация)\n"
-        f"2️⃣ Напрямую через админа @FreeDemin (СБП / перевод на карту)",
+        f"1️⃣ В боте картой через Telegram\n"
+        f"2️⃣ Через CryptoBot (USDT, TON, карты, крипта)\n"
+        f"3️⃣ Напрямую через админа @FreeDemin (СБП / карта)",
         {"inline_keyboard": [
             [{"text": f"💳 Оплатить в Telegram — {CONFIG['price_stars']} руб.", "url": url}],
+            [{"text": f"💎 Оплатить через CryptoBot — {CONFIG['price_stars']} руб.", "callback_data": "cbpay:create"}],
             [{"text": "💬 Оплата через админа (@FreeDemin)", "url": "https://t.me/FreeDemin"}],
             [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
         ]}
     )
+
+
+def handle_cryptobot_create(chat, user_id, msg_id=None):
+    if is_admin(user_id):
+        return send_text(chat, "У вас постоянный доступ администратора. Оплата не нужна.")
+    status = get_store().status(user_id)
+    if status["active"]:
+        return show_status(chat, user_id)
+    bot_user = get_bot_username() or "ded_bilet_bot"
+    inv = cryptobot.create_invoice(
+        user_id,
+        amount_rub=CONFIG["price_stars"],
+        description=f"ДЕД РЕДАЧИТ: абонемент на 30 дней ({CONFIG['price_stars']} ₽)",
+        bot_username=bot_user,
+    )
+    if not inv or not (inv.get("bot_invoice_url") or inv.get("pay_url")):
+        return send_text(chat, "Не удалось создать счёт CryptoBot. Попробуйте оплатить картой в Telegram или напишите @FreeDemin.")
+    inv_id = inv["invoice_id"]
+    inv_url = inv.get("bot_invoice_url") or inv.get("pay_url")
+    text = (
+        f"💎 **СЧЁТ CRYPTOBOT · {BRAND_NAME}**\n\n"
+        f"Сумма к оплате: **{CONFIG['price_stars']} ₽**\n"
+        f"Принимаются: **USDT, TON, BTC, карты, Telegram Wallet**\n"
+        f"Срок подписки: **30 дней безлимита**\n\n"
+        f"1. Нажмите кнопку **«Оплатить в @CryptoBot»** ниже.\n"
+        f"2. После перевода нажмите **«🔄 Проверить оплату»** — доступ включится автоматически!"
+    )
+    kb = {
+        "inline_keyboard": [
+            [{"text": f"💎 Оплатить в @CryptoBot ({CONFIG['price_stars']} ₽)", "url": inv_url}],
+            [{"text": "🔄 Проверить оплату", "callback_data": f"cbpay:check:{inv_id}"}],
+            [{"text": "💬 Оплата через @FreeDemin", "url": "https://t.me/FreeDemin"}],
+            [{"text": "⬅️ Назад к тарифам", "callback_data": "welcome:subscribe"}],
+        ]
+    }
+    return edit_or_send(chat, msg_id, text, markup=kb)
+
+
+def handle_cryptobot_check(chat, user_id, inv_id, msg_id=None):
+    inv = cryptobot.check_invoice(inv_id)
+    if not inv:
+        return send_text(chat, "⚠️ Не удалось связаться с CryptoBot. Пожалуйста, попробуйте снова через пару секунд.")
+    status = inv.get("status")
+    if status == "paid":
+        action_id = f"cb_paid_{inv_id}"
+        expires = get_store().grant(user_id, 30, 0, action_id=action_id)
+        congrats = (
+            f"🎉 **ОПЛАТА ЧЕРЕЗ CRYPTOBOT ПОДТВЕРЖДЕНА!**\n\n"
+            f"Абонемент активирован на 30 дней (до {date_label(expires)}).\n"
+            f"Вам открыт полный безлимит билетов и пачек. Приятной работы ✍️"
+        )
+        markup = {"inline_keyboard": [
+            [{"text": "🎟 Мой абонемент", "callback_data": "welcome:status"}],
+            [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
+        ]}
+        return edit_or_send(chat, msg_id, congrats, markup=markup)
+    elif status == "active":
+        return send_text(chat, "⏳ Оплата ещё не поступила. Завершите перевод в @CryptoBot и нажмите «Проверить оплату» снова.")
+    else:
+        return send_text(chat, f"Счёт находится в статусе «{status}». Если оплата списалась, свяжитесь с администратором @FreeDemin.")
+
 
 
 _BOT_USERNAME = None
@@ -1046,15 +1113,18 @@ def build_subscription_card(user_id):
         )
         kb.append([
             {"text": f"✍️ Продлить за {CONFIG['price_stars']} руб. (скидка)", "callback_data": "welcome:subscribe"},
-            {"text": "💬 Оплата через @FreeDemin", "url": "https://t.me/FreeDemin"},
+            {"text": "💎 CryptoBot", "callback_data": "cbpay:create"},
         ])
         kb.append([
+            {"text": "💬 Оплата через @FreeDemin", "url": "https://t.me/FreeDemin"},
             {"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"},
+        ])
+        kb.append([
             {"text": "👤 Профиль", "callback_data": "welcome:profile"},
+            {"text": "🏠 В главное меню", "callback_data": "welcome:menu"},
         ])
         if auto_renew:
             kb.append([{"text": "❌ Отключить автопродление", "callback_data": "sub:cancel"}])
-        kb.append([{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}])
     else:
         left = get_store().daily_left(user_id)
         text = (
@@ -1069,17 +1139,20 @@ def build_subscription_card(user_id):
             f"• Сохранение персональных шаблонов настроек\n\n"
             f"🏷 **Специальный тариф:** {CONFIG['price_stars']} рублей / 30 дней (вместо 1500 ₽)\n"
             f"⏳ Временная скидка 50% — успейте взять, скоро повышение стоимости!\n"
-            f"💬 Оплата: в боте или переводом через админа @FreeDemin (СБП/карта)."
+            f"💬 Оплата: в боте, через CryptoBot или напрямую через @FreeDemin."
         )
         kb.append([
             {"text": f"✍️ Оформить за {CONFIG['price_stars']} руб. (скидка)", "callback_data": "welcome:subscribe"},
             {"text": "🎁 Пробный день", "callback_data": "welcome:trial"},
         ])
         kb.append([
+            {"text": "💎 Оплата через CryptoBot", "callback_data": "cbpay:create"},
             {"text": "💬 Оплата через @FreeDemin", "url": "https://t.me/FreeDemin"},
-            {"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"},
         ])
-        kb.append([{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}])
+        kb.append([
+            {"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"},
+            {"text": "🏠 В главное меню", "callback_data": "welcome:menu"},
+        ])
 
 
     return text, {"inline_keyboard": kb}
@@ -2774,7 +2847,7 @@ def handle_callback_query(cb):
         "quick", "unpack", "merge", "preview", "compare", "price", "fio", "seat", "choose_sec",
         "pushkin", "avito", "set", "toggleprice", "split", "welcome", "adm",
         "bcfg", "bedit", "bset", "btog", "bprev", "bmass", "bzip", "bmerge", "bunpack", "bsend",
-        "tpl", "btpl", "ref", "hist", "history", "sub"
+        "tpl", "btpl", "ref", "hist", "history", "sub", "cbpay"
     )):
         return
 
@@ -2852,6 +2925,13 @@ def handle_callback_query(cb):
         else:  # refresh
             return send_admin_panel(chat, msg_id=msg_id)
         return edit_or_send(chat, msg_id, body[:4000], markup=admin_panel_markup())
+
+    if data == "cbpay:create":
+        return handle_cryptobot_create(chat, uid, msg_id=msg_id)
+
+    if data.startswith("cbpay:check:"):
+        inv_id = data.split(":", 2)[2]
+        return handle_cryptobot_check(chat, uid, inv_id, msg_id=msg_id)
 
     if data.startswith("ref:"):
         text, markup = build_referral_card(uid)
@@ -4156,6 +4236,8 @@ def handle(msg, update_id=None, queued=False):
         return send_text(chat, text_card, markup=markup)
     if command in {"/subscribe", "/buy"}:
         return subscribe(chat, uid)
+    if command in {"/cryptobot", "/crypto", "/cb"}:
+        return handle_cryptobot_create(chat, uid)
     if command in {"/subscription", "/balance", "/dolg", "/status"}:
         return show_status(chat, uid)
     if command == "/cancel_subscription":
@@ -4307,13 +4389,16 @@ def handle(msg, update_id=None, queued=False):
         return send_text(
             chat,
             f"💳 **ОПЛАТА И СВЯЗЬ С АДМИНИСТРАТОРОМ · {BRAND_NAME}**\n\n"
-            f"• Абонемент: **{CONFIG['price_stars']} ₽** за 30 дней (полный безлимит билетов и пачек).\n"
-            f"• Способ 1: Оформить в боте — /subscribe (оплата картой через Telegram).\n"
-            f"• Способ 2: Напрямую через админа — напишите **@FreeDemin** (СБП, перевод на карту).\n\n"
-            f"Ваш Telegram ID: `{uid}` (отправьте его админу при оплате для мгновенной активации).",
+            f"• Абонемент: **{CONFIG['price_stars']} ₽** за 30 дней (полный безлимит билетов и пачек).\n\n"
+            f"**Доступные способы оплаты:**\n"
+            f"1️⃣ Картой в Telegram: /subscribe\n"
+            f"2️⃣ Через CryptoBot (USDT, TON, карты): /cryptobot\n"
+            f"3️⃣ Напрямую через админа: напишите **@FreeDemin** (СБП, перевод на карту).\n\n"
+            f"Ваш Telegram ID: `{uid}` (при оплате через админа отправьте этот ID для мгновенной активации).",
             {"inline_keyboard": [
-                [{"text": "💬 Оплатить через @FreeDemin", "url": "https://t.me/FreeDemin"}],
+                [{"text": "💎 Оплатить через CryptoBot", "callback_data": "cbpay:create"}],
                 [{"text": "💳 Оплатить в боте", "callback_data": "welcome:subscribe"}],
+                [{"text": "💬 Оплатить через @FreeDemin", "url": "https://t.me/FreeDemin"}],
                 [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
             ]}
         )

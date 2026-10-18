@@ -8,7 +8,8 @@ mkdir -p "$bilet_work"
 bilet_package=$(mktemp -d "$bilet_work/package.XXXXXX")
 trap 'rm -rf "$bilet_package"' EXIT
 mkdir -p "$bilet_package/biletnaya" "$bilet_package/tests"
-cp "$bilet_root/"{bot.py,batches.py,ticket_meta.py,seat_tools.py,eraser_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,subscription.json,requirements.txt,README.md,make_brand.py,LICENSE,config.py,texts.py} "$bilet_package/"
+cp "$bilet_root/"{bot.py,batches.py,ticket_meta.py,seat_tools.py,eraser_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,subscription.json,requirements.txt,README.md,make_brand.py,LICENSE,config.py,texts.py,cryptobot.py} "$bilet_package/"
+if [ -f "$bilet_root/.cryptobot_token" ]; then cp "$bilet_root/.cryptobot_token" "$bilet_package/"; fi
 cp -R "$bilet_root/migrations" "$bilet_package/"
 cp "$bilet_root/tests/"test_*.py "$bilet_package/tests/"
 if [ -f "$bilet_root/tests/_stub_engine.py" ]; then cp "$bilet_root/tests/_stub_engine.py" "$bilet_package/tests/"; fi
