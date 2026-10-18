@@ -50,15 +50,15 @@ def parse_seat_input(raw: str) -> dict[str, str]:
 
     r = take(
         r"(?:ряд|row)\s*[:=.№]?\s*(\d{1,3}[а-яёa-z]?)(?![а-яёa-z0-9])",
-        r"(\d{1,3}[а-яёa-z]?)\s*(?:ряд(?![а-яёa-z])|р\.?(?![а-яё]))"
+        r"(?<!\d)(\d{1,3}[а-яёa-z]?)\s*(?:ряд(?![а-яёa-z])|р\.?(?![а-яё]))"
     )
     if r:
         res["row"] = re.sub(r"\s+", "", r)
 
     r = take(
         r"(?<![а-яёa-z])(?:мест[аоеум]*|seat|м)\.?\s*[:=№]?\s*(\d{1,3}(?:\s*[-–,]\s*\d{1,3})*)(?!\d)",
-        r"(\d{1,3}\s*[-–]\s*\d{1,3})",
-        r"(\d{1,3}(?:\s*,\s*\d{1,3})+)"
+        r"(?<!\d)(\d{1,3}\s*[-–]\s*\d{1,3})",
+        r"(?<!\d)(\d{1,3}(?:\s*,\s*\d{1,3})+)"
     )
     if r:
         res["seat"] = re.sub(r"\s+", "", r).replace("–", "-")
@@ -290,3 +290,91 @@ def apply_seat_edits(doc: Any, seat_input: str | dict[str, str], srv: Any) -> tu
             return False, edits, replaced_lines, f"Ошибка при замене мест: {fails[0].get('why', 'не удалось применить правку')}"
 
     return True, edits, replaced_lines, None
+
+
+def parse_quick_edit(raw: str) -> dict[str, Any]:
+    """Parse one-line combined edit text containing any combination of:
+    - FIO (e.g. 'Иванов Иван Иванович', 'Петров П.П.')
+    - Price (e.g. '2500', '3500 руб', 'цена 4000')
+    - Seat / Row / Sector (e.g. 'ряд 3 место 12', '5 10', 'Партер, ряд 1, место 5')
+    - Price visibility ('скрыть цену', 'показать цену')
+    - Reset commands ('сброс', 'сброс фио', 'сброс цены', 'сброс мест')
+    """
+    text = str(raw or "").strip()
+    res: dict[str, Any] = {
+        "fio": None,
+        "custom_price": None,
+        "hide_price": None,
+        "seat_info": None,
+        "reset_all": False,
+        "reset_fio": False,
+        "reset_price": False,
+        "reset_seat": False,
+    }
+    low = text.lower()
+    if low in {"сброс", "reset", "clear", "сбросить"}:
+        res["reset_all"] = True
+        return res
+
+    if "сброс фио" in low or "сбросить фио" in low:
+        res["reset_fio"] = True
+        text = re.sub(r"сброс(?:ить)?\s+фио", "", text, flags=re.I)
+    if "сброс цен" in low or "сбросить цен" in low:
+        res["reset_price"] = True
+        text = re.sub(r"сброс(?:ить)?\s+цен[а-я]*", "", text, flags=re.I)
+    if "сброс мест" in low or "сбросить мест" in low or "сброс ряда" in low:
+        res["reset_seat"] = True
+        text = re.sub(r"сброс(?:ить)?\s+(?:мест[а-я]*|ряд[а-я]*)", "", text, flags=re.I)
+
+    if re.search(r"\b(скрыть\s*цену|без\s*цены|подарочный|убрать\s*цену)\b", text, re.I):
+        res["hide_price"] = True
+        text = re.sub(r"\b(скрыть\s*цену|без\s*цены|подарочный|убрать\s*цену)\b", "", text, flags=re.I)
+    elif re.search(r"\b(показать\s*цену|с\s*ценой|вернуть\s*цену)\b", text, re.I):
+        res["hide_price"] = False
+        text = re.sub(r"\b(показать\s*цену|с\s*ценой|вернуть\s*цену)\b", "", text, flags=re.I)
+
+    # 1. Price with explicit currency or keyword: 'цена 5000', '5000 руб', '5000 ₽'
+    m_price = re.search(r"(?:цена\s*[:=-]?\s*)?(\d{2,7})\s*(?:руб[а-я]*|р|₽)\b", text, re.I)
+    if not m_price:
+        m_price = re.search(r"\bцена\s*[:=-]?\s*(\d{2,7})\b", text, re.I)
+    if m_price:
+        res["custom_price"] = int(m_price.group(1))
+        text = text[:m_price.start()] + " " + text[m_price.end():]
+
+    # 2. Extract seat info using parse_seat_input
+    parsed_seat = parse_seat_input(text)
+    if parsed_seat and (parsed_seat.get("seat") or parsed_seat.get("row") or parsed_seat.get("sector")):
+        res["seat_info"] = parsed_seat
+        patterns_to_remove = [
+            r"(?:сектор|sector)\s*[:.\s-]*[a-яёa-z0-9]+",
+            r"(?:ряд|row)\s*[:.\s-]*\d+",
+            r"(?:мест[аоеум]*|seat|кресло)\s*[:.\s-]*[\d\-..]+",
+            r"\b(?:партер|бельэтаж|балкон|амфитеатр|ложа|бенуар|трибуна|галерея)\b"
+        ]
+        for pat in patterns_to_remove:
+            text = re.sub(pat, " ", text, flags=re.I)
+        if parsed_seat.get("row"):
+            text = re.sub(r"\b" + re.escape(parsed_seat["row"]) + r"\b", " ", text, count=1)
+        if parsed_seat.get("seat"):
+            text = re.sub(r"\b" + re.escape(parsed_seat["seat"]) + r"\b", " ", text, count=1)
+
+    # 3. If price wasn't found yet, check for remaining standalone number >= 0
+    if res["custom_price"] is None:
+        nums = list(re.finditer(r"\b\d{2,7}\b", text))
+        if nums:
+            last_num = nums[-1]
+            val = int(last_num.group(0))
+            if 0 <= val <= 1_000_000:
+                res["custom_price"] = val
+                text = text[:last_num.start()] + " " + text[last_num.end():]
+
+    # 4. Extract FIO from remaining letters
+    cleaned_fio = re.sub(r"^[0-9]+[.)\s-]+", "", text)
+    cleaned_fio = re.sub(r"[,|/–—:;()]+", " ", cleaned_fio)
+    cleaned_fio = re.sub(r"\s+", " ", cleaned_fio).strip()
+    if cleaned_fio and not re.match(r"^(?:фио|руб|цена|место|ряд|сброс)$", cleaned_fio, re.I):
+        if re.search(r"[a-яёa-z]", cleaned_fio, re.I):
+            res["fio"] = cleaned_fio
+
+    return res
+

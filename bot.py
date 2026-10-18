@@ -1669,6 +1669,7 @@ def _sector_keyboard(token):
 
 
 def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None):
+    quick_btn = {"text": "⚡️ Быстрая правка (всё в 1 строке)", "callback_data": f"quick:{token}"}
     seat_btn = {"text": "🪑 Изменить место/ряд", "callback_data": f"seat:{token}"}
     fio_btn = {"text": "👤 Изменить ФИО", "callback_data": f"fio:{token}"}
     price_edit_btn = {"text": "✏️ Изменить цену", "callback_data": f"price:{token}"}
@@ -1680,6 +1681,7 @@ def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None):
     pushkin_btn = {"text": "🧹 Снять Пушкинскую карту", "callback_data": f"pushkin:{token}"}
 
     rows = [
+        [quick_btn],
         [seat_btn],
         [fio_btn, price_edit_btn],
         [price_toggle_btn, preview_btn],
@@ -1689,6 +1691,9 @@ def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None):
         rows.append([{"text": f"✂️ Разбить на билеты ({pages} шт.)", "callback_data": f"split:{token}"}])
         if batch_token:
             rows.append([{"text": "⚙️ Настроить билеты пачки", "callback_data": f"bcfg:{batch_token}"}])
+            rows.append([
+                {"text": "⚡️ Заполнить всё списком", "callback_data": f"bmass:combo:{batch_token}"},
+            ])
             rows.append([
                 {"text": "👥 Список ФИО", "callback_data": f"bmass:fio:{batch_token}"},
                 {"text": "🪑 Рассадить по порядку", "callback_data": f"bmass:seat:{batch_token}"},
@@ -1843,6 +1848,9 @@ def _build_batch_dashboard(batch_token, page=0):
         kb.append(nav)
 
     kb.append([
+        {"text": "⚡️ Заполнить всё списком (ФИО + Места + Цены)", "callback_data": f"bmass:combo:{batch_token}"},
+    ])
+    kb.append([
         {"text": "👥 Список ФИО", "callback_data": f"bmass:fio:{batch_token}"},
         {"text": "🪑 Рассадить по порядку", "callback_data": f"bmass:seat:{batch_token}"},
     ])
@@ -1908,6 +1916,9 @@ def _build_batch_item_card(batch_token, idx):
 
     kb = {
         "inline_keyboard": [
+            [
+                {"text": "⚡️ Быстрая правка (всё в 1 строке)", "callback_data": f"bset:quick:{batch_token}:{idx}"},
+            ],
             [
                 {"text": "👤 Изменить ФИО", "callback_data": f"bset:fio:{batch_token}:{idx}"},
                 {"text": "🪑 Изменить место/ряд", "callback_data": f"bset:seat:{batch_token}:{idx}"},
@@ -2036,6 +2047,147 @@ def _apply_mass_seats_to_batch(batch_token, seat_input_text):
 
     summary = seat_tools.format_seat_summary(parsed)
     return count, summary
+
+
+def _apply_mass_combo_to_batch(batch_token, raw_text):
+    session = get_store().get_batch_session(batch_token)
+    if not session:
+        return 0, ["Сессия не найдена или истекла."]
+    items = session.get("items", [])
+    total = len(items)
+    if total == 0:
+        return 0, ["В пачке нет билетов."]
+
+    lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+    if not lines:
+        return 0, ["Список пуст."]
+
+    if len(lines) == 1 and lines[0].lower() in {"сброс", "reset", "clear"}:
+        for i in range(total):
+            _reprocess_batch_item(batch_token, i, fio="сброс", seat_info="сброс", custom_price="сброс", hide_price=False)
+        return total, ["Исходные данные восстановлены на всех билетах."]
+
+    reports = []
+    count = 0
+
+    is_multiline_list = len(lines) > 1 or bool(re.match(r"^\d+[.)\s-]", lines[0]))
+
+    if is_multiline_list:
+        for idx, line in enumerate(lines):
+            if idx >= total:
+                break
+            q = seat_tools.parse_quick_edit(line)
+            kwargs = {}
+            if q["reset_all"]:
+                kwargs = {"fio": "сброс", "seat_info": "сброс", "custom_price": "сброс", "hide_price": False}
+            else:
+                if q["reset_fio"]:
+                    kwargs["fio"] = "сброс"
+                elif q["fio"] is not None:
+                    kwargs["fio"] = q["fio"]
+
+                if q["reset_price"]:
+                    kwargs["custom_price"] = "сброс"
+                    kwargs["hide_price"] = False
+                elif q["hide_price"] is not None:
+                    kwargs["hide_price"] = q["hide_price"]
+                elif q["custom_price"] is not None:
+                    kwargs["custom_price"] = q["custom_price"]
+                    kwargs["hide_price"] = False
+
+                if q["reset_seat"]:
+                    kwargs["seat_info"] = "сброс"
+                elif q["seat_info"] is not None:
+                    kwargs["seat_info"] = seat_tools.format_seat_summary(q["seat_info"])
+
+            if kwargs:
+                ok, res_item = _reprocess_batch_item(batch_token, idx, **kwargs)
+                if ok:
+                    count += 1
+                    parts = []
+                    if res_item.get("fio"):
+                        parts.append(res_item["fio"])
+                    if res_item.get("seat_info"):
+                        parts.append(res_item["seat_info"])
+                    elif res_item.get("meta") and (res_item["meta"].get("row") or res_item["meta"].get("seats")):
+                        m = res_item["meta"]
+                        r = m.get("row")
+                        s = m.get("seats", [])
+                        parts.append(f"ряд {r}, место {s[0]}" if r and s else (f"ряд {r}" if r else f"место {s[0]}"))
+                    if res_item.get("hide_price"):
+                        parts.append("цена скрыта")
+                    elif res_item.get("custom_price") is not None:
+                        parts.append(f"{res_item['custom_price']} ₽")
+                    reports.append(f"• Билет №{idx+1}: " + (" · ".join(parts) if parts else "обновлён"))
+                else:
+                    reports.append(f"• Билет №{idx+1}: ⚠️ ошибка ({res_item})")
+    else:
+        single_line = lines[0]
+        q = seat_tools.parse_quick_edit(single_line)
+        if (not q["reset_all"] and not q["reset_fio"] and not q["reset_price"] and not q["reset_seat"]
+                and q["fio"] is None and q["custom_price"] is None and q["hide_price"] is None and q["seat_info"] is None):
+            return 0, ["Не удалось распознать параметры в строке."]
+
+        sector = q["seat_info"].get("sector", "") if q["seat_info"] else ""
+        row = q["seat_info"].get("row", "") if q["seat_info"] else ""
+        start_seat_str = q["seat_info"].get("seat", "") if q["seat_info"] else ""
+        m_num = re.search(r"\d+", start_seat_str) if start_seat_str else None
+        start_seat = int(m_num.group(0)) if m_num else None
+
+        for idx in range(total):
+            kwargs = {}
+            if q["reset_all"]:
+                kwargs = {"fio": "сброс", "seat_info": "сброс", "custom_price": "сброс", "hide_price": False}
+            else:
+                if q["reset_fio"]:
+                    kwargs["fio"] = "сброс"
+                elif q["fio"] is not None:
+                    kwargs["fio"] = q["fio"]
+
+                if q["reset_price"]:
+                    kwargs["custom_price"] = "сброс"
+                    kwargs["hide_price"] = False
+                elif q["hide_price"] is not None:
+                    kwargs["hide_price"] = q["hide_price"]
+                elif q["custom_price"] is not None:
+                    kwargs["custom_price"] = q["custom_price"]
+                    kwargs["hide_price"] = False
+
+                if q["reset_seat"]:
+                    kwargs["seat_info"] = "сброс"
+                elif q["seat_info"] is not None:
+                    if start_seat is not None:
+                        curr_seat = start_seat + idx
+                        parts = []
+                        if sector:
+                            parts.append(f"сектор {sector}")
+                        if row:
+                            parts.append(f"ряд {row}")
+                        parts.append(f"место {curr_seat}")
+                        kwargs["seat_info"] = ", ".join(parts)
+                    else:
+                        kwargs["seat_info"] = seat_tools.format_seat_summary(q["seat_info"])
+
+            if kwargs:
+                ok, res_item = _reprocess_batch_item(batch_token, idx, **kwargs)
+                if ok:
+                    count += 1
+
+        summary_parts = []
+        if q["seat_info"]:
+            if start_seat is not None:
+                summary_parts.append(f"места с {start_seat} по {start_seat + total - 1} подряд")
+            else:
+                summary_parts.append(seat_tools.format_seat_summary(q["seat_info"]))
+        if q["hide_price"]:
+            summary_parts.append("цена скрыта")
+        elif q["custom_price"] is not None:
+            summary_parts.append(f"цена {q['custom_price']} ₽")
+        if q["fio"]:
+            summary_parts.append(f"ФИО: {q['fio']}")
+        reports.append(" · ".join(summary_parts) or "параметры обновлены")
+
+    return count, reports
 
 
 def _make_batch_zip(batch_token):
@@ -3101,7 +3253,21 @@ def handle_callback_query(cb):
             return send_text(chat, "⚠️ Билет не найден.")
         item = session["items"][idx]
 
-        if action == "fio":
+        if action == "quick":
+            get_store().set_user_state(uid, f"waiting_batch_item_quick:{batch_token}:{idx}")
+            prompt = (
+                f"⚡️ **Быстрая правка билета №{idx+1}** (всё в 1 строке):\n\n"
+                f"Отправьте любые параметры через пробел или запятую:\n"
+                f"• ФИО, ряд и место, цену (например: `2500` или `3000 руб`), `скрыть цену`\n\n"
+                f"💡 Примеры:\n"
+                f"• `Иванов И.И. 2500 ряд 3 место 12`\n"
+                f"• `Петров 3500`\n"
+                f"• `3 12 скрыть цену`\n"
+                f"• `сброс` — вернуть исходные данные билета\n\n"
+                f"(для отмены напишите: отмена)"
+            )
+            return send_text(chat, prompt)
+        elif action == "fio":
             get_store().set_user_state(uid, f"waiting_batch_item_fio:{batch_token}:{idx}")
             cur_fio = item.get("fio") or "не установлено"
             prompt = (
@@ -3201,7 +3367,25 @@ def handle_callback_query(cb):
             return send_text(chat, "⚠️ Сессия пачки не найдена или истекла.")
         total = len(session.get("items", []))
 
-        if action == "fio":
+        if action == "combo":
+            get_store().set_user_state(uid, f"waiting_batch_combo:{batch_token}")
+            prompt = (
+                f"⚡️ **Супер-редактор пачки билетов** (всего {total} шт.):\n\n"
+                f"Вы можете настроить все билеты одним сообщением!\n\n"
+                f"📋 **Вариант 1: Список построчно (по 1 строке на каждый билет):**\n"
+                f"`1. Иванов Иван — ряд 3 место 10 — 3000 руб`\n"
+                f"`2. Петров Петр — ряд 3 место 11 — 3000 руб`\n"
+                f"`3. Сидорова Анна — ряд 3 место 12 — скрыть цену`\n\n"
+                f"💡 *В каждой строке можно указывать ФИО, ряд и место, цену (или 'скрыть цену'). Номер в начале строки не обязателен.*\n\n"
+                f"⚡️ **Вариант 2: Одной строкой для всей пачки:**\n"
+                f"• `Ряд 5 место 10, 4500 руб` — рассадит места подряд (10, 11, 12...) и поставит цену 4500 ₽ на все {total} билетов\n"
+                f"• `3500 руб` — задаст цену 3500 ₽ всем билетам\n"
+                f"• `скрыть цену` — скроет цены на всех билетах\n"
+                f"• `сброс` — вернёт все билеты к исходному виду\n\n"
+                f"(для отмены напишите: отмена)"
+            )
+            return send_text(chat, prompt)
+        elif action == "fio":
             get_store().set_user_state(uid, f"waiting_batch_fio:{batch_token}")
             prompt = (
                 f"👥 **Массовое назначение ФИО** (в пачке {total} билетов):\n\n"
@@ -3276,6 +3460,51 @@ def handle_callback_query(cb):
         if msg_id:
             tg("editMessageReplyMarkup", chat_id=chat, message_id=msg_id, reply_markup={"inline_keyboard": []})
         return
+
+    if data == "quick" or data.startswith("quick:"):
+        token = data.split(":", 1)[1] if ":" in data else None
+        target_file_id = None
+        doc_info = get_store().get_doc_token_info(token) if token else None
+        if doc_info:
+            target_file_id = doc_info["file_id"]
+        elif token:
+            target_file_id = get_store().get_doc_by_token(token) or token
+        if not target_file_id:
+            doc = msg.get("document") or {}
+            target_file_id = doc.get("file_id")
+        if not target_file_id:
+            return send_text(chat, "Не удалось определить файл билета.")
+        state_key = token or target_file_id
+        get_store().set_user_state(uid, f"waiting_quick:{state_key}")
+        cur_fio = doc_info.get("fio") if doc_info else None
+        cur_price = doc_info.get("custom_price") if doc_info else None
+        cur_seat = doc_info.get("seat_info") if doc_info else None
+        cur_hide = doc_info.get("hide_price") if doc_info else False
+
+        info_lines = []
+        if cur_fio:
+            info_lines.append(f"• ФИО: {cur_fio}")
+        if cur_seat:
+            info_lines.append(f"• Место: {cur_seat}")
+        if cur_hide:
+            info_lines.append("• Цена: скрыта")
+        elif cur_price is not None:
+            info_lines.append(f"• Цена: {cur_price} ₽")
+
+        status_prefix = ("Сейчас установлено:\n" + "\n".join(info_lines) + "\n\n") if info_lines else ""
+        prompt = (
+            f"⚡️ **Быстрая правка (всё в 1 строке)**\n\n"
+            f"{status_prefix}"
+            f"Отправьте данные одной строкой. Можно указать любое сочетание (ФИО, цену, места):\n\n"
+            f"💡 **Примеры:**\n"
+            f"• `Иванов И.И. 2500 ряд 3 место 12`\n"
+            f"• `Петров 3500`\n"
+            f"• `3 12 4000 руб`\n"
+            f"• `Партер ряд 1 место 5 скрыть цену`\n"
+            f"• `сброс` — вернуть исходные данные билета\n\n"
+            f"(для отмены напишите: отмена)"
+        )
+        return send_text(chat, prompt)
 
     if data == "price" or data.startswith("price:"):
         token = data.split(":", 1)[1] if ":" in data else None
@@ -3382,6 +3611,136 @@ def handle_callback_query(cb):
     if data.startswith("avito:"):
         token = data.split(":", 1)[1] if ":" in data else None
         return _send_avito_preview(chat, uid, token)
+
+
+def _reissue_ticket_with_quick(chat, uid, ref, text_input):
+    if not cooldown_ok(uid):
+        return send_text(chat, "Слишком часто. Подожди пару секунд и повтори.")
+    get_store().set_user_state(uid, None)
+    cleaned_cmd = text_input.strip()
+    if cleaned_cmd.lower() in {"отмена", "cancel"}:
+        return send_text(chat, "Быстрая правка отменена.")
+
+    doc_info = get_store().get_doc_token_info(ref)
+    if doc_info:
+        target_file_id = doc_info["file_id"]
+        tok_price = doc_info["custom_price"]
+        tok_hide = doc_info["hide_price"]
+        tok_fio = doc_info["fio"]
+        tok_seat = doc_info.get("seat_info")
+        tok_del = doc_info.get("del_texts")
+        tok_pushkin = doc_info.get("strip_pushkin")
+    else:
+        target_file_id = get_store().get_doc_by_token(ref) or ref
+        tok_price = None
+        tok_hide = None
+        tok_fio = None
+        tok_seat = None
+        tok_del = None
+        tok_pushkin = False
+
+    q = seat_tools.parse_quick_edit(cleaned_cmd)
+    if (not q["reset_all"] and not q["reset_fio"] and not q["reset_price"] and not q["reset_seat"]
+            and q["fio"] is None and q["custom_price"] is None and q["hide_price"] is None and q["seat_info"] is None):
+        return send_text(
+            chat,
+            "⚠️ Не удалось распознать параметры быстрой правки.\n\n"
+            "Вы можете указать любые данные вместе или по отдельности:\n"
+            "• `Иванов И.И. 2500 ряд 3 место 12`\n"
+            "• `Петров 3500`\n"
+            "• `3 12 4000 руб`\n"
+            "• `скрыть цену`\n"
+            "• `сброс` — вернуть исходные данные\n\n"
+            "(для отмены напишите: отмена)"
+        )
+
+    if q["reset_all"]:
+        new_fio = None
+        new_price = None
+        new_hide = False
+        new_seat = None
+    else:
+        if q["reset_fio"]:
+            new_fio = None
+        elif q["fio"] is not None:
+            new_fio = q["fio"]
+        else:
+            new_fio = tok_fio
+
+        if q["reset_price"]:
+            new_price = None
+            new_hide = False
+        elif q["hide_price"] is not None:
+            new_hide = q["hide_price"]
+            new_price = tok_price if not new_hide else None
+        elif q["custom_price"] is not None:
+            new_price = q["custom_price"]
+            new_hide = False
+        else:
+            new_price = tok_price
+            new_hide = tok_hide
+
+        if q["reset_seat"]:
+            new_seat = None
+        elif q["seat_info"] is not None:
+            new_seat = seat_tools.format_seat_summary(q["seat_info"])
+        else:
+            new_seat = tok_seat
+
+    data = download_file(target_file_id)
+    if not data:
+        return send_text(chat, "Не удалось скачать исходный файл. Пожалуйста, отправьте билет заново.")
+
+    u_settings = _user_settings(uid)
+    hide_price = new_hide if new_hide is not None else bool(u_settings.get("hide_price", 0))
+    custom_price = new_price if new_price is not None else u_settings.get("custom_price")
+    cur_fio = new_fio if new_fio is not None else get_store().get_user_fio(uid)
+
+    summary_items = []
+    if cur_fio:
+        summary_items.append(f"👤 {cur_fio}")
+    if new_seat:
+        summary_items.append(f"🪑 {new_seat}")
+    if hide_price:
+        summary_items.append("🎁 Цена скрыта")
+    elif custom_price is not None:
+        summary_items.append(f"💰 {custom_price} ₽")
+    changes_str = " · ".join(summary_items) if summary_items else "исходные параметры"
+    send_text(chat, f"⚡️ Применяю: {changes_str}... Перевыпускаю билет...")
+
+    ok, result, info = clean_ticket_with_report(
+        data,
+        spectator_fio=cur_fio,
+        hide_price=hide_price,
+        custom_price=custom_price,
+        seat_info=new_seat,
+        del_texts=tok_del,
+        strip_pushkin=tok_pushkin
+    )
+    if not ok:
+        return send_text(chat, f"Не удалось обновить билет: {result}")
+
+    meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
+    out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price)
+    caption = ticket_meta.format_single_ticket_caption(meta, info)
+    new_token = secrets.token_hex(8)
+    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=new_seat, del_texts=tok_del, strip_pushkin=tok_pushkin, uid=uid)
+    pages_cnt = 1
+    try:
+        with fitz.open(stream=result, filetype="pdf") as _d:
+            pages_cnt = len(_d)
+    except Exception:
+        pass
+    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt)
+    sent = send_cleaned(chat, result, out_name, caption, reply_markup=markup)
+    if not sent:
+        return send_text(chat, "Не удалось отправить обновлённый билет.")
+    auto_preview = bool(u_settings.get("auto_preview", 0))
+    if auto_preview:
+        img_bytes = render_pdf_preview(result)
+        if img_bytes:
+            send_photo(chat, img_bytes, caption="🖼 Авто-превью билета")
+    return
 
 
 def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
@@ -3768,6 +4127,29 @@ def handle(msg, update_id=None, queued=False):
         get_store().set_user_custom_price(uid, p_val)
         get_store().set_user_state(uid, None)
         return send_text(chat, f"💰 Кастомная цена сохранена: {p_val} ₽\nТеперь она будет автоматически прописываться на билетах.")
+    if command in {"/quick", "/q", "/edit"}:
+        parts = text.split(maxsplit=1)
+        recent_token = get_store().get_user_last_doc_token(uid)
+        if len(parts) == 1:
+            if recent_token:
+                get_store().set_user_state(uid, f"waiting_quick:{recent_token}")
+                prompt = (
+                    "⚡️ **Быстрая правка (всё в одной строке)**\n\n"
+                    "Отправьте данные одной строкой. Можно указать любое сочетание (ФИО, цену, места):\n\n"
+                    "💡 **Примеры:**\n"
+                    "• `Иванов И.И. 2500 ряд 3 место 12`\n"
+                    "• `Петров 3500`\n"
+                    "• `3 12 4000 руб`\n"
+                    "• `Партер ряд 1 место 5 скрыть цену`\n"
+                    "• `сброс` — вернуть исходные данные билета\n\n"
+                    "(для отмены напишите: отмена)"
+                )
+                return send_text(chat, prompt)
+            return send_text(chat, "⚡️ Не найден недавний билет. Пришлите PDF с билетом, затем используйте быструю правку.")
+        arg = parts[1].strip()
+        if not recent_token:
+            return send_text(chat, "⚡️ Не найден недавний билет. Пришлите PDF с билетом, затем используйте быструю правку.")
+        return _reissue_ticket_with_quick(chat, uid, recent_token, arg)
     if command in {"/seat", "/row", "/sector", "/place"}:
         parts = text.split(maxsplit=1)
         recent_token = get_store().get_user_last_doc_token(uid)
@@ -3999,6 +4381,10 @@ def handle(msg, update_id=None, queued=False):
             send_text(chat, f"Кастомная цена сохранена: {p_val} ₽.")
             return send_text(chat, text_card, markup=markup)
 
+    if state and state.startswith("waiting_quick:") and text and not command.startswith("/"):
+        ref = state.split(":", 1)[1]
+        return _reissue_ticket_with_quick(chat, uid, ref, text)
+
     if state and state.startswith("waiting_price:") and text and not command.startswith("/"):
         ref = state.split(":", 1)[1]
         get_store().set_user_state(uid, None)
@@ -4130,6 +4516,29 @@ def handle(msg, update_id=None, queued=False):
         ref = state.split(":", 1)[1]
         return _reissue_ticket_with_deletion(chat, uid, ref, text)
 
+    if state and state.startswith("waiting_batch_combo:") and text and not command.startswith("/"):
+        batch_token = state.split(":", 1)[1]
+        get_store().set_user_state(uid, None)
+        if text.lower() in {"отмена", "cancel"}:
+            send_text(chat, "Массовая правка отменена.")
+            text_dash, kb = _build_batch_dashboard(batch_token)
+            return send_text(chat, text_dash, markup=kb) if kb else None
+
+        send_text(chat, "⚡️ Применяю массовую правку ко всей пачке...")
+        count, reports = _apply_mass_combo_to_batch(batch_token, text)
+        if count == 0:
+            err_msg = reports[0] if reports else "Не удалось применить правку."
+            send_text(chat, f"⚠️ {err_msg}")
+            text_dash, kb = _build_batch_dashboard(batch_token)
+            return send_text(chat, text_dash, markup=kb) if kb else None
+
+        rep_text = "\n".join(reports[:10])
+        if len(reports) > 10:
+            rep_text += f"\n... и ещё {len(reports) - 10} билетов"
+        send_text(chat, f"✅ Обновлено {count} {tickets_word(count)}!\n\n{rep_text}")
+        text_dash, kb = _build_batch_dashboard(batch_token)
+        return send_text(chat, text_dash, markup=kb)
+
     if state and state.startswith("waiting_batch_fio:") and text and not command.startswith("/"):
         batch_token = state.split(":", 1)[1]
         get_store().set_user_state(uid, None)
@@ -4193,6 +4602,54 @@ def handle(msg, update_id=None, queued=False):
             send_text(chat, f"✅ Цена {new_p} ₽ установлена на всех билетах.")
         text_dash, kb = _build_batch_dashboard(batch_token)
         return send_text(chat, text_dash, markup=kb)
+
+    if state and state.startswith("waiting_batch_item_quick:") and text and not command.startswith("/"):
+        parts = state.split(":", 2)
+        batch_token = parts[1]
+        idx = int(parts[2])
+        get_store().set_user_state(uid, None)
+        if text.lower() in {"отмена", "cancel"}:
+            send_text(chat, "Быстрая правка отменена.")
+            text_card, kb = _build_batch_item_card(batch_token, idx)
+            return send_text(chat, text_card, markup=kb) if kb else None
+
+        q = seat_tools.parse_quick_edit(text)
+        if (not q["reset_all"] and not q["reset_fio"] and not q["reset_price"] and not q["reset_seat"]
+                and q["fio"] is None and q["custom_price"] is None and q["hide_price"] is None and q["seat_info"] is None):
+            send_text(chat, "⚠️ Не удалось распознать параметры. Напишите, например: Иванов 2500 ряд 3 место 12")
+            text_card, kb = _build_batch_item_card(batch_token, idx)
+            return send_text(chat, text_card, markup=kb) if kb else None
+
+        kwargs = {}
+        if q["reset_all"]:
+            kwargs = {"fio": "сброс", "seat_info": "сброс", "custom_price": "сброс", "hide_price": False}
+        else:
+            if q["reset_fio"]:
+                kwargs["fio"] = "сброс"
+            elif q["fio"] is not None:
+                kwargs["fio"] = q["fio"]
+
+            if q["reset_price"]:
+                kwargs["custom_price"] = "сброс"
+                kwargs["hide_price"] = False
+            elif q["hide_price"] is not None:
+                kwargs["hide_price"] = q["hide_price"]
+            elif q["custom_price"] is not None:
+                kwargs["custom_price"] = q["custom_price"]
+                kwargs["hide_price"] = False
+
+            if q["reset_seat"]:
+                kwargs["seat_info"] = "сброс"
+            elif q["seat_info"] is not None:
+                kwargs["seat_info"] = seat_tools.format_seat_summary(q["seat_info"])
+
+        send_text(chat, f"⚡️ Обновляю билет №{idx+1}...")
+        ok, res = _reprocess_batch_item(batch_token, idx, **kwargs)
+        if not ok:
+            return send_text(chat, f"Не удалось обновить билет: {res}")
+        send_text(chat, f"✅ Билет №{idx+1} успешно обновлён!")
+        text_card, kb = _build_batch_item_card(batch_token, idx)
+        return send_text(chat, text_card, markup=kb)
 
     if state and state.startswith("waiting_batch_item_fio:") and text and not command.startswith("/"):
         parts = state.split(":", 2)
