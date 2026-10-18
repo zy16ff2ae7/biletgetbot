@@ -1031,7 +1031,6 @@ def build_subscription_card(user_id):
         )
         kb.append([
             {"text": f"✍️ Продлить за {CONFIG['price_stars']} руб. (скидка)", "callback_data": "welcome:subscribe"},
-            {"text": "🎁 Пригласить друга (+3 дня)", "callback_data": "ref:menu"},
         ])
         kb.append([
             {"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"},
@@ -1061,7 +1060,6 @@ def build_subscription_card(user_id):
         ])
         kb.append([
             {"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"},
-            {"text": "👥 Пригласить коллегу (+3 дня)", "callback_data": "ref:menu"},
         ])
         kb.append([{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}])
 
@@ -1152,10 +1150,9 @@ def get_main_markup(user_id=None, username=None):
          {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}],
         [{"text": "⚙️ Настройки (ФИО / цена)", "callback_data": "welcome:settings"},
          {"text": "📂 Шаблоны", "callback_data": "tpl:menu"}],
-        [{"text": "🎁 Пригласить друга (+3 дня)", "callback_data": "ref:menu"},
-         {"text": "🎟 Промокод", "callback_data": "welcome:promo"}],
-        [{"text": "📖 Как пользоваться", "callback_data": "welcome:help"},
+        [{"text": "🎟 Промокод", "callback_data": "welcome:promo"},
          {"text": "👤 Профиль", "callback_data": "welcome:profile"}],
+        [{"text": "📖 Как пользоваться", "callback_data": "welcome:help"}],
     ]
     if user_id and is_admin(user_id, username):
         rows.append([{"text": "👑 Панель владельца", "callback_data": "welcome:admin"}])
@@ -1272,7 +1269,6 @@ def send_profile(chat, user_id, username=None):
         ])
     markup_rows.append([
         {"text": "🎟 Мой абонемент", "callback_data": "welcome:status"},
-        {"text": "🎁 Пригласить друга (+3 дня)", "callback_data": "ref:menu"},
     ])
     markup_rows.append([
         {"text": "🕒 История билетов", "callback_data": "history:menu"},
@@ -1426,7 +1422,6 @@ def set_my_commands():
         {"command": "settings", "description": "Настройки билетов"},
         {"command": "templates", "description": "Шаблоны настроек печати"},
         {"command": "history", "description": "История недавних билетов"},
-        {"command": "ref", "description": "Пригласить друга (+3 дня)"},
         {"command": "fio", "description": "ФИО зрителя на билетах"},
         {"command": "price", "description": "Цена на билете"},
         {"command": "seat", "description": "Ряд, место, сектор"},
