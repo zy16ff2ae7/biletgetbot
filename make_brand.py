@@ -44,7 +44,7 @@ SUB_IN = (46, 62)
 HANDLE_IN = (58, 72)
 FREE_LINE = "2 БИЛЕТА В ДЕНЬ БЕСПЛАТНО · КАЖДОМУ"
 PUSHKIN_LINE = "АЛЕКСАНДР СЕРГЕЕВИЧ БЫЛ БЫ ДОВОЛЕН"
-CTA_LINE = "ПАЧКИ И БЕЗЛИМИТ · 750 ЗВЁЗД ВМЕСТО 1500 · /subscribe"
+CTA_LINE = "ПАЧКИ И БЕЗЛИМИТ · 750 РУБЛЕЙ ВМЕСТО 1500 · /subscribe"
 BARS_IN = 18          # бары задвигаются за 18 кадров
 
 
@@ -604,7 +604,7 @@ for t in click_times:
     audio[idx:idx + n_len] += noise
     audio[idx:idx + len(ring)] += ring
 
-# 2. Колокольчик возврата каретки («дзинь!») на переходе (t = 2.7 сек)
+# 2. Колокольчик возврата каретки (дзинь!) на переходе (t = 2.7 сек)
 bell_idx = int(2.70 * sr)
 t_bell = np.linspace(0, 1.4, int(1.4 * sr))
 bell = (0.35 * np.sin(2 * np.pi * 2489 * t_bell) * np.exp(-t_bell * 4.5) +

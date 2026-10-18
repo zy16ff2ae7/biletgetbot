@@ -901,18 +901,18 @@ def subscribe(chat, user_id):
     url = invoice["url"]
     if not url:
         url = tg("createInvoiceLink", title="ДЕД РЕДАЧИТ: абонемент на месяц",
-                 description=f"Дед перепечатывает билеты начисто: 30 дней без лимита билетов. Специальная цена {CONFIG['price_stars']} Stars (скидка до повышения). Автопродление; отмена /cancel_subscription.",
+                 description=f"Дед перепечатывает билеты начисто: 30 дней без лимита билетов. Специальная цена {CONFIG['price_stars']} рублей (скидка до повышения). Автопродление; отмена /cancel_subscription.",
                  payload=invoice["payload"], provider_token="", currency="XTR",
-                 prices=[{"label": "30 дней со скидкой", "amount": invoice["price"]}], subscription_period=PERIOD)
+                 prices=[{"label": f"30 дней со скидкой ({CONFIG['price_stars']} ₽)", "amount": invoice["price"]}], subscription_period=PERIOD)
         if not url:
             return send_text(chat, "Не удалось создать счёт. Попробуйте /subscribe позже.")
         get_store().save_url(invoice["payload"], url)
     return send_text(
         chat,
-        f"🏷 Специальный тариф: {CONFIG['price_stars']} Stars за 30 дней (вместо 1500 ⭐️)\n"
+        f"🏷 Специальный тариф: {CONFIG['price_stars']} рублей за 30 дней (вместо 1500 ₽)\n"
         f"⏳ Временная скидка 50% — успейте взять, скоро повышение стоимости!\n\n"
         f"Полный безлимит билетов и пачек, замена ФИО и кодов. Автопродление каждые 30 дней; отмена: /cancel_subscription.",
-        {"inline_keyboard": [[{"text": f"⭐️ Оформить абонемент — {CONFIG['price_stars']} Stars", "url": url}]]}
+        {"inline_keyboard": [[{"text": f"💳 Оформить абонемент — {CONFIG['price_stars']} руб.", "url": url}]]}
     )
 
 
@@ -973,7 +973,7 @@ def build_subscription_card(user_id):
             f"🔄 Автопродление: **{renew_str}**"
         )
         kb.append([
-            {"text": f"✍️ Продлить за {CONFIG['price_stars']} ⭐️ (скидка)", "callback_data": "welcome:subscribe"},
+            {"text": f"✍️ Продлить за {CONFIG['price_stars']} руб. (скидка)", "callback_data": "welcome:subscribe"},
             {"text": "🎁 Пригласить друга (+3 дня)", "callback_data": "ref:menu"},
         ])
         kb.append([
@@ -994,11 +994,11 @@ def build_subscription_card(user_id):
             f"• Смена ФИО, цен и рассадка зрителей по местам\n"
             f"• Моментальное фото До/После и авто-превью\n"
             f"• Сохранение персональных шаблонов настроек\n\n"
-            f"🏷 **Специальный тариф:** {CONFIG['price_stars']} Stars / 30 дней (вместо 1500 ⭐️)\n"
+            f"🏷 **Специальный тариф:** {CONFIG['price_stars']} рублей / 30 дней (вместо 1500 ₽)\n"
             f"⏳ Временная скидка 50% — успейте взять, скоро повышение стоимости!"
         )
         kb.append([
-            {"text": f"✍️ Оформить за {CONFIG['price_stars']} ⭐️ (скидка)", "callback_data": "welcome:subscribe"},
+            {"text": f"✍️ Оформить за {CONFIG['price_stars']} руб. (скидка)", "callback_data": "welcome:subscribe"},
             {"text": "🎁 Пробный день", "callback_data": "welcome:trial"},
         ])
         kb.append([
@@ -3837,7 +3837,7 @@ def handle(msg, update_id=None, queued=False):
             return send_text(chat, "🛡 Не найден недавний билет. Пришлите PDF с билетом, затем используйте команду /safe.")
         return _send_avito_preview(chat, uid, recent_token)
     if command == "/terms":
-        return send_text(chat, f"Абонемент: {CONFIG['price_stars']} Stars за 30 дней без лимита билетов (скидка до планового повышения до 1500 Stars). Автопродление — каждые 30 дней; отмена /cancel_subscription. В одной пачке до 50 PDF и 100 МБ распакованных данных. Входящий файл до 20 МБ. Исходные файлы пачки хранятся на сервере не более часа и удаляются после отправки. По вопросам оплаты: /paysupport.")
+        return send_text(chat, f"Абонемент: {CONFIG['price_stars']} рублей за 30 дней без лимита билетов (скидка до планового повышения до 1500 рублей). Автопродление — каждые 30 дней; отмена /cancel_subscription. В одной пачке до 50 PDF и 100 МБ распакованных данных. Входящий файл до 20 МБ. Исходные файлы пачки хранятся на сервере не более часа и удаляются после отправки. По вопросам оплаты: /paysupport.")
     if command == "/paysupport":
         return send_text(chat, "Свяжитесь с администратором по вопросам обработки билетов, оплаты или возврата.",
                          {"inline_keyboard": [[{"text": "Администратор", "url": "tg://user?id="+str(CONFIG['admin_ids'][0])}]]})
