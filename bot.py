@@ -1023,7 +1023,61 @@ def handle_cryptobot_create(chat, user_id, msg_id=None):
             [{"text": "⬅️ Назад к тарифам", "callback_data": "welcome:subscribe"}],
         ]
     }
+    register_pending_crypto(inv_id, chat, user_id)
     return edit_or_send(chat, msg_id, text, markup=kb)
+
+
+_pending_crypto_invoices = {}
+_pending_crypto_lock = threading.Lock()
+
+
+def register_pending_crypto(inv_id, chat, user_id):
+    with _pending_crypto_lock:
+        _pending_crypto_invoices[str(inv_id)] = (chat, user_id, time.time())
+
+
+def check_pending_crypto_invoices():
+    now = time.time()
+    with _pending_crypto_lock:
+        items = list(_pending_crypto_invoices.items())
+    for inv_id, (chat, user_id, created) in items:
+        if now - created > 86400:
+            with _pending_crypto_lock:
+                _pending_crypto_invoices.pop(inv_id, None)
+            continue
+        try:
+            inv = cryptobot.check_invoice(inv_id)
+            if inv and inv.get("status") == "paid":
+                with _pending_crypto_lock:
+                    _pending_crypto_invoices.pop(inv_id, None)
+                action_id = f"cb_paid_{inv_id}"
+                expires = get_store().grant(user_id, 30, 0, action_id=action_id)
+                congrats = (
+                    f"🎉 **ОПЛАТА ЧЕРЕЗ CRYPTOBOT ПОДТВЕРЖДЕНА!**\n\n"
+                    f"Абонемент активирован на 30 дней (до {date_label(expires)}).\n"
+                    f"Вам открыт полный безлимит билетов и пачек. Приятной работы ✍️"
+                )
+                markup = {"inline_keyboard": [
+                    [{"text": "🎟 Мой абонемент", "callback_data": "welcome:status"}],
+                    [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
+                ]}
+                send_text(chat, congrats, markup=markup)
+        except Exception:
+            log.exception("Error in check_pending_crypto_invoices for %s", inv_id)
+
+
+def _crypto_poller_loop():
+    while True:
+        try:
+            time.sleep(20)
+            check_pending_crypto_invoices()
+        except Exception:
+            time.sleep(10)
+
+
+def start_cryptobot_poller():
+    t = threading.Thread(target=_crypto_poller_loop, daemon=True, name="crypto_poller")
+    t.start()
 
 
 def handle_cryptobot_check(chat, user_id, inv_id, msg_id=None):
@@ -1032,6 +1086,8 @@ def handle_cryptobot_check(chat, user_id, inv_id, msg_id=None):
         return send_text(chat, "⚠️ Не удалось связаться с CryptoBot. Пожалуйста, попробуйте снова через пару секунд.")
     status = inv.get("status")
     if status == "paid":
+        with _pending_crypto_lock:
+            _pending_crypto_invoices.pop(str(inv_id), None)
         action_id = f"cb_paid_{inv_id}"
         expires = get_store().grant(user_id, 30, 0, action_id=action_id)
         congrats = (
@@ -1048,6 +1104,8 @@ def handle_cryptobot_check(chat, user_id, inv_id, msg_id=None):
         return send_text(chat, "⏳ Оплата ещё не поступила. Завершите перевод в @CryptoBot и нажмите «Проверить оплату» снова.")
     else:
         return send_text(chat, f"Счёт находится в статусе «{status}». Если оплата списалась, свяжитесь с администратором @FreeDemin.")
+
+
 
 
 
@@ -5057,6 +5115,7 @@ def loop():
         threading.Thread(target=worker_loop, daemon=True).start()
     set_my_commands()
     set_my_profile_info()
+    start_cryptobot_poller()
     offset = 0
     log.info("subscription bot started (workers=%d)", workers)
     while True:
