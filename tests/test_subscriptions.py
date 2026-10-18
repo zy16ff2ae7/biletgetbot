@@ -228,6 +228,70 @@ class SubscriptionTests(unittest.TestCase):
                         "text": "/revoke @newuser"})
         self.assertFalse(self.store.status(444)["active"])
 
+    def test_referral_system(self):
+        self.store.touch_user(501, "referrer")
+        self.store.touch_user(502, "newuser")
+
+        ok, _ = self.store.register_referral(501, 501)
+        self.assertFalse(ok)
+
+        ok, ref_id = self.store.register_referral(501, 502)
+        self.assertTrue(ok)
+        self.assertEqual(501, ref_id)
+        self.assertTrue(self.store.status(501)["active"])
+        self.assertTrue(self.store.status(502)["active"])
+
+        stats = self.store.get_referral_stats(501)
+        self.assertEqual(1, stats["count"])
+        self.assertEqual(3, stats["days_earned"])
+
+        ok, _ = self.store.register_referral(501, 502)
+        self.assertFalse(ok)
+
+    def test_ticket_history(self):
+        self.assertEqual([], self.store.get_ticket_history(601))
+
+        self.store.add_ticket_history(601, "tok1", title="Чайка", date_str="04.11 19:00", seat_str="Ряд 3 Место 12", price=3000)
+        self.store.add_ticket_history(601, "tok2", title="Гамлет", date_str="10.11 19:00", seat_str="Ряд 5 Место 1", price=2500)
+
+        hist = self.store.get_ticket_history(601, limit=5)
+        self.assertEqual(2, len(hist))
+        self.assertEqual("tok2", hist[0]["token"])
+        self.assertEqual("Гамлет", hist[0]["title"])
+        self.assertEqual("tok1", hist[1]["token"])
+
+    def test_soon_expiry_reminders(self):
+        now = int(time.time())
+        exp = now + 12 * 3600
+        with self.store.db() as db:
+            db.execute("INSERT INTO users(user_id, first_seen, last_seen) VALUES(701, ?, ?)", (now, now))
+            db.execute("INSERT INTO grants(user_id, expires, admin_id) VALUES(701, ?, 0)", (exp,))
+
+        due = self.store.due_soon_expiring_reminds(24)
+        self.assertIn(701, due)
+
+        self.store.mark_soon_expiry_reminded(701)
+        due_after = self.store.due_soon_expiring_reminds(24)
+        self.assertNotIn(701, due_after)
+
+    def test_subscription_and_referral_cards(self):
+        with patch.object(bot, "_store", self.store):
+            text_inact, kb_inact = bot.build_subscription_card(801)
+            self.assertIn("не активен", text_inact)
+            self.assertIsNotNone(kb_inact)
+
+            self.store.grant(801, 15, 0)
+            text_act, kb_act = bot.build_subscription_card(801)
+            self.assertIn("АКТИВЕН", text_act)
+            self.assertIn("Осталось:", text_act)
+
+            text_ref, kb_ref = bot.build_referral_card(801)
+            self.assertIn("ПРИГЛАСИ КОЛЛЕГУ", text_ref)
+            self.assertIn("ref_801", text_ref)
+
+            text_hist, kb_hist = bot.build_history_card(801)
+            self.assertIn("История", text_hist)
+
 
 if __name__ == "__main__":
     unittest.main()

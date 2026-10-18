@@ -9,3 +9,5 @@ state/
 *.sqlite3-*
 work/
 .DS_Store
+brand/*.gif
+brand/*_with_sound.mp4

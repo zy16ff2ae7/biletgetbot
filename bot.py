@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 import sys
 import threading
 import time
+import urllib.parse
 
 import fitz
 import requests
@@ -141,11 +142,19 @@ def _user_settings(uid):
         return {"fio": None, "state": None, "hide_price": 0, "batch_mode": "zip", "auto_preview": 0}
 
 
-def _save_doc_token(token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None, del_texts=None, strip_pushkin=None, uid=None):
+def _save_doc_token(token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None, del_texts=None, strip_pushkin=None, uid=None, meta=None):
     try:
         get_store().save_doc_token(token, file_id, custom_price=custom_price, hide_price=hide_price, fio=fio, seat_info=seat_info, del_texts=del_texts, strip_pushkin=strip_pushkin)
         if uid is not None:
             get_store().set_user_last_doc_token(uid, token)
+            if meta and isinstance(meta, dict):
+                title = meta.get("title")
+                dt = f"{meta.get('date', '')} {meta.get('time', '')}".strip()
+                row = meta.get("row")
+                seats = meta.get("seats") or []
+                seat_str = f"Ряд {row}, Место {seats[0]}" if row and seats else (f"Ряд {row}" if row else (f"Место {seats[0]}" if seats else seat_info))
+                p = custom_price if custom_price is not None else meta.get("price")
+                get_store().add_ticket_history(uid, token, title=title, date_str=dt, seat_str=seat_str, price=p)
     except Exception:
         pass
 
@@ -902,23 +911,174 @@ def subscribe(chat, user_id):
                      {"inline_keyboard": [[{"text": "Оформить абонемент", "url": url}]]})
 
 
-def show_status(chat, user_id):
+_BOT_USERNAME = None
+
+
+def get_bot_username():
+    global _BOT_USERNAME
+    if _BOT_USERNAME:
+        return _BOT_USERNAME
+    try:
+        me = tg("getMe")
+        if me and isinstance(me, dict) and me.get("username"):
+            _BOT_USERNAME = me["username"]
+            return _BOT_USERNAME
+    except Exception:
+        pass
+    return "biletgetbot"
+
+
+def build_subscription_card(user_id):
     if is_admin(user_id):
-        return send_text(chat, "Постоянный администраторский доступ. Подписка не требуется.")
+        text = (
+            f"👑 **СТАТУС ПОДПИСКИ · {BRAND_NAME}**\n\n"
+            f"🛠 **Доступ: Администраторский, постоянный**\n"
+            f"⚡️ Безлимитная перепечатка билетов и пачек\n"
+            f"Оплата и подписка не требуются."
+        )
+        return text, None
+
     status = get_store().status(user_id)
+    now = time.time()
+    kb = []
+
     if status["active"]:
-        text = "Абонемент активен до " + date_label(status["expires"]) + ". Билеты без лимита."
-        invoice = status["invoice"]
-        if invoice and not invoice["canceled"]:
-            text += "\nАвтопродление включено. Отмена: /cancel_subscription."
-        return send_text(chat, text)
-    return send_text(chat, "Абонемент не активен. Оформить: /subscribe.", markup={"inline_keyboard": [[{"text": "✍️ Оформить", "callback_data": "welcome:subscribe"}, {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}]]})
+        expires = status["expires"]
+        rem_sec = max(0, int(expires - now))
+        days = rem_sec // 86400
+        hours = (rem_sec % 86400) // 3600
+
+        total_days = 30
+        used_days = min(total_days, max(0, total_days - days))
+        filled = int((used_days / total_days) * 10)
+        bar = "🟩" * (10 - filled) + "⬜️" * filled
+
+        invoice = status.get("invoice")
+        auto_renew = invoice and not invoice.get("canceled") and invoice.get("initial_charge")
+        renew_str = "✅ Включено (списание каждые 30 дней)" if auto_renew else "❌ Выключено (разовый доступ)"
+
+        text = (
+            f"🎟 **СТАТУС ПОДПИСКИ · {BRAND_NAME}**\n\n"
+            f"⚡️ **Абонемент: АКТИВЕН**\n"
+            f"📅 Действует до: **{date_label(expires)}**\n"
+            f"⏳ Осталось: **{days} дн. {hours} ч.**\n\n"
+            f"Срок: {bar}\n\n"
+            f"📦 Пакетная обработка: **без ограничений**\n"
+            f"🎫 Дневной лимит: **безлимитно**\n"
+            f"🔄 Автопродление: **{renew_str}**"
+        )
+        kb.append([
+            {"text": "✍️ Продлить абонемент", "callback_data": "welcome:subscribe"},
+            {"text": "🎁 Пригласить друга (+3 дня)", "callback_data": "ref:menu"},
+        ])
+        kb.append([
+            {"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"},
+            {"text": "👤 Профиль", "callback_data": "welcome:profile"},
+        ])
+        if auto_renew:
+            kb.append([{"text": "❌ Отключить автопродление", "callback_data": "sub:cancel"}])
+    else:
+        left = get_store().daily_left(user_id)
+        text = (
+            f"🎟 **АБОНЕМЕНТ · {BRAND_NAME}**\n\n"
+            f"Статус: **не активен**\n"
+            f"🎁 Бесплатно сегодня: **{left} из {FREE_DAILY} {tickets_word(FREE_DAILY)}**\n\n"
+            f"⚡️ **Что даёт абонемент:**\n"
+            f"• Полный безлимит на перепечатку любых билетов\n"
+            f"• Пачки любого объёма (ZIP или единый склеенный PDF)\n"
+            f"• Смена ФИО, цен и рассадка зрителей по местам\n"
+            f"• Моментальное фото До/После и авто-превью\n"
+            f"• Сохранение персональных шаблонов настроек\n\n"
+            f"⭐️ Стоимость: **{CONFIG['price_stars']} Stars / 30 дней**"
+        )
+        kb.append([
+            {"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
+            {"text": "🎁 Пробный день", "callback_data": "welcome:trial"},
+        ])
+        kb.append([
+            {"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"},
+            {"text": "👥 Пригласить коллегу (+3 дня)", "callback_data": "ref:menu"},
+        ])
+
+    return text, {"inline_keyboard": kb}
+
+
+def build_referral_card(user_id):
+    bot_user = get_bot_username()
+    ref_link = f"https://t.me/{bot_user}?start=ref_{user_id}"
+    stats = get_store().get_referral_stats(user_id)
+    share_text = f"Перепечатывай билеты без чужих ФИО и Пушкинской карты: https://t.me/{bot_user}?start=ref_{user_id}"
+    share_url = f"https://t.me/share/url?url={urllib.parse.quote(share_text)}"
+
+    text = (
+        f"🎁 **ПРИГЛАСИ КОЛЛЕГУ И ПОЛУЧИ +3 ДНЯ**\n\n"
+        f"Поделитесь ботом с коллегами, организаторами или зрителями:\n"
+        f"• Вы получаете: **+3 дня полного доступа** за каждого приглашённого\n"
+        f"• Ваш коллега получает: **+1 день доступа** в подарок при старте\n\n"
+        f"🔗 **Ваша персональная ссылка:**\n"
+        f"`{ref_link}`\n\n"
+        f"📊 **Ваша статистика:**\n"
+        f"• Приглашено друзей: **{stats['count']}**\n"
+        f"• Заработано дней доступа: **+{stats['days_earned']} дн.**"
+    )
+    kb = {
+        "inline_keyboard": [
+            [{"text": "↗️ Поделиться ссылкой", "url": share_url}],
+            [{"text": "🎟 Мой абонемент", "callback_data": "welcome:status"},
+             {"text": "👤 В профиль", "callback_data": "welcome:profile"}],
+        ]
+    }
+    return text, kb
+
+
+def build_history_card(user_id):
+    items = get_store().get_ticket_history(user_id, limit=8)
+    if not items:
+        text = (
+            f"🕒 **История обработанных билетов**\n\n"
+            f"Вы пока не перепечатывали билеты через бота.\n"
+            f"Отправьте PDF-билет в чат — дед сохранит его в историю, "
+            f"чтобы вы могли вернуться к нему в любой момент!"
+        )
+        kb = {"inline_keyboard": [[{"text": "👤 В профиль", "callback_data": "welcome:profile"}]]}
+        return text, kb
+
+    lines = ["🕒 **Недавние билеты:**\n"]
+    kb_rows = []
+    btn_row = []
+
+    for i, it in enumerate(items, 1):
+        title = it.get("title") or "Билет"
+        dt = it.get("date_str") or ""
+        seat = it.get("seat_str") or ""
+        price = f"{it['price']} ₽" if it.get("price") is not None else ""
+        desc_parts = [p for p in [dt, seat, price] if p]
+        desc = f" ({', '.join(desc_parts)})" if desc_parts else ""
+        lines.append(f"{i}. 🎭 **{title}**{desc}")
+
+        btn_row.append({"text": f"Билет №{i}", "callback_data": f"hist:open:{it['token']}"})
+        if len(btn_row) == 4:
+            kb_rows.append(btn_row)
+            btn_row = []
+
+    if btn_row:
+        kb_rows.append(btn_row)
+
+    kb_rows.append([{"text": "👤 В профиль", "callback_data": "welcome:profile"}])
+    return "\n".join(lines), {"inline_keyboard": kb_rows}
+
+
+def show_status(chat, user_id):
+    text, kb = build_subscription_card(user_id)
+    return send_text(chat, text, markup=kb)
 
 
 MAIN_MARKUP = {"inline_keyboard": [
     [{"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
      {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}],
     [{"text": "⚙️ Настройки (ФИО / цена)", "callback_data": "welcome:settings"},
+     {"text": "📂 Шаблоны", "callback_data": "tpl:menu"}],
+    [{"text": "🎁 Пригласить друга (+3 дня)", "callback_data": "ref:menu"},
      {"text": "🎟 Промокод", "callback_data": "welcome:promo"}],
     [{"text": "📖 Как пользоваться", "callback_data": "welcome:help"},
      {"text": "👤 Профиль", "callback_data": "welcome:profile"}],
@@ -1022,13 +1182,25 @@ def send_profile(chat, user_id, username=None):
         f"• Цена на билете: {price_disp}\n"
         f"• Отображение цены: {'скрыта 🎁' if hide else 'показывается'}\n"
     )
-    markup = {"inline_keyboard": []}
+    markup_rows = []
     if not status["active"] and not is_admin(user_id):
-        markup["inline_keyboard"] = [
-            [{"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
-             {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}],
-            [{"text": "🎟 Ввести промокод", "callback_data": "welcome:promo"}],
-        ]
+        markup_rows.append([
+            {"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
+            {"text": "🎁 Пробный день", "callback_data": "welcome:trial"},
+        ])
+    markup_rows.append([
+        {"text": "🎟 Мой абонемент", "callback_data": "welcome:status"},
+        {"text": "🎁 Пригласить друга (+3 дня)", "callback_data": "ref:menu"},
+    ])
+    markup_rows.append([
+        {"text": "🕒 История билетов", "callback_data": "history:menu"},
+        {"text": "📂 Шаблоны настроек", "callback_data": "tpl:menu"},
+    ])
+    markup_rows.append([
+        {"text": "⚙️ Настройки печати", "callback_data": "welcome:settings"},
+        {"text": "📖 Помощь", "callback_data": "welcome:help"},
+    ])
+    markup = {"inline_keyboard": markup_rows}
     photo = _photo_or_none(BRAND_AVATAR)
     if photo:
         payload = {"chat_id": str(chat), "caption": text[:1000], "reply_markup": json.dumps(markup)}
@@ -1162,6 +1334,8 @@ def set_my_commands():
         {"command": "promo", "description": "Активировать промокод"},
         {"command": "settings", "description": "Настройки билетов"},
         {"command": "templates", "description": "Шаблоны настроек печати"},
+        {"command": "history", "description": "История недавних билетов"},
+        {"command": "ref", "description": "Пригласить друга (+3 дня)"},
         {"command": "fio", "description": "ФИО зрителя на билетах"},
         {"command": "price", "description": "Цена на билете"},
         {"command": "seat", "description": "Ряд, место, сектор"},
@@ -2277,6 +2451,14 @@ def process_document(msg, collection_id=None, job_id=None):
         if not sent:
             return _progress_error(progress, chat, "Не удалось отправить файл. Отправьте исходный PDF ещё раз.")
         get_store().bump_processed(uid)
+        if meta and uid is not None:
+            title = meta.get("title")
+            dt = f"{meta.get('date', '')} {meta.get('time', '')}".strip()
+            row = meta.get("row")
+            seats = meta.get("seats") or []
+            seat_str = f"Ряд {row}, Место {seats[0]}" if row and seats else (f"Ряд {row}" if row else (f"Место {seats[0]}" if seats else None))
+            p = custom_price if custom_price is not None else meta.get("price")
+            get_store().add_ticket_history(uid, token, title=title, date_str=dt, seat_str=seat_str, price=p)
         if not has_access(uid):
             try:
                 if get_store().daily_consume(uid):
@@ -2307,7 +2489,7 @@ def handle_callback_query(cb):
         "unpack", "merge", "preview", "compare", "price", "fio", "seat", "choose_sec",
         "pushkin", "avito", "set", "toggleprice", "split", "welcome", "adm",
         "bcfg", "bedit", "bset", "btog", "bprev", "bmass", "bzip", "bmerge", "bunpack", "bsend",
-        "tpl", "btpl"
+        "tpl", "btpl", "ref", "hist", "history", "sub"
     )):
         return
 
@@ -2329,6 +2511,15 @@ def handle_callback_query(cb):
             return send_help(chat, uid)
         if action == "profile":
             return send_profile(chat, uid, sender.get("username"))
+        if action == "status":
+            text_card, markup = build_subscription_card(uid)
+            if msg_id:
+                try:
+                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_card, reply_markup=markup)
+                    return
+                except Exception:
+                    pass
+            return send_text(chat, text_card, markup=markup)
         if action == "settings":
             text_card, markup = build_settings_card(uid)
             if msg_id:
@@ -2385,6 +2576,58 @@ def handle_callback_query(cb):
             return tg("editMessageText", chat_id=chat, message_id=msg_id, text=body[:4000],
                       reply_markup=admin_panel_markup())
         return send_text(chat, body[:4000], markup=admin_panel_markup())
+
+    if data.startswith("ref:"):
+        text, markup = build_referral_card(uid)
+        if msg_id:
+            try:
+                tg("editMessageText", chat_id=chat, message_id=msg_id, text=text, reply_markup=markup)
+                return
+            except Exception:
+                pass
+        return send_text(chat, text, markup=markup)
+
+    if data.startswith("history:"):
+        text, markup = build_history_card(uid)
+        if msg_id:
+            try:
+                tg("editMessageText", chat_id=chat, message_id=msg_id, text=text, reply_markup=markup)
+                return
+            except Exception:
+                pass
+        return send_text(chat, text, markup=markup)
+
+    if data.startswith("hist:open:"):
+        tok = data.split(":", 2)[2]
+        doc_info = get_store().get_doc_token_info(tok)
+        if not doc_info:
+            return send_text(chat, "Билет не найден в памяти бота.")
+        markup = _single_ticket_markup(tok, hide_price=bool(doc_info.get("hide_price")), pages=1)
+        text = (
+            f"🎟 **Управление билетом**\n\n"
+            f"👤 ФИО: **{doc_info.get('fio') or 'не указано'}**\n"
+            f"💰 Цена: **{doc_info.get('custom_price') or 'исходная'} ₽**\n"
+            f"🪑 Место: **{doc_info.get('seat_info') or 'не указано'}**\n\n"
+            f"Выберите действие с билетом:"
+        )
+        return send_text(chat, text, markup=markup)
+
+    if data == "sub:cancel":
+        invoice = get_store().status(uid)["invoice"]
+        if not invoice or not invoice.get("initial_charge"):
+            return send_text(chat, "У вас нет подписки с включённым автопродлением.")
+        if tg("editUserStarSubscription", user_id=uid, telegram_payment_charge_id=invoice["initial_charge"], is_canceled=True):
+            get_store().canceled(invoice["payload"])
+            send_text(chat, "✅ Автопродление абонемента отменено. Доступ сохранится до конца оплаченного срока.")
+            text_card, markup = build_subscription_card(uid)
+            if msg_id:
+                try:
+                    tg("editMessageText", chat_id=chat, message_id=msg_id, text=text_card, reply_markup=markup)
+                    return
+                except Exception:
+                    pass
+            return send_text(chat, text_card, markup=markup)
+        return send_text(chat, "Telegram не подтвердил отмену. Попробуйте позже или откройте управление подписками в Telegram.")
 
     if not has_access(uid):
         return show_status(chat, uid)
@@ -3318,11 +3561,11 @@ def _send_avito_preview(chat, uid, ref):
     pdf_to_mask = result if ok and isinstance(result, (bytes, bytearray)) else data
     png_bytes = eraser_tools.make_avito_preview(pdf_to_mask, srv=srv)
     if not png_bytes:
-        return send_text(chat, "Не удалось сгенерировать превью для Авито.")
+        return send_text(chat, "Не удалось сгенерировать защищённое фото.")
 
     caption = (
-        "🛡 **Защищённое фото для публикации на Авито / Юле / соцсетях**\n\n"
-        "• Штрихкоды и QR-коды надёжно скрыты защитной плашкой — мошенники не украдут билет до покупки.\n"
+        "🛡 **Защищённое фото для публикации на маркетплейсах и в соцсетях**\n\n"
+        "• Штрихкоды и QR-коды надёжно скрыты защитной плашкой — билет защищён от копирования до покупки.\n"
         "• Мероприятие, дата, ряд, место и цена отлично видны покупателям.\n"
         "• Можно сразу выкладывать в объявление!"
     )
@@ -3430,11 +3673,27 @@ def handle(msg, update_id=None, queued=False):
         get_store().refund(uid, refunded["telegram_payment_charge_id"])
         return send_text(chat, "Возврат оплаты учтён. Статус доступа: /subscription.")
     if command == "/start":
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1 and parts[1].startswith("ref_"):
+            try:
+                referrer_id = int(parts[1].replace("ref_", ""))
+                ok, ref_id = get_store().register_referral(referrer_id, uid)
+                if ok:
+                    send_text(chat, "🎉 Добро пожаловать! Вы пришли по приглашению коллеги. Вам начислен +1 день доступа без ограничений!")
+                    send_text(referrer_id, f"🎉 По вашей ссылке присоединился коллега (ID {uid})! Вам начислено +3 дня к доступу.")
+            except Exception:
+                pass
         return send_welcome(chat, uid)
     if command == "/help":
         return send_help(chat, uid)
     if command == "/profile":
         return send_profile(chat, uid, username)
+    if command in {"/ref", "/referral", "/invite"}:
+        text_card, markup = build_referral_card(uid)
+        return send_text(chat, text_card, markup=markup)
+    if command in {"/history", "/recent"}:
+        text_card, markup = build_history_card(uid)
+        return send_text(chat, text_card, markup=markup)
     if command == "/trial":
         return cmd_trial(chat, uid)
     if command == "/promo":
@@ -3449,7 +3708,7 @@ def handle(msg, update_id=None, queued=False):
         return send_text(chat, text_card, markup=markup)
     if command in {"/subscribe", "/buy"}:
         return subscribe(chat, uid)
-    if command in {"/subscription", "/balance", "/dolg"}:
+    if command in {"/subscription", "/balance", "/dolg", "/status"}:
         return show_status(chat, uid)
     if command == "/cancel_subscription":
         invoice = get_store().status(uid)["invoice"]
@@ -3569,7 +3828,7 @@ def handle(msg, update_id=None, queued=False):
     if command in {"/avito", "/safe", "/resale"}:
         recent_token = get_store().get_user_last_doc_token(uid)
         if not recent_token:
-            return send_text(chat, "🛡 Не найден недавний билет. Пришлите PDF с билетом, затем используйте команду /avito.")
+            return send_text(chat, "🛡 Не найден недавний билет. Пришлите PDF с билетом, затем используйте команду /safe.")
         return _send_avito_preview(chat, uid, recent_token)
     if command == "/terms":
         return send_text(chat, f"Абонемент: {CONFIG['price_stars']} Stars за 30 дней без лимита билетов. Автопродление — каждые 30 дней; отмена /cancel_subscription. В одной пачке до 50 PDF и 100 МБ распакованных данных. Входящий файл до 20 МБ. Исходные файлы пачки хранятся на сервере не более часа и удаляются после отправки. По вопросам оплаты: /paysupport.")
@@ -4012,6 +4271,17 @@ def worker_loop():
                             {"text": "🎟 Промокод", "callback_data": "welcome:promo"}]]})
                     if sent:
                         get_store().mark_expiry_reminded(r_uid)
+                for s_uid in get_store().due_soon_expiring_reminds(24):
+                    s_stat = get_store().status(s_uid)
+                    exp_label = date_label(s_stat["expires"]) if s_stat.get("expires") else "скоро"
+                    sent = send_text(
+                        s_uid, f"⏳ Напоминание: ваш абонемент заканчивается через 24 часа ({exp_label}).\n\n"
+                               "Продлите доступ заранее, чтобы не терять безлимитную перепечатку билетов и сохранённые шаблоны настроек.",
+                        {"inline_keyboard": [[
+                            {"text": "✍️ Продлить абонемент", "callback_data": "welcome:subscribe"},
+                            {"text": "🎟 Промокод", "callback_data": "welcome:promo"}]]})
+                    if sent:
+                        get_store().mark_soon_expiry_reminded(s_uid)
             job = get_store().claim()
             if not job:
                 _work_ready.wait(0.5)
@@ -4073,7 +4343,7 @@ def dispatch_update(update):
         elif data.startswith("pushkin"):
             text = "Снимаю Пушкинскую карту..."
         elif data.startswith("avito"):
-            text = "Генерирую версию для Авито..."
+            text = "Генерирую защищённое фото..."
         if cb_id:
             tg("answerCallbackQuery", callback_query_id=cb_id, text=text)
         store.enqueue(ident, {"kind": "callback_query", "callback": cb})

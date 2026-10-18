@@ -378,6 +378,29 @@ class SubscriptionStore:
             created INTEGER
         )""")
         db.execute("CREATE INDEX IF NOT EXISTS idx_user_presets_user ON user_presets(user_id)")
+        db.execute("""CREATE TABLE IF NOT EXISTS soon_expiry_reminders (
+            user_id INTEGER PRIMARY KEY,
+            reminded INTEGER
+        )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_id INTEGER NOT NULL,
+            referred_id INTEGER NOT NULL UNIQUE,
+            created INTEGER NOT NULL,
+            rewarded INTEGER DEFAULT 0
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
+        db.execute("""CREATE TABLE IF NOT EXISTS ticket_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token TEXT NOT NULL,
+            title TEXT,
+            date_str TEXT,
+            seat_str TEXT,
+            price INTEGER,
+            created INTEGER NOT NULL
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_ticket_history_user ON ticket_history(user_id, created DESC)")
 
     def get_user_presets(self, user_id):
         with self.db() as db:
@@ -659,6 +682,30 @@ class SubscriptionStore:
             db.execute("INSERT OR REPLACE INTO expiry_reminders VALUES(?,?)",
                        (user_id, int(time.time())))
 
+    def due_soon_expiring_reminds(self, hours_window=24):
+        now = int(time.time())
+        window_end = now + hours_window * 3600
+        with self.db() as db:
+            rows = db.execute(
+                """
+                WITH acc AS (
+                    SELECT u.user_id AS uid,
+                           MAX(COALESCE((SELECT MAX(expires) FROM payments
+                                         WHERE user_id=u.user_id AND refunded=0), 0),
+                               COALESCE((SELECT expires FROM grants WHERE user_id=u.user_id), 0)) AS exp
+                    FROM users u GROUP BY u.user_id
+                )
+                SELECT uid FROM acc
+                WHERE exp > ? AND exp <= ?
+                  AND uid NOT IN (SELECT user_id FROM soon_expiry_reminders)
+                """, (now, window_end)).fetchall()
+            return [row[0] for row in rows]
+
+    def mark_soon_expiry_reminded(self, user_id):
+        with self.db() as db:
+            db.execute("INSERT OR REPLACE INTO soon_expiry_reminders VALUES(?,?)",
+                       (user_id, int(time.time())))
+
     DAILY_LIMIT = int(os.environ.get("BILET_DAILY_FREE", "2"))
 
     def daily_left(self, user_id):
@@ -705,3 +752,63 @@ class SubscriptionStore:
                 "promos_active": one("SELECT COUNT(*) FROM promo_codes WHERE used<uses_max AND valid_until>?", (now,)),
                 "promos_total": one("SELECT COUNT(*) FROM promo_codes"),
             }
+
+    def register_referral(self, referrer_id, new_user_id):
+        if referrer_id == new_user_id or referrer_id <= 0 or new_user_id <= 0:
+            return False, None
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute("SELECT 1 FROM referrals WHERE referred_id=?", (new_user_id,)).fetchone()
+            if existing:
+                return False, None
+            ref_user = db.execute("SELECT 1 FROM users WHERE user_id=?", (referrer_id,)).fetchone()
+            if not ref_user:
+                return False, None
+            db.execute(
+                "INSERT INTO referrals (referrer_id, referred_id, created, rewarded) VALUES (?, ?, ?, 1)",
+                (referrer_id, new_user_id, int(time.time()))
+            )
+            paid_ref = db.execute("SELECT MAX(expires) FROM payments WHERE user_id=? AND refunded=0", (referrer_id,)).fetchone()[0] or 0
+            gift_ref = db.execute("SELECT expires FROM grants WHERE user_id=?", (referrer_id,)).fetchone()
+            exp_ref = max(int(time.time()), paid_ref, gift_ref[0] if gift_ref else 0) + 3 * 86400
+            db.execute("INSERT INTO grants(user_id, expires, admin_id) VALUES(?, ?, 0) "
+                       "ON CONFLICT(user_id) DO UPDATE SET expires=MAX(grants.expires, excluded.expires)",
+                       (referrer_id, exp_ref))
+            paid_new = db.execute("SELECT MAX(expires) FROM payments WHERE user_id=? AND refunded=0", (new_user_id,)).fetchone()[0] or 0
+            gift_new = db.execute("SELECT expires FROM grants WHERE user_id=?", (new_user_id,)).fetchone()
+            exp_new = max(int(time.time()), paid_new, gift_new[0] if gift_new else 0) + 86400
+            db.execute("INSERT INTO grants(user_id, expires, admin_id) VALUES(?, ?, 0) "
+                       "ON CONFLICT(user_id) DO UPDATE SET expires=MAX(grants.expires, excluded.expires)",
+                       (new_user_id, exp_new))
+            return True, referrer_id
+
+    def get_referral_stats(self, user_id):
+        with self.db() as db:
+            row = db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,)).fetchone()
+            count = row[0] if row else 0
+            return {"count": count, "days_earned": count * 3}
+
+    def add_ticket_history(self, user_id, token, title=None, date_str=None, seat_str=None, price=None):
+        with self.db() as db:
+            db.execute(
+                "INSERT INTO ticket_history (user_id, token, title, date_str, seat_str, price, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (user_id, token, (title or "")[:120], (date_str or "")[:40], (seat_str or "")[:80], price, int(time.time()))
+            )
+            db.execute(
+                """
+                DELETE FROM ticket_history WHERE user_id=? AND id NOT IN (
+                    SELECT id FROM ticket_history WHERE user_id=? ORDER BY created DESC, id DESC LIMIT 20
+                )
+                """, (user_id, user_id)
+            )
+
+    def get_ticket_history(self, user_id, limit=10):
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT * FROM ticket_history WHERE user_id=? ORDER BY created DESC, id DESC LIMIT ?",
+                (user_id, limit)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+

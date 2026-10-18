@@ -20,31 +20,32 @@ HERE = Path(__file__).resolve().parent
 BRAND = HERE / "brand"
 BASE = BRAND / "welcome_base.jpg"
 FONT_MAIN = BRAND / "Prata-Regular.ttf"
+FONT_ITALIC = BRAND / "PlayfairDisplay-Italic.ttf"
 
 W, H = 960, 540
-FPS = 15
-FRAMES = 110
+FPS = 24
+FRAMES = 204
 TITLE = "ДЕД РЕДАЧИТ"
-SUBTITLE = "перепечатаем ваши билеты начисто"
+SUBTITLE = "перепечатаем начисто · сохраним главное"
 HANDLE = "@biletgetbot"
 
-GOLD_TOP = (252, 243, 222)
-GOLD_MID = (243, 211, 146)
-GOLD_DEEP = (198, 150, 86)
-GOLD_EDGE = (240, 205, 138)
-CREAM = (250, 242, 226)
-PLATINUM = (240, 233, 240)
+GOLD_TOP = (255, 248, 230)
+GOLD_MID = (245, 215, 150)
+GOLD_DEEP = (195, 145, 80)
+GOLD_EDGE = (242, 208, 140)
+CREAM = (252, 246, 235)
+PLATINUM = (245, 240, 248)
 BAR = (6, 3, 8)
 
 BAR_B = 132          # нижний литер-бар
 BAR_T = 42           # верхний бар
-TITLE_IN = (14, 26)
-SUB_IN = (30, 40)
-HANDLE_IN = (38, 46)
-CTA_IN = (92, 100)   # подсказка об абонементе в верхнем баре
-FREE_LINE = "2 билета в день — бесплатно"
-FREE_OUT = (88, 95)  # уходит перед CTA
-BARS_IN = 12         # бары задвигаются за 12 кадров
+TITLE_IN = (20, 40)
+SUB_IN = (46, 62)
+HANDLE_IN = (58, 72)
+FREE_LINE = "2 БИЛЕТА В ДЕНЬ БЕСПЛАТНО · КАЖДОМУ"
+PUSHKIN_LINE = "АЛЕКСАНДР СЕРГЕЕВИЧ БЫЛ БЫ ДОВОЛЕН"
+CTA_LINE = "ПАЧКИ И БЕЗЛИМИТ · 1000 ЗВЁЗД · /subscribe"
+BARS_IN = 18          # бары задвигаются за 18 кадров
 
 
 def smooth(v):
@@ -115,7 +116,7 @@ class Dust:
         rng = np.random.default_rng(seed)
         self.x = rng.uniform(0.10, 0.40, count)
         self.y = rng.uniform(0.05, 0.85, count)
-        self.speed = rng.uniform(0.004, 0.012, count)
+        self.speed = rng.uniform(0.0025, 0.0075, count)
         self.size = rng.uniform(1.2, 3.2, count)
         self.phase = rng.uniform(0, 2 * np.pi, count)
         self.count = count
@@ -125,8 +126,8 @@ class Dust:
         d = ImageDraw.Draw(overlay)
         for i in range(self.count):
             y = (self.y[i] - self.speed[i] * frame) % 0.95
-            x = self.x[i] + 0.004 * np.sin(self.phase[i] + frame * 0.25)
-            twinkle = 0.55 + 0.45 * np.sin(self.phase[i] * 3 + frame * 0.6)
+            x = self.x[i] + 0.004 * np.sin(self.phase[i] + frame * 0.16)
+            twinkle = 0.55 + 0.45 * np.sin(self.phase[i] * 3 + frame * 0.38)
             r = self.size[i]
             c = (int(255 * twinkle), int(230 * twinkle), int(210 * twinkle))
             px, py = int(x * W), int(y * H)
@@ -135,37 +136,41 @@ class Dust:
 
 
 class Sparks:
-    """Розовые искры вокруг поднятого билета в финальной сцене."""
+    """Золотые благородные искры вокруг поднятого билета в финальной сцене."""
 
-    def __init__(self, count=34, seed=3):
+    def __init__(self, count=50, seed=42):
         rng = np.random.default_rng(seed)
-        self.angle = rng.uniform(-2.5, -0.6, count)
-        self.speed = rng.uniform(0.010, 0.034, count)
-        self.size = rng.uniform(1.8, 4.2, count)
+        self.angle = rng.uniform(0, 2 * np.pi, count)
+        self.speed = rng.uniform(0.012, 0.045, count)
+        self.size = rng.uniform(2.0, 4.2, count)
         self.phase = rng.uniform(0, 2 * np.pi, count)
         self.count = count
 
     def draw(self, img, local):
         overlay = Image.new("RGB", (W, H), (0, 0, 0))
         d = ImageDraw.Draw(overlay)
-        ox, oy = 0.715 * W, 0.115 * H
+        ox, oy = int(0.44 * W), int(0.165 * H)
         for i in range(self.count):
-            t = (local / 10 + self.phase[i]) % 1.6
+            t = (local / 20.0 + self.phase[i]) % 1.5
             if t > 1.0:
                 continue
-            x = ox + np.cos(self.angle[i]) * self.speed[i] * t * W
-            y = oy + np.sin(self.angle[i]) * self.speed[i] * t * W + 0.012 * t * t * W
-            fade = max(0.0, 1.0 - t) * (0.55 + 0.45 * np.sin(self.phase[i] * 5 + t * 9))
-            r = self.size[i] * (1 - 0.4 * t)
-            c = (int(255 * fade), int(185 * fade), int(215 * fade))
+            dist = self.speed[i] * t * W
+            x = ox + np.cos(self.angle[i]) * dist
+            y = oy + np.sin(self.angle[i]) * dist + 0.006 * t * t * W
+            fade = max(0.0, 1.0 - t) * (0.6 + 0.4 * np.sin(self.phase[i] * 5 + t * 9))
+            r = self.size[i] * (1.0 - 0.3 * t)
+            c = (int(255 * fade), int(225 * fade), int(130 * fade))
             d.ellipse([x - r, y - r, x + r, y + r], fill=c)
-        return screen(img, overlay.filter(ImageFilter.GaussianBlur(0.7)))
+        glow = overlay.filter(ImageFilter.GaussianBlur(1.0))
+        return ImageChops.screen(img, glow)
 
 
 def flash_overlay(img, local):
-    """Короткая тёплая вспышка между сценами (3 кадра)."""
-    alpha = (140, 70, 25)[min(local, 2)]
-    return Image.blend(img, Image.new("RGB", (W, H), (255, 244, 228)), alpha / 255)
+    """Мягкая тёплая янтарная вспышка между сценами (до 6 кадров при 24 fps)."""
+    alphas = (145, 110, 70, 35, 14, 4)
+    alpha = alphas[min(local, len(alphas) - 1)]
+    return Image.blend(img, Image.new("RGB", (W, H), (255, 238, 210)), alpha / 255)
+
 
 
 def _font(path, size):
@@ -174,8 +179,8 @@ def _font(path, size):
 
 def _gold_gradient(y0, y1):
     """Вертикальный золотой градиент высотой y1-y0 (RGB, ширина W)."""
-    stops = [(0.0, GOLD_TOP), (0.42, GOLD_MID), (0.72, GOLD_DEEP), (1.0, GOLD_EDGE)]
-    ys = np.linspace(0.0, 1.0, y1 - y0)
+    stops = [(0.0, GOLD_TOP), (0.40, GOLD_MID), (0.75, GOLD_DEEP), (1.0, GOLD_EDGE)]
+    ys = np.linspace(0.0, 1.0, max(1, y1 - y0))
     channels = []
     for i in range(3):
         xs = [s[0] for s in stops]
@@ -185,137 +190,226 @@ def _gold_gradient(y0, y1):
     return Image.fromarray(np.repeat(row[:, None, :], W, axis=1), "RGB")
 
 
-def _gold_text(ov, mask, alpha):
-    """Золотая заливка по фактическому bbox чернил + блик по верхней кромке."""
-    if alpha <= 0:
-        return ov
-    ink = mask.getbbox()
-    grad = _gold_gradient(ink[1], ink[3]).crop((ink[0], 0, ink[2], ink[3] - ink[1])).convert("RGBA")
-    gold = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    gold.paste(grad, (ink[0], ink[1]), mask.crop(ink))
-    gold.putalpha(mask.point(lambda v: int(v * alpha)))
-    ov = Image.alpha_composite(ov, gold)
-    bevel = ImageChops.subtract(mask, ImageChops.offset(mask, 0, 1)).point(
-        lambda v: int(v * 0.5 * alpha))
-    ov.paste(Image.new("RGBA", (W, H), (255, 250, 236, 255)), (0, 0), bevel)
-    return ov
-
-
-_probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
-
-
-def probe_w(font, ch):
-    return _probe.textlength(ch, font=font)
-
-
-def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0):
-    """Кинематографичный letterbox: чистые чёрные бары с тонкой золотой
-    кромкой; титры — внутри нижнего бара, на идеально чёрном фоне."""
+def overlay(title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0, pushkin_a=0.0, f=None):
+    """Кинематографичный letterbox: глубокие бархатные бары с двойной золотой
+    кромкой и центральным ромбом; титры — внутри нижнего бара с динамическим
+    световым бликом (shimmer) и каллиграфическим подзаголовком; верхний бар
+    раскрывает сюжет из трёх актов (бесплатные билеты -> улыбка Пушкина -> абонемент)."""
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     if bars_e <= 0:
         return ov
     d = ImageDraw.Draw(ov)
     bar_b = int(round(BAR_B * bars_e))
     bar_t = int(round(BAR_T * bars_e))
-    d.rectangle([0, H - bar_b, W, H], fill=(*BAR, 255))
+    top = H - bar_b
+
+    # Базовая заливка бар
+    d.rectangle([0, top, W, H], fill=(*BAR, 255))
     d.rectangle([0, 0, W, bar_t], fill=(*BAR, 255))
-    # Тонкая золотая кромка по внутренним краям баров.
-    line_a = int(150 * bars_e)
-    d.line([0, H - bar_b - 1, W, H - bar_b - 1], fill=(212, 170, 96, line_a), width=1)
-    d.line([0, bar_t, W, bar_t], fill=(212, 170, 96, int(line_a * 0.55)), width=1)
 
-    # Бесплатный лимит в верхнем баре — до появления CTA.
-    if free_a > 0 and cta_a < 1:
-        ff = _font(FONT_MAIN, 16)
-        fa = int(230 * free_a * (1 - cta_a))
-        fw = _probe.textlength(FREE_LINE, font=ff)  # рисуется одной строкой — мерить так же
-        fx = (W - fw) / 2
-        fy = max(7, (bar_t - 19) // 2)
-        d.text((fx, fy), FREE_LINE, font=ff, fill=(*GOLD_MID, fa))
+    line_a = int(220 * bars_e)
+    mid_x = W // 2
+    r_bar = 2.8
 
-    # CTA в верхнем баре: появляется в конце цикла.
-    if cta_a > 0:
-        cta_font = _font(FONT_MAIN, 17)
-        cta = "абонемент — 1000 звёзд · /subscribe"
-        a = int(255 * cta_a)
-        cw = sum(probe_w(cta_font, ch) + 2 for ch in cta) - 2
-        cx = (W - cw) / 2
-        cy = max(8, (bar_t - 20) // 2)
-        for ch in cta:
-            d.text((cx, cy), ch, font=cta_font, fill=(*GOLD_MID, a))
-            cx += probe_w(cta_font, ch) + 2
+    # 1. Верхний бар: двойная золотая кромка снизу с центральным ромбом
+    d.line([0, bar_t - 1, W, bar_t - 1], fill=(212, 170, 96, line_a), width=1)
+    d.line([48, bar_t - 3, W - 48, bar_t - 3], fill=(180, 140, 75, int(line_a * 0.7)), width=1)
+    d.polygon([(mid_x, bar_t - 3 - r_bar), (mid_x + r_bar, bar_t - 3),
+               (mid_x, bar_t - 3 + r_bar), (mid_x - r_bar, bar_t - 3)],
+              fill=(*GOLD_EDGE, line_a))
+
+    # 2. Нижний бар: двойная золотая кромка сверху с центральным ромбом
+    d.line([0, top, W, top], fill=(212, 170, 96, line_a), width=1)
+    d.line([48, top + 3, W - 48, top + 3], fill=(180, 140, 75, int(line_a * 0.7)), width=1)
+    d.polygon([(mid_x, top + 3 - r_bar), (mid_x + r_bar, top + 3),
+               (mid_x, top + 3 + r_bar), (mid_x - r_bar, top + 3)],
+              fill=(*GOLD_EDGE, line_a))
 
     probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
 
-    def width_of(text, font, gap):
-        return sum(probe.textlength(ch, font=font) + gap for ch in text) - gap
+    # Текст верхнего бара: 3 драматургических акта
+    top_font = _font(FONT_MAIN, 15)
+    fy = (bar_t - 4 - 18) // 2
+    cy = fy + 10
 
-    title_font = _font(FONT_MAIN, 50)
-    sub_font = _font(FONT_MAIN, 21)
-    small_font = _font(FONT_MAIN, 20)
-    tracking = 10
-    top = H - bar_b
+    # Акт 1: "2 БИЛЕТА В ДЕНЬ · БЕСПЛАТНО"
+    if free_a > 0:
+        fa = int(240 * free_a)
+        gap = 2
+        fw = sum(probe.textlength(ch, font=top_font) + gap for ch in FREE_LINE) - gap
+        fx = (W - fw) / 2
+        diam_r = 2.5
+        d.polygon([(fx - 16, cy - diam_r), (fx - 16 + diam_r, cy),
+                   (fx - 16, cy + diam_r), (fx - 16 - diam_r, cy)], fill=(*GOLD_EDGE, fa))
+        d.polygon([(fx + fw + 16, cy - diam_r), (fx + fw + 16 + diam_r, cy),
+                   (fx + fw + 16, cy + diam_r), (fx + fw + 16 - diam_r, cy)], fill=(*GOLD_EDGE, fa))
+        for ch in FREE_LINE:
+            d.text((fx, fy), ch, font=top_font, fill=(*GOLD_MID, fa))
+            fx += probe.textlength(ch, font=top_font) + gap
 
-    # Заголовок золотом по центру бара.
+    # Акт 2: "АЛЕКСАНДР СЕРГЕЕВИЧ БЫЛ БЫ ДОВОЛЕН" с пульсирующими ромбами и золотым лучом
+    if pushkin_a > 0:
+        pa = int(250 * pushkin_a)
+        gap = 2
+        pw = sum(probe.textlength(ch, font=top_font) + gap for ch in PUSHKIN_LINE) - gap
+        px = (W - pw) / 2
+        pulse = np.sin(np.pi * min(1.0, max(0.0, (f - 72) / 20.0))) if (f is not None and 72 <= f <= 92) else 0.0
+        diam_r = 2.5 + 0.8 * pulse
+        col_diam = (int(GOLD_EDGE[0] * (1 - pulse) + GOLD_TOP[0] * pulse),
+                    int(GOLD_EDGE[1] * (1 - pulse) + GOLD_TOP[1] * pulse),
+                    int(GOLD_EDGE[2] * (1 - pulse) + GOLD_TOP[2] * pulse), pa)
+        d.polygon([(px - 18, cy - diam_r), (px - 18 + diam_r, cy),
+                   (px - 18, cy + diam_r), (px - 18 - diam_r, cy)], fill=col_diam)
+        d.polygon([(px + pw + 18, cy - diam_r), (px + pw + 18 + diam_r, cy),
+                   (px + pw + 18, cy + diam_r), (px + pw + 18 - diam_r, cy)], fill=col_diam)
+
+        # Слой текста с бегущим лучом
+        p_mask = Image.new("L", (W, H), 0)
+        pmd = ImageDraw.Draw(p_mask)
+        cur_x = px
+        for ch in PUSHKIN_LINE:
+            pmd.text((cur_x, fy), ch, font=top_font, fill=255)
+            cur_x += probe.textlength(ch, font=top_font) + gap
+
+        p_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        pld = ImageDraw.Draw(p_layer)
+        cur_x = px
+        for ch in PUSHKIN_LINE:
+            pld.text((cur_x, fy), ch, font=top_font, fill=(*GOLD_MID, pa))
+            cur_x += probe.textlength(ch, font=top_font) + gap
+
+        if f is not None and 74 <= f <= 96:
+            g_pos = (f - 74) / 22.0
+            gx = px + g_pos * pw
+            gm = Image.new("L", (W, H), 0)
+            gd = ImageDraw.Draw(gm)
+            gd.polygon([(gx - 20, 0), (gx + 20, 0), (gx + 35, bar_t), (gx - 5, bar_t)], fill=255)
+            gm = gm.filter(ImageFilter.GaussianBlur(8))
+            gleam_text = ImageChops.multiply(p_mask, gm)
+            gleam_fill = Image.new("RGBA", (W, H), (*GOLD_TOP, pa))
+            p_layer.paste(gleam_fill, (0, 0), gleam_text)
+
+        ov = Image.alpha_composite(ov, p_layer)
+
+    # Акт 3: "АБОНЕМЕНТ · 1000 ЗВЁЗД · /subscribe"
+    if cta_a > 0:
+        ca = int(255 * cta_a)
+        gap = 2
+        cw = sum(probe.textlength(ch, font=top_font) + gap for ch in CTA_LINE) - gap
+        cx = (W - cw) / 2
+        diam_r = 2.5
+        d.polygon([(cx - 16, cy - diam_r), (cx - 16 + diam_r, cy),
+                   (cx - 16, cy + diam_r), (cx - 16 - diam_r, cy)], fill=(*GOLD_EDGE, ca))
+        d.polygon([(cx + cw + 16, cy - diam_r), (cx + cw + 16 + diam_r, cy),
+                   (cx + cw + 16, cy + diam_r), (cx + cw + 16 - diam_r, cy)], fill=(*GOLD_EDGE, ca))
+        for ch in CTA_LINE:
+            d.text((cx, fy), ch, font=top_font, fill=(*GOLD_MID, ca))
+            cx += probe.textlength(ch, font=top_font) + gap
+
+    # Определение фазы светового блика (shimmer) по номеру кадра:
+    gleam_pos = None
+    if f is not None:
+        if 24 <= f <= 52:
+            gleam_pos = (f - 24) / 28.0
+        elif 124 <= f <= 152:
+            gleam_pos = (f - 124) / 28.0
+
+    # Заголовок: ДЕД РЕДАЧИТ (золотой градиент, фаска, глубокая тень, бегущий блик)
     if title_a > 0:
+        title_font = _font(FONT_MAIN, 48)
+        tracking = 12
+        tw = sum(probe.textlength(ch, font=title_font) + tracking for ch in TITLE) - tracking
+        tx0 = (W - tw) / 2
+
         mask = Image.new("L", (W, H), 0)
         md = ImageDraw.Draw(mask)
-        tw = width_of(TITLE, title_font, tracking)
-        x = (W - tw) / 2
+        x = tx0
         for ch in TITLE:
-            md.text((x, top + 12), ch, font=title_font, fill=255)
+            md.text((x, top + 14), ch, font=title_font, fill=255)
             x += probe.textlength(ch, font=title_font) + tracking
-        shadow = ImageChops.offset(mask.filter(ImageFilter.GaussianBlur(4)), 2, 3)
-        shadow = shadow.point(lambda v: int(v * 0.35 * title_a))
-        shl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        shl.paste(Image.new("RGBA", (W, H), (0, 0, 0, 255)), (0, 0), shadow)
-        ov = Image.alpha_composite(ov, shl)
-        ov = _gold_text(ov, mask, title_a)
 
-    # Подзаголовок: изящные строчные капители + золотой росчерк сверху.
+        # Мягкая глубокая тень
+        shadow = ImageChops.offset(mask.filter(ImageFilter.GaussianBlur(5)), 2, 4)
+        shadow = shadow.point(lambda v: int(v * 0.55 * title_a))
+        sh_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        sh_layer.paste(Image.new("RGBA", (W, H), (0, 0, 0, 255)), (0, 0), shadow)
+        ov = Image.alpha_composite(ov, sh_layer)
+
+        # Золотой градиент букв
+        ink = mask.getbbox()
+        if ink:
+            grad = _gold_gradient(ink[1], ink[3]).crop((ink[0], 0, ink[2], ink[3] - ink[1])).convert("RGBA")
+            gold = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            gold.paste(grad, (ink[0], ink[1]), mask.crop(ink))
+
+            # Световой скос (bevel) по верхней грани букв
+            bevel = ImageChops.subtract(mask, ImageChops.offset(mask, 0, 1)).point(lambda v: int(v * 0.65))
+            gold.paste(Image.new("RGBA", (W, H), (255, 252, 240, 255)), (0, 0), bevel)
+
+            # Изящный золотой контур (hairline gold rim) для эффекта металлического оттиска
+            rim = ImageChops.subtract(mask.filter(ImageFilter.MaxFilter(3)), mask).point(lambda v: int(v * 0.50))
+            gold.paste(Image.new("RGBA", (W, H), (*GOLD_EDGE, 255)), (0, 0), rim)
+
+            # Кинематографичный бегущий световой блик (shimmer)
+            if gleam_pos is not None and 0.0 <= gleam_pos <= 1.0:
+                gx = tx0 + gleam_pos * tw
+                gleam_mask = Image.new("L", (W, H), 0)
+                gd = ImageDraw.Draw(gleam_mask)
+                beam_w = 42
+                gd.polygon([
+                    (gx - beam_w - 20, top), (gx + beam_w - 20, top),
+                    (gx + beam_w + 20, top + BAR_B), (gx - beam_w + 20, top + BAR_B)
+                ], fill=255)
+                gleam_mask = gleam_mask.filter(ImageFilter.GaussianBlur(16))
+                gleam_on_text = ImageChops.multiply(mask, gleam_mask)
+                gold.paste(Image.new("RGBA", (W, H), (255, 252, 238, 255)), (0, 0), gleam_on_text)
+
+            gold.putalpha(mask.point(lambda v: int(v * title_a)))
+            ov = Image.alpha_composite(ov, gold)
+
+    # Подзаголовок: перепечатаем начисто · сохраним главное в PlayfairDisplay-Italic
     if sub_a > 0:
-        a = int(255 * sub_a)
+        sa = int(255 * sub_a)
         d = ImageDraw.Draw(ov)
-        sw = width_of(SUBTITLE, sub_font, 4)
+        sub_font = _font(FONT_ITALIC, 23)
+        gap = 2
+        sw = sum(probe.textlength(ch, font=sub_font) + gap for ch in SUBTITLE) - gap
         sx = (W - sw) / 2
-        sy = top + 72
+        sy = top + 74
         for ch in SUBTITLE:
-            d.text((sx + 1, sy + 1), ch, font=sub_font, fill=(0, 0, 0, int(a * 0.8)))
-            d.text((sx, sy), ch, font=sub_font, fill=(*CREAM, a))
-            sx += probe.textlength(ch, font=sub_font) + 4
-        # Росчерк: линия с ромбом по центру, над подзаголовком.
-        fy = top + 64
-        r = 2.6
-        d.polygon([(W / 2, fy - r), (W / 2 + r, fy), (W / 2, fy + r), (W / 2 - r, fy)],
-                  fill=(*GOLD_EDGE, int(a * 0.9)))
-        d.line([W / 2 - 70, fy, W / 2 - 10, fy], fill=(198, 162, 110, int(a * 0.55)), width=1)
-        d.line([W / 2 + 10, fy, W / 2 + 70, fy], fill=(198, 162, 110, int(a * 0.55)), width=1)
+            d.text((sx + 1, sy + 1.5), ch, font=sub_font, fill=(0, 0, 0, int(sa * 0.90)))
+            fill_c = GOLD_MID if ch == "·" else CREAM
+            d.text((sx, sy), ch, font=sub_font, fill=(*fill_c, sa))
+            sx += probe.textlength(ch, font=sub_font) + gap
 
-    # Канал: платиновый, ромбы по бокам на одной строке.
+    # Канал: @biletgetbot с тонкими гравюрными крыльями
     if handle_a > 0:
-        a = int(255 * handle_a)
+        ha = int(255 * handle_a)
         d = ImageDraw.Draw(ov)
+        small_font = _font(FONT_MAIN, 19)
         hw = probe.textlength(HANDLE, font=small_font)
         hx = (W - hw) / 2
-        hy = top + 98
+        hy = top + 103
         for gdx, gdy in ((1, 1), (-1, 1)):
-            d.text((hx + gdx, hy + gdy), HANDLE, font=small_font, fill=(0, 0, 0, int(a * 0.8)))
-        d.text((hx, hy), HANDLE, font=small_font, fill=(*PLATINUM, a))
-        cy = hy + 11
-        r = 2.8
+            d.text((hx + gdx, hy + gdy), HANDLE, font=small_font, fill=(0, 0, 0, int(ha * 0.85)))
+        d.text((hx, hy), HANDLE, font=small_font, fill=(*PLATINUM, ha))
+
+        cy = hy + 10
+        r_wing = 2.5
         for side in (-1, 1):
-            # Ромб и линия СНАРУЖИ от текста: слева от левого края, справа от правого.
-            inner = hx - 14 if side < 0 else hx + hw + 14
-            outer = inner + side * 70
-            d.line([outer, cy, inner, cy], fill=(198, 172, 182, int(a * 0.8)), width=1)
+            inner = hx - 16 if side < 0 else hx + hw + 16
+            outer = inner + side * 85
+            d.line([outer, cy, inner, cy], fill=(198, 172, 182, int(ha * 0.85)), width=1)
             mid = (outer + inner) / 2
-            d.polygon([(mid, cy - r), (mid + r, cy), (mid, cy + r), (mid - r, cy)],
-                      fill=(*GOLD_EDGE, a))
+            d.polygon([(mid, cy - r_wing), (mid + r_wing, cy), (mid, cy + r_wing), (mid - r_wing, cy)],
+                      fill=(*GOLD_EDGE, ha))
+            d.ellipse([outer - 1.5, cy - 1.5, outer + 1.5, cy + 1.5], fill=(*GOLD_MID, int(ha * 0.9)))
+
     return ov
 
 
-def compose(img, title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0):
-    o = overlay(title_a, sub_a, handle_a, bars_e, cta_a, free_a)
+def compose(img, title_a, sub_a, handle_a, bars_e, cta_a=0.0, free_a=0.0, pushkin_a=0.0, f=None):
+    o = overlay(title_a, sub_a, handle_a, bars_e, cta_a, free_a, pushkin_a, f=f)
     return Image.alpha_composite(img.convert("RGBA"), o).convert("RGB")
 
 
@@ -325,83 +419,288 @@ SOURCES = {"type": SRC,
            "win": Image.open(BRAND / "key_win.jpg").convert("RGB")}
 
 # --- статичная обложка -------------------------------------------------------
-poster = base_frame(1.04, 0.54, 0.52)
+poster = base_frame(1.04, 0.54, 0.52, src=SRC)
 poster = screen(poster, glow_layer(0.35))
 poster = Dust(seed=11).draw(poster, 8)
 poster = vignette(poster)
 poster = grain(poster, 3)
-poster = compose(poster, 1, 1, 1, 1, 0, 0)
+poster = compose(poster, 1, 1, 1, 1, cta_a=0.0, free_a=1.0, pushkin_a=0.0, f=50)
 poster.save(BRAND / "welcome.jpg", quality=90)
 
-# --- аватар: триумфальный кадр с поднятым билетом ----------------------------
-portrait = cover_crop(SOURCES["win"], 800, 800, cx=0.63, cy=0.52, zoom=1.45)
+# --- аватар: триумфальный кадр с поднятым билетом (идеально для кружка Telegram) -
+portrait = cover_crop(SOURCES["win"], 800, 800, cx=0.56, cy=0.36, zoom=1.20)
 portrait = ImageEnhance.Color(portrait).enhance(1.06)
 portrait = ImageEnhance.Sharpness(portrait).enhance(1.15)
-portrait.save(BRAND / "ded.jpg", quality=90)
+portrait.save(BRAND / "ded.jpg", quality=92)
 
-# --- миниатюра видео (Telegram превью) ---------------------------------------
-thumb = cover_crop(SOURCES["win"], 320, 320, cx=0.63, cy=0.52, zoom=1.45)
-thumb.save(BRAND / "thumb.jpg", quality=85)
+# --- миниатюра видео: точные 16:9 (320x180) для Telegram без скачков ----------
+thumb = poster.resize((320, 180), Image.LANCZOS)
+thumb.save(BRAND / "thumb.jpg", quality=88)
 
 # --- кадры видео -------------------------------------------------------------
 def scene_of(f):
-    """(ключ сцены, локальный номер кадра) по глобальному кадру."""
-    if f <= 39:
-        return "type", f
-    if f <= 43:
-        return "flash1", f - 40          # вспышка-переход
+    """(ключ сцены, локальный номер кадра) по глобальному кадру (24 fps, 204 кадра / 8.5 сек)."""
     if f <= 64:
-        return "laugh", f - 44
-    if f <= 67:
-        return "flash2", f - 65          # вторая вспышка
-    return "win", f - 68
+        return "type", f
+    if f <= 69:
+        return "flash1", f - 65          # мягкий переход в сцену 2
+    if f <= 106:
+        return "laugh", f - 70
+    if f <= 111:
+        return "flash2", f - 107         # мягкий переход в сцену 3
+    if f <= 197:
+        return "win", f - 112            # триумф с билетом и спарками
+    return "flash3", f - 198             # бесшовный возврат в сцену 1 (6 кадров)
+
+
+def get_top_bar_alphas(f):
+    """Чистые бесконфликтные прозрачности для 3 актов в верхнем баре (без наложения текста)."""
+    if f <= 64:
+        return 1.0, 0.0, 0.0
+    if f <= 68:
+        return smooth(1.0 - (f - 64) / 4.0), 0.0, 0.0
+    if f <= 106:
+        tp = smooth((f - 69) / 6.0) if f <= 75 else 1.0
+        return 0.0, tp, 0.0
+    if f <= 112:
+        tp = smooth(1.0 - (f - 107) / 5.0)
+        return 0.0, tp, 0.0
+    if f <= 195:
+        tc = smooth((f - 114) / 8.0) if f <= 122 else 1.0
+        return 0.0, 0.0, tc
+    if f <= 198:
+        tc = smooth(1.0 - (f - 195) / 3.0)
+        return 0.0, 0.0, tc
+    # f in 199..203: возврат в free_line к первому кадру
+    tf = smooth((f - 198) / 5.0)
+    return tf, 0.0, 0.0
 
 
 tmp = HERE / "work" / "frames"
 tmp.mkdir(parents=True, exist_ok=True)
 dust = Dust()
 sparks = Sparks()
+
+print(f"Rendering {FRAMES} frames at {FPS} FPS...")
 for f in range(FRAMES):
     scene, local = scene_of(f)
-    t_bars = smooth((f + 1) / BARS_IN)
-    t_title = smooth((f - TITLE_IN[0]) / (TITLE_IN[1] - TITLE_IN[0]))
-    t_sub = smooth((f - SUB_IN[0]) / (SUB_IN[1] - SUB_IN[0]))
-    t_handle = smooth((f - HANDLE_IN[0]) / (HANDLE_IN[1] - HANDLE_IN[0]))
-    t_cta = smooth((f - CTA_IN[0]) / (CTA_IN[1] - CTA_IN[0]))
-    t_free = smooth((f - 10) / 6) * (1 - smooth((f - FREE_OUT[0]) / (FREE_OUT[1] - FREE_OUT[0])))
 
-    if scene in ("flash1", "flash2"):
-        frame = base_frame(1.05, 0.55, 0.52)
+    # Постоянный стабильный letterbox и золотые титры:
+    t_bars = 1.0
+    t_title = 1.0
+    t_sub = 1.0
+    t_handle = 1.0
+
+    t_free, t_pushkin, t_cta = get_top_bar_alphas(f)
+
+    if scene == "flash1":
+        t = (local + 1) / 5.0
+        f_from = base_frame(1.045, 0.56, 0.52, src=SOURCES["type"])
+        f_to = base_frame(1.047, 0.54, 0.52, src=SOURCES["laugh"])
+        frame = Image.blend(f_from, f_to, t)
+        frame = flash_overlay(frame, local)
         frame = vignette(frame)
         frame = grain(frame, f)
-        frame = flash_overlay(frame, local)   # бары и титры остаются чёрными
-        frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta, t_free)
+        frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta, t_free, t_pushkin, f=f)
+        frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
+        continue
+
+    if scene == "flash2":
+        t = (local + 1) / 5.0
+        f_from = base_frame(1.047, 0.54, 0.52, src=SOURCES["laugh"])
+        f_to = base_frame(1.05, 0.56, 0.48, src=SOURCES["win"])
+        frame = Image.blend(f_from, f_to, t)
+        frame = flash_overlay(frame, local)
+        frame = vignette(frame)
+        frame = grain(frame, f)
+        frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta, t_free, t_pushkin, f=f)
+        frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
+        continue
+
+    if scene == "flash3":
+        # 6 кадров тёплой янтарной вспышки без двоения: переключение на сцену 1 на пике света
+        is_type = local >= 3
+        flash_alphas = (60, 160, 240, 240, 140, 45)
+        src_img = SOURCES["type"] if is_type else SOURCES["win"]
+        zoom = 1.0 if is_type else 1.10
+        cx = 0.54 if is_type else 0.56
+        cy = 0.52 if is_type else 0.48
+        frame = base_frame(zoom, cx, cy, src=src_img)
+        alpha = flash_alphas[min(local, len(flash_alphas) - 1)]
+        frame = Image.blend(frame, Image.new("RGB", (W, H), (255, 238, 210)), alpha / 255.0)
+        frame = vignette(frame)
+        frame = grain(frame, f)
+        frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta, t_free, t_pushkin, f=f)
         frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
         continue
 
     if scene == "type":
-        zoom = 1.0 + 0.045 * (local / 40)
-        cx = 0.54 + 0.02 * (local / 40)
-        shake = (1, -1) if local % 3 == 0 else ((-1, 1) if local % 3 == 1 else (0, 0))
+        zoom = 1.0 + 0.045 * (local / 65)
+        cx, cy = 0.54 + 0.02 * (local / 65), 0.52
+        shake = (1, -1) if local % 5 == 0 else ((-1, 1) if local % 5 == 2 else (0, 0))
     elif scene == "laugh":
-        zoom = 1.047 + 0.008 * np.sin(local * 0.5)       # «дыхание» камеры
-        cx = 0.54
-        shake = (0, -1) if local % 6 == 0 else (0, 0)    # плечи трясутся от смеха
-    else:  # win: панч-наезд и лёгкая вибрация триумфа
-        ease = min(1.0, local / 8)
+        zoom = 1.047 + 0.008 * np.sin(local * 0.35)
+        cx, cy = 0.54, 0.52
+        shake = (0, -1) if local % 8 == 0 else (0, 0)
+    else:  # win
+        ease = min(1.0, local / 14)
         zoom = 1.05 + 0.05 * (1 - (1 - ease) ** 3)
-        cx = 0.56
-        shake = (1, 0) if local % 4 == 0 else (0, 0)
+        # Органичное живое покачивание билета в руках под светом лампы
+        wobble = 0.0025 * np.sin(local * 0.22) if local > 14 else 0.0
+        cx, cy = 0.56, 0.48 + wobble
+        shake = (1 if local % 14 < 3 else (0 if local % 14 < 10 else -1), 0)
 
-    frame = base_frame(zoom, cx, 0.52, shake, src=SOURCES[scene])
-    pulse = 0.34 + 0.10 * np.sin(f * 0.45) + (0.06 if f % 12 < 2 else 0)
+    frame = base_frame(zoom, cx, cy, shake, src=SOURCES[scene])
+    pulse = 0.34 + 0.10 * np.sin(f * 0.30) + (0.06 if f % 18 < 3 else 0)
     frame = screen(frame, glow_layer(pulse))
     frame = dust.draw(frame, f)
     if scene == "win":
         frame = sparks.draw(frame, local)
     frame = vignette(frame)
     frame = grain(frame, f)
-    frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta, t_free)
+    frame = compose(frame, t_title, t_sub, t_handle, t_bars, t_cta, t_free, t_pushkin, f=f)
     frame.save(tmp / f"frame_{f:03d}.jpg", quality=92)
 
-print("frames:", FRAMES, "size:", W, "x", H)
+print(f"Rendered {FRAMES} frames ({W}x{H}) at {FPS} FPS.")
+
+# --- Генерация атмосферного звукового оформления ----------------------------
+import wave
+
+sr = 44100
+duration = FRAMES / FPS
+total_samples = int(sr * duration)
+audio = np.zeros(total_samples, dtype=float)
+
+# 1. Стук клавиш пишущей машинки (сцена 1: 0.3..2.6 сек)
+np.random.seed(42)
+click_times = [0.35, 0.52, 0.68, 0.85, 0.98, 1.15, 1.32, 1.50, 1.66, 1.84, 2.02, 2.18, 2.35, 2.50]
+for t in click_times:
+    idx = int(t * sr)
+    n_len = int(0.02 * sr)
+    noise = np.random.normal(0, 0.35, n_len) * np.exp(-np.linspace(0, 14, n_len))
+    t_arr = np.linspace(0, 0.04, int(0.04 * sr))
+    ring = 0.16 * np.sin(2 * np.pi * 1250 * t_arr) * np.exp(-t_arr * 80)
+    ring += 0.10 * np.sin(2 * np.pi * 820 * t_arr) * np.exp(-t_arr * 60)
+    audio[idx:idx + n_len] += noise
+    audio[idx:idx + len(ring)] += ring
+
+# 2. Колокольчик возврата каретки («дзинь!») на переходе (t = 2.7 сек)
+bell_idx = int(2.70 * sr)
+t_bell = np.linspace(0, 1.4, int(1.4 * sr))
+bell = (0.35 * np.sin(2 * np.pi * 2489 * t_bell) * np.exp(-t_bell * 4.5) +
+        0.18 * np.sin(2 * np.pi * 4978 * t_bell) * np.exp(-t_bell * 8.0) +
+        0.10 * np.sin(2 * np.pi * 1244 * t_bell) * np.exp(-t_bell * 3.0))
+audio[bell_idx:bell_idx + len(bell)] += bell
+
+# Скольжение каретки (t = 2.75..3.05 сек)
+t_slide = np.linspace(0, 0.3, int(0.3 * sr))
+slide = np.random.normal(0, 0.08, len(t_slide)) * np.sin(np.pi * t_slide / 0.3)
+audio[bell_idx + int(0.05 * sr):bell_idx + int(0.05 * sr) + len(slide)] += slide
+
+# 3. Тёплый торжественный аккорд победы (сцена 3: t = 4.6 сек)
+chord_idx = int(4.65 * sr)
+t_chord = np.linspace(0, 2.8, int(2.8 * sr))
+notes = [174.61, 220.0, 261.63, 329.63, 440.0, 523.25]
+weights = [0.25, 0.22, 0.20, 0.18, 0.14, 0.10]
+chord = np.zeros_like(t_chord)
+for freq, w in zip(notes, weights):
+    note = (np.sin(2 * np.pi * freq * t_chord) +
+            0.4 * np.sin(2 * np.pi * freq * 2 * t_chord) +
+            0.15 * np.sin(2 * np.pi * freq * 3 * t_chord))
+    env = np.minimum(t_chord / 0.06, 1.0) * np.exp(-t_chord * 0.9)
+    chord += w * note * env
+
+# Волшебный перезвон золотых искр над билетом
+sparkle = np.zeros_like(t_chord)
+for f_sp, t_offset in [(1568, 0.0), (1760, 0.12), (2093, 0.24), (2637, 0.36)]:
+    sp_idx = int(t_offset * sr)
+    if sp_idx < len(t_chord):
+        sp_t = t_chord[sp_idx:]
+        sparkle[sp_idx:] += 0.09 * np.sin(2 * np.pi * f_sp * sp_t) * np.exp(-(sp_t - t_offset) * 4.0)
+
+audio[chord_idx:chord_idx + len(chord)] += chord * 0.52
+audio[chord_idx:chord_idx + len(sparkle)] += sparkle * 0.40
+
+# Нормализация громкости
+audio = audio / (np.max(np.abs(audio)) + 1e-6) * 0.88
+
+sfx_wav = HERE / "work" / "sfx.wav"
+with wave.open(str(sfx_wav), "w") as wf:
+    wf.setnchannels(1)
+    wf.setsampwidth(2)
+    wf.setframerate(sr)
+    raw = (audio * 32767).astype(np.int16)
+    wf.writeframes(raw.tobytes())
+
+# --- Кодирование видео через ffmpeg ------------------------------------------
+import shutil
+import subprocess
+
+ffmpeg_bin = "/opt/homebrew/bin/ffmpeg"
+mp4_out = BRAND / "welcome.mp4"
+mp4_sound_out = BRAND / "welcome_with_sound.mp4"
+gif_out = BRAND / "welcome.gif"
+
+print("Encoding MP4 video (clean muted for Telegram sendAnimation)...")
+cmd_mp4 = [
+    ffmpeg_bin, "-y",
+    "-framerate", str(FPS),
+    "-i", str(tmp / "frame_%03d.jpg"),
+    "-c:v", "libx264",
+    "-crf", "18",
+    "-preset", "slow",
+    "-pix_fmt", "yuv420p",
+    "-movflags", "+faststart",
+    str(mp4_out)
+]
+subprocess.run(cmd_mp4, check=True)
+print(f"Generated: {mp4_out} ({mp4_out.stat().st_size} bytes)")
+
+print("Encoding MP4 video WITH SOUND (for channels, presentations, and stories)...")
+cmd_mp4_sound = [
+    ffmpeg_bin, "-y",
+    "-i", str(mp4_out),
+    "-i", str(sfx_wav),
+    "-c:v", "copy",
+    "-c:a", "aac",
+    "-b:a", "192k",
+    "-shortest",
+    str(mp4_sound_out)
+]
+subprocess.run(cmd_mp4_sound, check=True)
+print(f"Generated: {mp4_sound_out} ({mp4_sound_out.stat().st_size} bytes)")
+
+print("Generating optimized Master GIF (960x540, diff_mode=rectangle)...")
+cmd_gif = [
+    ffmpeg_bin, "-y",
+    "-i", str(mp4_out),
+    "-vf", "fps=16,split[s0][s1];[s0]palettegen=max_colors=192:stats_mode=diff[p];[s1][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle",
+    str(gif_out)
+]
+subprocess.run(cmd_gif, check=True)
+print(f"Generated: {gif_out} ({gif_out.stat().st_size} bytes)")
+
+# Compact GIF for mobile auto-play (< 8-10 MB, exact 12 fps divisor)
+print("Generating ultra-light Mobile GIF (640x360, 12 fps, auto-play ready)...")
+gif_compact_out = BRAND / "welcome_compact.gif"
+cmd_gif_compact = [
+    ffmpeg_bin, "-y",
+    "-i", str(mp4_out),
+    "-vf", "scale=640:-1:flags=lanczos,fps=12,split[s0][s1];[s0]palettegen=max_colors=160:stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle",
+    str(gif_compact_out)
+]
+subprocess.run(cmd_gif_compact, check=True)
+print(f"Generated: {gif_compact_out} ({gif_compact_out.stat().st_size} bytes)")
+
+# Copy to Downloads for user convenience
+downloads_dir = Path.home() / "Downloads"
+if downloads_dir.exists():
+    shutil.copy2(mp4_out, downloads_dir / "welcome_improved.mp4")
+    shutil.copy2(mp4_out, downloads_dir / "welcome.mp4")
+    shutil.copy2(mp4_sound_out, downloads_dir / "welcome_with_sound.mp4")
+    shutil.copy2(gif_out, downloads_dir / "welcome_improved.gif")
+    shutil.copy2(gif_compact_out, downloads_dir / "welcome_compact.gif")
+    shutil.copy2(BRAND / "welcome.jpg", downloads_dir / "welcome.jpg")
+    shutil.copy2(BRAND / "ded.jpg", downloads_dir / "ded.jpg")
+    shutil.copy2(BRAND / "thumb.jpg", downloads_dir / "thumb.jpg")
+    print("All files successfully copied to ~/Downloads!")
