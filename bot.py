@@ -1441,6 +1441,24 @@ def set_my_commands():
         log.warning("setMyCommands failed", exc_info=True)
 
 
+def set_my_profile_info():
+    price_stars = CONFIG.get("price_stars", 750)
+    free_daily = SubscriptionStore.DAILY_LIMIT
+    description = (
+        "Дед сел за пишущую машинку и перепечатывает билеты заново — аккуратно, быстро и без лишних строк.\n\n"
+        "Убирает чужие ФИО, служебные строки и чары Черномора, сохраняя QR-коды, штрихкоды, даты, места и цену.\n\n"
+        f"🎁 {free_daily} билета каждый день — бесплатно!\n"
+        f"📦 Пачки и полный безлимит — с абонементом ({price_stars} ₽ / 30 дней вместо 1500 ₽)."
+    )
+    short_description = "Перепечатка билетов начисто: удаление чужих ФИО и чар Черномора. 2 билета в день бесплатно!"
+    for lang in ("", "ru"):
+        try:
+            tg("setMyDescription", description=description, language_code=lang)
+            tg("setMyShortDescription", short_description=short_description, language_code=lang)
+        except Exception:
+            log.warning("setMyDescription failed for lang %r", lang, exc_info=True)
+
+
 def payment_message(chat, user_id, payment):
     if get_store().apply_payment(user_id, payment):
         send_text(chat, "Оплата подтверждена. Доступ открыт до " + date_label(get_store().status(user_id)["expires"]) + ".")
@@ -4928,6 +4946,7 @@ def loop():
     for _ in range(workers):
         threading.Thread(target=worker_loop, daemon=True).start()
     set_my_commands()
+    set_my_profile_info()
     offset = 0
     log.info("subscription bot started (workers=%d)", workers)
     while True:
