@@ -175,7 +175,7 @@ class NewTemplatesAndFioTests(unittest.TestCase):
             sent_messages.append((chat_id, text))
             return True
 
-        with patch.object(bot, "send_text", side_effect=fake_send), \
+        with patch.object(bot, "send_admin_alert", side_effect=fake_send), \
              patch.dict(bot.CONFIG, {"admin_ids": [999111]}):
             bot._last_admin_alert.clear()
             bot.notify_admins_ticket_error(12345, "baduser", "Файл поврежден", "bad.pdf")

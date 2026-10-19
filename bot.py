@@ -1531,6 +1531,10 @@ def cmd_promo(chat, user_id, arg):
     return send_text(chat, f"🎟 Промокод принят: +{days} дн. Доступ до " + date_label(expires) + ".")
 
 
+def send_admin_alert(admin_id, alert_text):
+    return tg("sendMessage", chat_id=admin_id, text=alert_text[:4000])
+
+
 def notify_admins_ticket_error(uid, username, err_msg, file_name=None):
     try:
         now = time.time()
@@ -1551,7 +1555,7 @@ def notify_admins_ticket_error(uid, username, err_msg, file_name=None):
         )
         for admin_id in CONFIG.get("admin_ids", []):
             try:
-                send_text(admin_id, alert_text)
+                send_admin_alert(admin_id, alert_text)
             except Exception:
                 pass
     except Exception as e:
