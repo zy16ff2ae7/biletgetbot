@@ -48,6 +48,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # Редактор Билетная: по умолчанию ~/Билетная, но на VDS его кладут куда
 # удобнее — путь можно перекрыть переменной окружения.
 BILETNAYA = os.environ.get("BILETNAYA") or os.path.expanduser("~/Билетная")
+BOT_START_TIME = time.monotonic()
+_last_admin_alert = {}
 
 # --- токен ---------------------------------------------------------------
 def _load_token():
@@ -1529,20 +1531,101 @@ def cmd_promo(chat, user_id, arg):
     return send_text(chat, f"🎟 Промокод принят: +{days} дн. Доступ до " + date_label(expires) + ".")
 
 
+def notify_admins_ticket_error(uid, username, err_msg, file_name=None):
+    try:
+        now = time.time()
+        key = (uid, str(err_msg)[:50])
+        if key in _last_admin_alert and now - _last_admin_alert[key] < 60:
+            return
+        _last_admin_alert[key] = now
+        if len(_last_admin_alert) > 200:
+            for k in list(_last_admin_alert.keys())[:100]:
+                _last_admin_alert.pop(k, None)
+
+        user_str = f"@{username} (ID {uid})" if username else f"ID {uid}"
+        fn_str = f"\n📄 Файл: `{file_name}`" if file_name else ""
+        alert_text = (
+            f"⚠️ **Ошибка при обработке билета:**\n"
+            f"👤 Пользователь: {user_str}{fn_str}\n"
+            f"❌ Причина: {err_msg}"
+        )
+        for admin_id in CONFIG.get("admin_ids", []):
+            try:
+                send_text(admin_id, alert_text)
+            except Exception:
+                pass
+    except Exception as e:
+        log.warning("notify_admins_ticket_error failed: %s", e)
+
+
 def admin_stats_text():
     try:
         s = get_store().admin_stats()
-    except Exception:
+    except Exception as e:
+        log.exception("admin_stats error: %s", e)
         return "Статистика временно недоступна."
-    return (
-        f"📊 СТАТИСТИКА · {BRAND_NAME}\n\n"
-        f"Пользователей: {s['users_total']} (+{s['users_week']} за 7 дней)\n"
-        f"Доступ активен: {s['active_now']}\n"
-        f"Оплачено: {s['paid_stars']} руб. · возвратов: {s['refunded_stars']} руб.\n"
-        f"Билетов перепечатано: {s['processed_total']}\n"
-        f"Промокодов: {s['promos_active']} активных из {s['promos_total']}\n"
-        f"Инцидентов оплат: {s['incidents']}"
-    )
+
+    uptime_str = "—"
+    try:
+        up_secs = int(time.monotonic() - BOT_START_TIME)
+        hrs, rem = divmod(up_secs, 3600)
+        mins, secs = divmod(rem, 60)
+        uptime_str = f"{hrs}ч {mins}м"
+    except Exception:
+        pass
+
+    ram_str = "—"
+    try:
+        import resource
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        ram_mb = (rss / (1024 * 1024)) if sys.platform == "darwin" else (rss / 1024)
+        ram_str = f"{ram_mb:.1f} МБ"
+    except Exception:
+        pass
+
+    disk_str = "—"
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage("/")
+        disk_str = f"{free / (1024**3):.1f} ГБ свободно из {total / (1024**3):.1f} ГБ"
+    except Exception:
+        pass
+
+    lines = [
+        f"📊 **СТАТИСТИКА БОТА** · {BRAND_NAME}\n",
+        "👥 **Пользователи:**",
+        f"• Всего в базе: {s['users_total']} чел.",
+        f"• Новых сегодня: +{s.get('users_today', 0)} чел.",
+        f"• Новых за 7 дней: +{s['users_week']} чел.",
+        "",
+        "🎟 **Перепечатано билетов:**",
+        f"• Всего: {s['processed_total']} шт.",
+        f"• Сегодня: {s.get('processed_today', 0)} шт.",
+        f"• За 7 дней: {s.get('processed_week', 0)} шт.",
+        "",
+        "👑 **Подписки и финансы:**",
+        f"• Активных абонементов: {s['active_now']}",
+        f"• Оплачено всего: {s['paid_stars']} ₽ (за 30 дн: {s.get('paid_stars_month', 0)} ₽)",
+        f"• Промокодов: {s['promos_active']} активных (из {s['promos_total']})",
+    ]
+    if s.get("incidents"):
+        lines.append(f"• ⚠️ Инцидентов оплат: {s['incidents']}")
+
+    top_shows = s.get("top_shows") or []
+    if top_shows:
+        lines.extend(["", "🎭 **Топ спектаклей:**"])
+        for i, (show_name, cnt) in enumerate(top_shows, 1):
+            lines.append(f"{i}. {show_name} — {cnt} шт.")
+
+    lines.extend([
+        "",
+        "💻 **Сервер VDS:**",
+        f"• Аптайм процесса: {uptime_str}",
+        f"• Память процесса (RSS): {ram_str}",
+        f"• Диск: {disk_str}",
+    ])
+
+    return "\n".join(lines)
 
 
 def admin_panel_markup():
@@ -1937,7 +2020,7 @@ def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None):
         [pushkin_btn],
     ]
     if pages > 1:
-        rows.append([{"text": f"✂️ Разбить на билеты ({pages} шт.)", "callback_data": f"split:{token}"}])
+        rows.append([{"text": f"✂️ Нарезать на отдельные билеты ({pages} шт.)", "callback_data": f"split:{token}"}])
         if batch_token:
             rows.append([{"text": "⚙️ Настроить билеты пачки", "callback_data": f"bcfg:{batch_token}"}])
             rows.append([
@@ -2532,7 +2615,12 @@ def _unpack_batch_to_chat(chat, uid, batch_token):
         clean_bytes = clean_p.read_bytes()
         meta = it.get("meta") or {}
         out_name = it.get("output_name") or f"ticket_{idx}.pdf"
-        caption = ticket_meta.format_single_ticket_caption(meta, {"changed": True, "hide_price": it.get("hide_price", False)})
+        caption = ticket_meta.format_single_ticket_caption(meta, {
+            "changed": True,
+            "hide_price": it.get("hide_price", False),
+            "spectator_fio": it.get("fio"),
+            "custom_price": it.get("custom_price"),
+        })
 
         token = secrets.token_hex(8)
         _save_doc_token(
@@ -2864,6 +2952,7 @@ def process_document(msg, collection_id=None, job_id=None):
 
         ok, result, info = clean_ticket_with_report(data, on_progress=phase, spectator_fio=user_fio, hide_price=hide_price, custom_price=custom_price)
         if not ok:
+            notify_admins_ticket_error(uid, (msg.get("from") or {}).get("username"), result, name)
             return _progress_error(progress, chat, result)
         meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
         out_name = ticket_meta.make_clean_ticket_filename(meta, fallback=batches.safe_name(name), hide_price=hide_price)
@@ -2886,24 +2975,26 @@ def process_document(msg, collection_id=None, job_id=None):
                     spool_dir = STATE_DIR / "batch_spool" / f"batch_{b_token}"
                     spool_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
                     session_items = []
+                    fio_list = split_fio_list(user_fio) if user_fio else []
                     for idx, (p_name, p_orig_bytes, p_meta) in enumerate(orig_entries):
                         p_clean_bytes = clean_entries[idx][1] if idx < len(clean_entries) else p_orig_bytes
                         p_clean_meta = clean_entries[idx][2] if idx < len(clean_entries) else p_meta
+                        page_fio = fio_list[idx] if idx < len(fio_list) else (fio_list[-1] if fio_list else None)
                         orig_path = spool_dir / f"orig_{idx}.pdf"
                         clean_path = spool_dir / f"clean_{idx}.pdf"
                         orig_path.write_bytes(p_orig_bytes)
                         clean_path.write_bytes(p_clean_bytes)
                         item_doc_token = secrets.token_hex(8)
-                        _save_doc_token(item_doc_token, str(orig_path), custom_price=custom_price, hide_price=hide_price, fio=user_fio, uid=uid)
+                        _save_doc_token(item_doc_token, str(orig_path), custom_price=custom_price, hide_price=hide_price, fio=page_fio, uid=uid)
                         session_items.append({
                             "idx": idx,
                             "orig_name": p_name,
-                            "output_name": ticket_meta.make_clean_ticket_filename(p_clean_meta, fallback=p_name, hide_price=hide_price),
+                            "output_name": ticket_meta.make_clean_ticket_filename(p_clean_meta, fallback=p_name, hide_price=hide_price, fio=page_fio),
                             "orig_path": str(orig_path),
                             "clean_path": str(clean_path),
                             "doc_token": item_doc_token,
                             "meta": p_clean_meta,
-                            "fio": user_fio,
+                            "fio": page_fio,
                             "seat_info": None,
                             "custom_price": custom_price,
                             "hide_price": hide_price,
@@ -3245,30 +3336,39 @@ def handle_callback_query(cb):
         data_bytes = download_file(target_file_id)
         if not data_bytes:
             return send_text(chat, "Не удалось скачать файл билета.")
+        doc_info = get_store().get_doc_token_info(token) or {}
         settings = _user_settings(uid)
-        cur_fio = settings.get("fio")
-        hide_price = bool(settings.get("hide_price", 0))
-        custom_price = settings.get("custom_price")
+        cur_fio = doc_info.get("fio") if doc_info.get("fio") is not None else settings.get("fio")
+        hide_price = doc_info.get("hide_price") if doc_info.get("hide_price") is not None else bool(settings.get("hide_price", 0))
+        custom_price = doc_info.get("custom_price") if doc_info.get("custom_price") is not None else settings.get("custom_price")
+        seat_info = doc_info.get("seat_info")
+        del_texts = doc_info.get("del_texts")
 
         orig_entries = split_pdf_tickets(data_bytes, srv=srv, hide_price=hide_price)
         if len(orig_entries) <= 1:
             return send_text(chat, "В этом файле только одна страница (один билет).")
 
-        send_text(chat, f"✂️ Разбиваю многостраничный PDF на отдельные билеты ({len(orig_entries)} шт.)...")
+        send_text(chat, f"✂️ Нарезаю многостраничный PDF на {len(orig_entries)} отдельных билета...")
         b_token = secrets.token_hex(8)
         spool_dir = STATE_DIR / "batch_spool" / f"batch_{b_token}"
         spool_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         session_items = []
+        fio_list = split_fio_list(cur_fio) if cur_fio else []
+
         for idx, (p_name, p_orig_bytes, p_meta) in enumerate(orig_entries):
             orig_path = spool_dir / f"orig_{idx}.pdf"
             clean_path = spool_dir / f"clean_{idx}.pdf"
             orig_path.write_bytes(p_orig_bytes)
 
+            page_fio = fio_list[idx] if idx < len(fio_list) else (fio_list[-1] if fio_list else None)
+
             ok, p_clean_bytes, p_info = clean_ticket_with_report(
                 p_orig_bytes,
-                spectator_fio=cur_fio,
+                spectator_fio=page_fio,
                 hide_price=hide_price,
                 custom_price=custom_price,
+                seat_info=seat_info,
+                del_texts=del_texts,
             )
             if not ok:
                 p_clean_bytes = p_orig_bytes
@@ -3276,20 +3376,21 @@ def handle_callback_query(cb):
 
             p_clean_meta = ticket_meta.extract_ticket_metadata(p_clean_bytes, srv=srv)
             item_doc_token = secrets.token_hex(8)
-            _save_doc_token(item_doc_token, str(orig_path), custom_price=custom_price, hide_price=hide_price, fio=cur_fio, uid=uid)
+            _save_doc_token(item_doc_token, str(orig_path), custom_price=custom_price, hide_price=hide_price, fio=page_fio, seat_info=seat_info, del_texts=del_texts, uid=uid)
+            output_name = ticket_meta.make_clean_ticket_filename(p_clean_meta, fallback=p_name, hide_price=hide_price, fio=page_fio)
             session_items.append({
                 "idx": idx,
                 "orig_name": p_name,
-                "output_name": ticket_meta.make_clean_ticket_filename(p_clean_meta, fallback=p_name, hide_price=hide_price),
+                "output_name": output_name,
                 "orig_path": str(orig_path),
                 "clean_path": str(clean_path),
                 "doc_token": item_doc_token,
                 "meta": p_clean_meta,
-                "fio": cur_fio,
-                "seat_info": None,
+                "fio": page_fio,
+                "seat_info": seat_info,
                 "custom_price": custom_price,
                 "hide_price": hide_price,
-                "del_texts": None,
+                "del_texts": del_texts,
             })
         get_store().save_batch_session(b_token, uid, chat, session_items)
 
@@ -4519,6 +4620,10 @@ def handle(msg, update_id=None, queued=False):
         if not is_admin(uid, username):
             return send_text(chat, "Эта команда доступна администратору.")
         return send_admin_panel(chat)
+    if command in {"/stats", "/stat"}:
+        if not is_admin(uid, username):
+            return send_text(chat, "Эта команда доступна администратору.")
+        return send_text(chat, admin_stats_text(), reply_markup=admin_panel_markup())
     if command == "/promogen":
         if not is_admin(uid, username):
             return send_text(chat, "Эта команда доступна администратору.")

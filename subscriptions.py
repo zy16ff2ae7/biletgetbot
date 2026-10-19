@@ -737,20 +737,38 @@ class SubscriptionStore:
 
     def admin_stats(self):
         now = int(time.time())
+        day_start = now - (now % 86400)
+        today_str = time.strftime("%Y-%m-%d")
         with self.db() as db:
             def one(sql, args=()):
-                return db.execute(sql, args).fetchone()[0] or 0
+                res = db.execute(sql, args).fetchone()
+                return (res[0] or 0) if res else 0
+
+            top_shows_rows = db.execute(
+                "SELECT title, COUNT(*) as cnt FROM ticket_history "
+                "WHERE title IS NOT NULL AND trim(title) != '' "
+                "AND title NOT LIKE '%руб%' AND title NOT LIKE '%₽%' "
+                "GROUP BY title ORDER BY cnt DESC LIMIT 5"
+            ).fetchall()
+            top_shows = [(r[0], r[1]) for r in top_shows_rows]
+
             return {
                 "users_total": one("SELECT COUNT(*) FROM users"),
+                "users_today": one("SELECT COUNT(*) FROM users WHERE first_seen>=?", (day_start,)),
                 "users_week": one("SELECT COUNT(*) FROM users WHERE first_seen>?", (now - 7 * 86400,)),
+                "users_month": one("SELECT COUNT(*) FROM users WHERE first_seen>?", (now - 30 * 86400,)),
                 "active_now": one("SELECT COUNT(*) FROM payments WHERE expires>? AND refunded=0", (now,))
                               + one("SELECT COUNT(*) FROM grants WHERE expires>?", (now,)),
                 "paid_stars": one("SELECT SUM(amount) FROM payments WHERE refunded=0"),
+                "paid_stars_month": one("SELECT SUM(amount) FROM payments WHERE refunded=0 AND created>?", (now - 30 * 86400,)),
                 "refunded_stars": one("SELECT SUM(amount) FROM payments WHERE refunded=1"),
                 "processed_total": one("SELECT SUM(processed) FROM users"),
+                "processed_today": one("SELECT SUM(used) FROM daily_usage WHERE day=?", (today_str,)),
+                "processed_week": one("SELECT SUM(used) FROM daily_usage WHERE day>=date('now', '-7 days', 'localtime')"),
                 "incidents": one("SELECT COUNT(*) FROM payment_incidents"),
                 "promos_active": one("SELECT COUNT(*) FROM promo_codes WHERE used<uses_max AND valid_until>?", (now,)),
                 "promos_total": one("SELECT COUNT(*) FROM promo_codes"),
+                "top_shows": top_shows,
             }
 
     def register_referral(self, referrer_id, new_user_id):

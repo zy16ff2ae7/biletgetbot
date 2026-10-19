@@ -479,10 +479,10 @@ def format_seats_string(seats: Sequence[str]) -> str:
     return ", ".join(clean_seats)
 
 
-def make_clean_ticket_filename(meta: dict[str, Any] | None, fallback: str, hide_price: bool = False) -> str:
-    """Build a detailed, informative, safe PDF filename WITHOUT buyer FIO.
+def make_clean_ticket_filename(meta: dict[str, Any] | None, fallback: str, hide_price: bool = False, fio: str | None = None) -> str:
+    """Build a detailed, informative, safe PDF filename.
 
-    Format: <Спектакль> (<Театр>, <Дата>) — <Сектор> р<Ряд> м<Места> — <Номинал>.pdf
+    Format: <Спектакль> (<Театр>, <Дата>) — <Сектор> р<Ряд> м<Места> — <Номинал> — (<ФИО>).pdf
     Example: Чайка (МХТ Чехова, 04.11) — Балкон середина р4 м12–14 — 3000р.pdf
     """
     if not meta:
@@ -527,6 +527,10 @@ def make_clean_ticket_filename(meta: dict[str, Any] | None, fallback: str, hide_
         chunks.append(loc_str)
     if price_token:
         chunks.append(price_token)
+    if fio:
+        fio_clean = re.sub(r'[/\\:*?"<>|]', "", str(fio)).strip()
+        if fio_clean:
+            chunks.append(f"({fio_clean})")
 
     if not chunks:
         base = os.path.splitext(fallback)[0]
