@@ -341,6 +341,8 @@ class SubscriptionStore:
             db.execute("ALTER TABLE user_settings ADD COLUMN custom_price INTEGER DEFAULT NULL")
         if "last_doc_token" not in cols:
             db.execute("ALTER TABLE user_settings ADD COLUMN last_doc_token TEXT DEFAULT NULL")
+        db.execute("CREATE TABLE IF NOT EXISTS user_recent_fios (user_id INTEGER NOT NULL, fio TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (user_id, fio))")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_user_recent_fios_updated ON user_recent_fios(user_id, updated DESC)")
         db.execute("CREATE TABLE IF NOT EXISTS doc_tokens (token TEXT PRIMARY KEY, file_id TEXT, created INTEGER)")
         doc_cols = {row["name"] for row in db.execute("PRAGMA table_info(doc_tokens)")}
         if "custom_price" not in doc_cols:
@@ -520,6 +522,39 @@ class SubscriptionStore:
         with self.db() as db:
             db.execute("INSERT INTO user_settings(user_id, fio) VALUES(?, ?) "
                        "ON CONFLICT(user_id) DO UPDATE SET fio=excluded.fio", (user_id, fio))
+        if fio and fio.strip():
+            self.record_recent_fio(user_id, fio)
+
+    def record_recent_fio(self, user_id, fio):
+        if not user_id or not fio or not fio.strip():
+            return
+        clean = fio.strip()
+        with self.db() as db:
+            db.execute(
+                "INSERT INTO user_recent_fios(user_id, fio, updated) VALUES(?, ?, ?) "
+                "ON CONFLICT(user_id, fio) DO UPDATE SET updated=excluded.updated",
+                (user_id, clean, int(time.time()))
+            )
+            db.execute(
+                "DELETE FROM user_recent_fios WHERE user_id=? AND fio NOT IN ("
+                "SELECT fio FROM user_recent_fios WHERE user_id=? ORDER BY updated DESC LIMIT 10)",
+                (user_id, user_id)
+            )
+
+    def get_user_recent_fios(self, user_id, limit=3):
+        if not user_id:
+            return []
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT fio FROM user_recent_fios WHERE user_id=? ORDER BY updated DESC LIMIT ?",
+                (user_id, limit)
+            ).fetchall()
+            res = [r["fio"] for r in rows if r["fio"]]
+            if not res:
+                u_row = db.execute("SELECT fio FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
+                if u_row and u_row["fio"]:
+                    res.append(u_row["fio"])
+            return res[:limit]
 
     def get_user_custom_price(self, user_id):
         with self.db() as db:

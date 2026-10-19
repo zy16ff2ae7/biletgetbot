@@ -189,6 +189,29 @@ class NewTemplatesAndFioTests(unittest.TestCase):
             bot.notify_admins_ticket_error(12345, "baduser", "Файл поврежден", "bad.pdf")
             self.assertEqual(len(sent_messages), 1)
 
+    def test_quick_price_and_fio_pickers(self):
+        import tempfile
+        from subscriptions import SubscriptionStore
+        with tempfile.TemporaryDirectory() as td:
+            store = SubscriptionStore(Path(td) / "test_sub.sqlite3")
+            store.record_recent_fio(101, "Иванов И.И.")
+            store.record_recent_fio(101, "Петров П.П.")
+            recent = store.get_user_recent_fios(101)
+            self.assertEqual(recent, ["Петров П.П.", "Иванов И.И."])
+
+            with patch.object(bot, "get_store", return_value=store):
+                p_kb = bot._price_picker_markup("testtok", cur_price=2000)
+                flat_p = [btn["text"] for row in p_kb["inline_keyboard"] for btn in row]
+                self.assertIn("2 500 ₽", flat_p)
+                self.assertIn("🎁 Скрыть цену", flat_p)
+                self.assertIn("🔄 Исходная цена", flat_p)
+
+                f_kb = bot._fio_picker_markup("testtok", 101, cur_fio="Петров П.П.")
+                flat_f = [btn["text"] for row in f_kb["inline_keyboard"] for btn in row]
+                self.assertIn("✅ Петров П.П.", flat_f)
+                self.assertIn("👤 Иванов И.И.", flat_f)
+                self.assertIn("❌ Оставить пустым (стереть)", flat_f)
+
 
 if __name__ == "__main__":
     unittest.main()
