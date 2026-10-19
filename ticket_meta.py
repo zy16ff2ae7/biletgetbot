@@ -797,11 +797,11 @@ def make_batch_zip_filename(items_meta: list[dict[str, Any]], good: int) -> str:
     if not items_meta:
         return "tickets_cleaned.zip"
 
-    metas = [item["meta"] for item in items_meta if item.get("meta") and item["meta"].get("title")]
+    metas = [item["meta"] for item in items_meta if item.get("meta")]
     if not metas:
         return "tickets_cleaned.zip"
 
-    titles = {m["title"] for m in metas}
+    titles = {m["title"] for m in metas if m.get("title")}
     dates = {m.get("short_date") for m in metas if m.get("short_date")}
     theaters = {m.get("theater") for m in metas if m.get("theater")}
 
@@ -815,8 +815,8 @@ def make_batch_zip_filename(items_meta: list[dict[str, Any]], good: int) -> str:
             return f"{n} билета"
         return f"{n} билетов"
 
-    if len(titles) == 1:
-        title = list(titles)[0]
+    if len(titles) <= 1:
+        title = list(titles)[0] if titles else "Билеты"
         theater = list(theaters)[0] if len(theaters) == 1 else ""
         date = list(dates)[0] if len(dates) == 1 else ""
         ctx = [c for c in [theater, date] if c]
