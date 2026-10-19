@@ -1221,7 +1221,6 @@ def build_subscription_card(user_id):
         )
         kb.append([
             {"text": f"✍️ Оформить за {CONFIG['price_stars']} руб. (скидка)", "callback_data": "welcome:subscribe"},
-            {"text": "🎁 Пробный день", "callback_data": "welcome:trial"},
         ])
         kb.append([
             {"text": "💎 Оплата через CryptoBot", "callback_data": "cbpay:create"},
@@ -1315,8 +1314,7 @@ def show_status(chat, user_id):
 
 def get_main_markup(user_id=None, username=None):
     rows = [
-        [{"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
-         {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}],
+        [{"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"}],
         [{"text": "⚙️ Настройки (ФИО / цена)", "callback_data": "welcome:settings"},
          {"text": "📂 Шаблоны", "callback_data": "tpl:menu"}],
         [{"text": "🎟 Промокод", "callback_data": "welcome:promo"},
@@ -1467,7 +1465,6 @@ def send_profile(chat, user_id, username=None):
     if not status["active"] and not is_admin(user_id, username):
         markup_rows.append([
             {"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
-            {"text": "🎁 Пробный день", "callback_data": "welcome:trial"},
         ])
     markup_rows.append([
         {"text": "🎟 Мой абонемент", "callback_data": "welcome:status"},
@@ -1504,19 +1501,9 @@ def send_profile(chat, user_id, username=None):
 
 
 def cmd_trial(chat, user_id):
-    if is_admin(user_id):
-        return send_text(chat, "У вас постоянный администраторский доступ.")
-    status = get_store().status(user_id)
-    if status["active"]:
-        return show_status(chat, user_id)
-    try:
-        expires, created = get_store().grant_trial(user_id, days=1)
-    except Exception:
-        return send_text(chat, "Не удалось выдать пробный день. Попробуйте позже.")
-    if created:
-        return send_text(chat, "🎁 Пробный день активирован! Доступ до " + date_label(expires)
-                         + ".\nПришлите PDF — дед начнёт перепечатывать.")
-    return send_text(chat, "Пробный день уже использовался. Оформить абонемент: /subscribe.")
+    return send_text(chat, "Бесплатный пробный день больше недоступен.\n"
+                           "Каждый день вам доступно 2 бесплатных билета.\n"
+                           "Для снятия всех ограничений оформите абонемент: /subscribe.")
 
 
 def cmd_promo(chat, user_id, arg):
@@ -1705,7 +1692,6 @@ def set_my_commands():
         {"command": "profile", "description": "Профиль и статус доступа"},
         {"command": "subscribe", "description": "Оформить абонемент"},
         {"command": "subscription", "description": "Статус доступа"},
-        {"command": "trial", "description": "Бесплатный пробный день"},
         {"command": "promo", "description": "Активировать промокод"},
         {"command": "settings", "description": "Настройки билетов"},
         {"command": "templates", "description": "Шаблоны настроек печати"},
@@ -2810,8 +2796,7 @@ def no_access_message(uid):
             f"🎁 Сегодня осталось {left} из {FREE_DAILY} бесплатных билетов — просто пришли PDF.\n"
             "Без лимита — с абонементом.",
             {"inline_keyboard": [[
-                {"text": "✍️ Без лимита", "callback_data": "welcome:subscribe"},
-                {"text": "🎁 Пробный день", "callback_data": "welcome:trial"}]]})
+                {"text": "✍️ Без лимита", "callback_data": "welcome:subscribe"}]]})
     return send_text(uid,
         f"🎟 Бесплатные {FREE_DAILY} {tickets_word(FREE_DAILY)} на сегодня уже перепечатаны.\n"
         "Лимит обновится завтра утром. А без лимита — прямо сейчас:",
