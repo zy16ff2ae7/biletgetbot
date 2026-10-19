@@ -2273,11 +2273,11 @@ def _build_batch_dashboard(batch_token, page=0):
         kb.append(nav)
 
     kb.append([
-        {"text": "👥 Задать разные ФИО на все билеты", "callback_data": f"bmass:fio:{batch_token}"},
+        {"text": "👥 Список ФИО", "callback_data": f"bmass:fio:{batch_token}"},
+        {"text": "⏩ По очереди (Мастер)", "callback_data": f"bwiz:fio:{batch_token}:0"},
     ])
     kb.append([
-        {"text": "⏩ Заполнить ФИО по очереди (Мастер)", "callback_data": f"bwiz:fio:{batch_token}:0"},
-        {"text": "⚡️ Всё списком", "callback_data": f"bmass:combo:{batch_token}"},
+        {"text": "⚡️ Заполнить всё списком (ФИО + Места + Цены)", "callback_data": f"bmass:combo:{batch_token}"},
     ])
     kb.append([
         {"text": "🪑 Рассадить по порядку", "callback_data": f"bmass:seat:{batch_token}"},
