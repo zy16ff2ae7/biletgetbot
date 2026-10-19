@@ -191,6 +191,7 @@ class NewTemplatesAndFioTests(unittest.TestCase):
 
     def test_quick_price_and_fio_pickers(self):
         import tempfile
+        import time
         from subscriptions import SubscriptionStore
         with tempfile.TemporaryDirectory() as td:
             store = SubscriptionStore(Path(td) / "test_sub.sqlite3")
