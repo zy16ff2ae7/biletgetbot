@@ -214,7 +214,53 @@ class NewTemplatesAndFioTests(unittest.TestCase):
                 self.assertIn("👤 Иванов И.И.", flat_f)
                 self.assertIn("❌ Оставить пустым (стереть)", flat_f)
 
+    def test_quick_seat_picker_markup(self):
+        s_kb = bot._seat_picker_markup("tok123", cur_seat="Ряд 5, Место 12")
+        flat = [btn["text"] for row in s_kb["inline_keyboard"] for btn in row]
+        self.assertIn("⬅️ Место 11", flat)
+        self.assertIn("Место 13 ➡️", flat)
+        self.assertIn("🎭 Партер", flat)
+        self.assertIn("🏛 Бельэтаж", flat)
+        self.assertIn("🔄 Исходное из билета", flat)
+        self.assertIn("❌ Оставить пустым (стереть)", flat)
+
+    def test_batch_fio_wizard_and_multi_fio(self):
+        import tempfile
+        import time
+        from subscriptions import SubscriptionStore
+        with tempfile.TemporaryDirectory() as td:
+            store = SubscriptionStore(Path(td) / "test_sub.sqlite3")
+            store.record_recent_fio(202, "Сидоров С.С.")
+            time.sleep(0.01)
+            store.record_recent_fio(202, "Козлов К.К.")
+
+            items = [
+                {"orig_name": "t1.pdf", "clean_path": "/tmp/c1.pdf", "orig_path": "/tmp/o1.pdf", "meta": {"title": "Чайка", "row": 1, "seats": [5]}, "fio": None},
+                {"orig_name": "t2.pdf", "clean_path": "/tmp/c2.pdf", "orig_path": "/tmp/o2.pdf", "meta": {"title": "Чайка", "row": 1, "seats": [6]}, "fio": None},
+            ]
+            store.save_batch_session("btest1", 202, 1000, items)
+
+            with patch.object(bot, "get_store", return_value=store):
+                text, kb = bot._build_batch_fio_wizard("btest1", 0, 202)
+                self.assertIn("Билет №1 из 2", text)
+                self.assertIn("Чайка", text)
+                flat_btn = [b["text"] for row in kb["inline_keyboard"] for b in row]
+                self.assertIn("👤 Козлов К.К.", flat_btn)
+                self.assertIn("👤 Сидоров С.С.", flat_btn)
+                self.assertIn("🏁 Готово (завершить)", flat_btn)
+
+                # Test split_fio_list with user_id recording
+                lines = bot.split_fio_list("1. Анна Ахматова\n2. Марина Цветаева")
+                self.assertEqual(lines, ["Анна Ахматова", "Марина Цветаева"])
+                with patch.object(bot, "_reprocess_batch_item", return_value=(True, {})):
+                    count = bot._apply_mass_fio_to_batch("btest1", lines, user_id=202)
+                    self.assertEqual(count, 2)
+                    recent_after = store.get_user_recent_fios(202, limit=5)
+                    self.assertIn("Марина Цветаева", recent_after)
+                    self.assertIn("Анна Ахматова", recent_after)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

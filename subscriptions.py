@@ -864,4 +864,10 @@ class SubscriptionStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_ticket_seat_str(self, token):
+        with self.db() as db:
+            row = db.execute("SELECT seat_str FROM ticket_history WHERE token=? ORDER BY created DESC LIMIT 1", (token,)).fetchone()
+            return row["seat_str"] if row else None
+
+
 

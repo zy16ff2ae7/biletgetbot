@@ -2012,12 +2012,10 @@ def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None):
     if pages > 1:
         rows.append([{"text": f"✂️ Нарезать на отдельные билеты ({pages} шт.)", "callback_data": f"split:{token}"}])
         if batch_token:
+            rows.append([{"text": "👥 Задать разные ФИО на все билеты", "callback_data": f"bmass:fio:{batch_token}"}])
             rows.append([{"text": "⚙️ Настроить билеты пачки", "callback_data": f"bcfg:{batch_token}"}])
             rows.append([
                 {"text": "⚡️ Заполнить всё списком", "callback_data": f"bmass:combo:{batch_token}"},
-            ])
-            rows.append([
-                {"text": "👥 Список ФИО", "callback_data": f"bmass:fio:{batch_token}"},
                 {"text": "🪑 Рассадить по порядку", "callback_data": f"bmass:seat:{batch_token}"},
             ])
     return {"inline_keyboard": rows}
@@ -2069,6 +2067,63 @@ def _fio_picker_markup(token, user_id, cur_fio=None):
         {"text": "🔙 Отмена", "callback_data": f"qfio:{token}:back"},
     ])
     return {"inline_keyboard": rows}
+
+
+def _seat_picker_markup(token, cur_seat=None, meta=None):
+    row = None
+    seat_num = None
+    sector = None
+    if cur_seat:
+        p = seat_tools.parse_seat_input(cur_seat)
+        row = p.get("row")
+        seat_num = p.get("seat")
+        sector = p.get("sector")
+    if not row and meta:
+        row = meta.get("row")
+    if not seat_num and meta:
+        seats = meta.get("seats") or []
+        if seats:
+            seat_num = str(seats[0])
+    if not sector and meta:
+        sector = meta.get("sector")
+
+    m_int = re.search(r"\d+", str(seat_num)) if seat_num else None
+    cur_n = int(m_int.group(0)) if m_int else None
+
+    rows = []
+    if cur_n is not None:
+        left_txt = f"⬅️ Место {cur_n - 1}" if cur_n > 1 else "⬅️ -1 место"
+        right_txt = f"Место {cur_n + 1} ➡️"
+        rows.append([
+            {"text": left_txt, "callback_data": f"qseat:{token}:shift:-1"},
+            {"text": right_txt, "callback_data": f"qseat:{token}:shift:+1"},
+        ])
+    else:
+        rows.append([
+            {"text": "⬅️ -1 место", "callback_data": f"qseat:{token}:shift:-1"},
+            {"text": "+1 место ➡️", "callback_data": f"qseat:{token}:shift:+1"},
+        ])
+
+    rows.append([
+        {"text": "🎭 Партер", "callback_data": f"qseat:{token}:sec:Партер"},
+        {"text": "🏛 Бельэтаж", "callback_data": f"qseat:{token}:sec:Бельэтаж"},
+        {"text": "🏰 Балкон", "callback_data": f"qseat:{token}:sec:Балкон"},
+    ])
+    rows.append([
+        {"text": "🎪 Амфитеатр", "callback_data": f"qseat:{token}:sec:Амфитеатр"},
+        {"text": "🚪 Ложа", "callback_data": f"qseat:{token}:sec:Ложа"},
+        {"text": "🎩 Бенуар", "callback_data": f"qseat:{token}:sec:Бенуар"},
+    ])
+    rows.append([
+        {"text": "❌ Оставить пустым (стереть)", "callback_data": f"qseat:{token}:empty"},
+        {"text": "🔄 Исходное из билета", "callback_data": f"qseat:{token}:reset"},
+    ])
+    rows.append([
+        {"text": "✍️ Ввести ряд/место вручную", "callback_data": f"qseat:{token}:manual"},
+        {"text": "🔙 Отмена", "callback_data": f"qseat:{token}:back"},
+    ])
+    return {"inline_keyboard": rows}
+
 
 
 def _batch_callbacks(progress, spectator_fio=None, hide_price=False, custom_price=None):
@@ -2218,18 +2273,19 @@ def _build_batch_dashboard(batch_token, page=0):
         kb.append(nav)
 
     kb.append([
-        {"text": "⚡️ Заполнить всё списком (ФИО + Места + Цены)", "callback_data": f"bmass:combo:{batch_token}"},
+        {"text": "👥 Задать разные ФИО на все билеты", "callback_data": f"bmass:fio:{batch_token}"},
     ])
     kb.append([
-        {"text": "👥 Список ФИО", "callback_data": f"bmass:fio:{batch_token}"},
+        {"text": "⏩ Заполнить ФИО по очереди (Мастер)", "callback_data": f"bwiz:fio:{batch_token}:0"},
+        {"text": "⚡️ Всё списком", "callback_data": f"bmass:combo:{batch_token}"},
+    ])
+    kb.append([
         {"text": "🪑 Рассадить по порядку", "callback_data": f"bmass:seat:{batch_token}"},
-    ])
-    kb.append([
         {"text": "💰 Задать цену всем", "callback_data": f"bmass:price:{batch_token}"},
-        {"text": "🎁 Скрыть все цены", "callback_data": f"bmass:hideprice:{batch_token}"},
     ])
     kb.append([
-        {"text": "📂 Применить шаблон к пачке", "callback_data": f"btpl:menu:{batch_token}"}
+        {"text": "🎁 Скрыть все цены", "callback_data": f"bmass:hideprice:{batch_token}"},
+        {"text": "📂 Шаблоны", "callback_data": f"btpl:menu:{batch_token}"},
     ])
     kb.append([
         {"text": "📦 Скачать новый ZIP", "callback_data": f"bzip:{batch_token}"},
@@ -2355,7 +2411,7 @@ def _reprocess_batch_item(batch_token, idx, fio=None, seat_info=None, custom_pri
     return True, item
 
 
-def _apply_mass_fio_to_batch(batch_token, fio_list):
+def _apply_mass_fio_to_batch(batch_token, fio_list, user_id=None):
     session = get_store().get_batch_session(batch_token)
     if not session:
         return 0
@@ -2367,10 +2423,16 @@ def _apply_mass_fio_to_batch(batch_token, fio_list):
         cleaned_fio = fio_line.strip()
         if not cleaned_fio:
             continue
+        if user_id:
+            try:
+                get_store().record_recent_fio(user_id, cleaned_fio)
+            except Exception:
+                pass
         ok, _ = _reprocess_batch_item(batch_token, idx, fio=cleaned_fio)
         if ok:
             count += 1
     return count
+
 
 
 def _apply_mass_seats_to_batch(batch_token, seat_input_text):
@@ -2681,6 +2743,124 @@ def _unpack_batch_to_chat(chat, uid, batch_token):
     send_text(chat, f"Готово 🩷 Отправлено билетов: {sent_count} из {len(items)}.")
 
 
+def _build_batch_fio_wizard(batch_token, idx, uid):
+    session = get_store().get_batch_session(batch_token)
+    if not session or idx >= len(session.get("items", [])):
+        return None, None
+    items = session["items"]
+    total = len(items)
+    item = items[idx]
+    meta = item.get("meta") or {}
+
+    title = meta.get("title") or item.get("orig_name") or f"Билет {idx+1}"
+    row = meta.get("row")
+    seats = meta.get("seats") or []
+    seat_str = f"Ряд {row}, Место {seats[0]}" if row and seats else (f"Ряд {row}" if row else (f"Место {seats[0]}" if seats else "места не указаны"))
+    cur_fio = item.get("fio") or "Без зрителя (очищено)"
+
+    text = (
+        f"👤 **Настройка ФИО: Билет №{idx+1} из {total}**\n\n"
+        f"🎭 {title}\n"
+        f"🪑 {seat_str}\n"
+        f"👤 Текущее имя: **{cur_fio}**\n\n"
+        f"Выберите имя в 1 клик или отправьте в чат сообщением:"
+    )
+
+    rows = []
+    recent_fios = get_store().get_user_recent_fios(uid, limit=3)
+    for r_idx, rfio in enumerate(recent_fios):
+        display_name = rfio if len(rfio) <= 28 else rfio[:25] + "..."
+        prefix = "✅ " if (item.get("fio") and item["fio"].strip().lower() == rfio.lower()) else "👤 "
+        rows.append([{"text": f"{prefix}{display_name}", "callback_data": f"qwfio:{batch_token}:{idx}:rec:{r_idx}"}])
+
+    rows.append([
+        {"text": "❌ Оставить пустым (стереть)", "callback_data": f"qwfio:{batch_token}:{idx}:empty"},
+        {"text": "➡️ Пропустить (как есть)", "callback_data": f"qwfio:{batch_token}:{idx}:skip"},
+    ])
+
+    nav_row = []
+    if idx > 0:
+        nav_row.append({"text": f"⬅️ Билет №{idx}", "callback_data": f"bwiz:fio:{batch_token}:{idx-1}"})
+    nav_row.append({"text": "🏁 Готово (завершить)", "callback_data": f"qwfio:{batch_token}:{idx}:finish"})
+    rows.append(nav_row)
+    rows.append([{"text": "🔙 Отмена", "callback_data": f"qwfio:{batch_token}:{idx}:cancel"}])
+
+    return text, {"inline_keyboard": rows}
+
+
+def _deliver_updated_batch_result(chat, uid, batch_token, summary_text=None):
+    session = get_store().get_batch_session(batch_token)
+    if not session:
+        return send_text(chat, "⚠️ Сессия пачки не найдена или истекла.")
+    items = session.get("items", [])
+    count = len(items)
+    if not items:
+        return send_text(chat, "⚠️ В пачке нет билетов.")
+
+    u_settings = _user_settings(uid)
+    batch_mode = u_settings.get("batch_mode", "zip")
+
+    prefer_merge = (batch_mode == "merge") or (count > 1 and any("orig_0.pdf" in it.get("orig_path", "") for it in items[:1]))
+    if prefer_merge:
+        merged_bytes, merged_name, m_cnt, m_caption = _make_batch_merged_pdf(batch_token)
+        if merged_bytes and m_cnt > 0:
+            if summary_text:
+                m_caption = f"{summary_text}\n\n{m_caption}"
+            reply_markup = {
+                "inline_keyboard": [
+                    [{"text": "👥 Задать разные ФИО на все билеты", "callback_data": f"bmass:fio:{batch_token}"}],
+                    [{"text": "⚙️ Настроить билеты пачки", "callback_data": f"bcfg:{batch_token}"}],
+                    [
+                        {"text": "🪑 Сменить места", "callback_data": f"bmass:seat:{batch_token}"},
+                        {"text": "📦 Скачать ZIP-архив", "callback_data": f"bzip:{batch_token}"},
+                    ],
+                    [
+                        {"text": "📄 Прислать билеты в чат", "callback_data": f"bunpack:{batch_token}"},
+                    ],
+                ]
+            }
+            sent_res = send_cleaned(chat, merged_bytes, merged_name, m_caption, reply_markup=reply_markup)
+            if sent_res and isinstance(sent_res, str):
+                get_store().save_batch_session(batch_token, uid, chat, session["items"], merged_file_id=sent_res)
+            try:
+                img_bytes = render_pdf_preview(merged_bytes)
+                if img_bytes:
+                    send_photo(chat, img_bytes, caption="🖼 Превью первого билета из пачки")
+            except Exception:
+                pass
+            return True
+
+    zip_bytes, zip_name = _make_batch_zip(batch_token)
+    if zip_bytes:
+        cap = f"{summary_text}\n\n📦 Обновлённый архив ({count} {tickets_word(count)})." if summary_text else f"📦 Обновлённый архив ({count} {tickets_word(count)})."
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "👥 Задать разные ФИО на все билеты", "callback_data": f"bmass:fio:{batch_token}"}],
+                [{"text": "⚙️ Настроить билеты пачки", "callback_data": f"bcfg:{batch_token}"}],
+                [
+                    {"text": "🪑 Сменить места", "callback_data": f"bmass:seat:{batch_token}"},
+                    {"text": "📑 Склеить в один PDF", "callback_data": f"bmerge:{batch_token}"},
+                ],
+                [
+                    {"text": "📄 Билеты по отдельности", "callback_data": f"bunpack:{batch_token}"},
+                ],
+            ]
+        }
+        sent_res = send_cleaned(chat, zip_bytes, zip_name, cap, reply_markup=reply_markup)
+        if sent_res and isinstance(sent_res, str):
+            get_store().save_batch_session(batch_token, uid, chat, session["items"], zip_file_id=sent_res)
+        first_clean = Path(items[0]["clean_path"])
+        if first_clean.exists():
+            try:
+                img_bytes = render_pdf_preview(first_clean.read_bytes())
+                if img_bytes:
+                    send_photo(chat, img_bytes, caption="🖼 Превью первого билета из пачки")
+            except Exception:
+                pass
+        return True
+    return False
+
+
 def _send_batch_result(chat, result, progress, retry_message, uid=None):
     progress.update(3, "Отправляю результат обработки в чат.")
     items_meta = result.get("items_meta", [])
@@ -2699,19 +2879,17 @@ def _send_batch_result(chat, result, progress, retry_message, uid=None):
     if batch_token:
         reply_markup = {
             "inline_keyboard": [
+                [{"text": "👥 Задать разные ФИО на все билеты", "callback_data": f"bmass:fio:{batch_token}"}],
                 [{"text": "⚙️ Настроить билеты (ФИО / места)", "callback_data": f"bcfg:{batch_token}"}],
                 [
-                    {"text": "👥 Список ФИО", "callback_data": f"bmass:fio:{batch_token}"},
                     {"text": "🪑 Рассадить по порядку", "callback_data": f"bmass:seat:{batch_token}"},
+                    {"text": "💰 Задать цену всем", "callback_data": f"bmass:price:{batch_token}"},
                 ],
                 [
                     {"text": "📄 Билеты по отдельности", "callback_data": f"bunpack:{batch_token}"},
                     {"text": "📑 Склеить в один PDF", "callback_data": f"bmerge:{batch_token}"},
                 ],
-                [
-                    {"text": "💰 Задать цену всем", "callback_data": f"bmass:price:{batch_token}"},
-                    {"text": "🎁 Скрыть все цены", "callback_data": f"bmass:hideprice:{batch_token}"},
-                ],
+                [{"text": "🎁 Скрыть все цены", "callback_data": f"bmass:hideprice:{batch_token}"}],
                 [{"text": "🖼 Фото-превью первого билета", "callback_data": f"preview:{batch_token}"}],
             ]
         }
@@ -3086,7 +3264,7 @@ def handle_callback_query(cb):
         "quick", "unpack", "merge", "preview", "compare", "price", "fio", "seat", "choose_sec",
         "pushkin", "avito", "set", "toggleprice", "split", "welcome", "adm",
         "bcfg", "bedit", "bset", "btog", "bprev", "bmass", "bzip", "bmerge", "bunpack", "bsend",
-        "tpl", "btpl", "ref", "hist", "history", "sub", "cbpay", "qpr", "qfio"
+        "tpl", "btpl", "ref", "hist", "history", "sub", "cbpay", "qpr", "qfio", "qseat", "bwiz", "qwfio"
     )):
         return
 
@@ -3424,6 +3602,158 @@ def handle_callback_query(cb):
                     chosen_fio = recent_fios[idx]
                     return apply_ticket_fio(chat, uid, token, spectator_fio=chosen_fio, prompt_msg_id=msg_id)
         return
+
+    if data.startswith("qseat:"):
+        parts = data.split(":")
+        if len(parts) >= 3:
+            token = parts[1]
+            act = parts[2]
+            if act in {"back", "cancel"}:
+                try:
+                    tg("deleteMessage", chat_id=chat, message_id=msg_id)
+                except Exception:
+                    pass
+                return
+            if act == "manual":
+                get_store().set_user_state(uid, f"waiting_seat:{token}")
+                edit_kb = {"inline_keyboard": [[{"text": "🔙 Отмена", "callback_data": f"qseat:{token}:back"}]]}
+                prompt = (
+                    "🪑 **Введите ряд и место вручную**\n\n"
+                    "Например: `Ряд 3 Место 12` или `3 12` или `Партер, ряд 5, место 10`\n"
+                    "(для отмены нажмите кнопку ниже)"
+                )
+                return edit_or_send(chat, msg_id, prompt, markup=edit_kb)
+            if act == "empty":
+                return apply_ticket_seat(chat, uid, token, new_seat_input="стереть", prompt_msg_id=msg_id)
+            if act == "reset":
+                return apply_ticket_seat(chat, uid, token, new_seat_input="сброс", prompt_msg_id=msg_id)
+            if act == "sec" and len(parts) >= 4:
+                sec_name = parts[3]
+                doc_info = get_store().get_doc_token_info(token) or {}
+                meta = doc_info.get("meta") or {}
+                cur_s = doc_info.get("seat_info") or get_store().get_ticket_seat_str(token) or ""
+                p = seat_tools.parse_seat_input(cur_s) if cur_s else {}
+                if not p.get("row") and meta.get("row"):
+                    p["row"] = str(meta["row"])
+                if not p.get("seat") and meta.get("seats"):
+                    p["seat"] = str(meta["seats"][0])
+                p["sector"] = sec_name
+                summary = seat_tools.format_seat_summary(p)
+                return apply_ticket_seat(chat, uid, token, new_seat_input=summary, prompt_msg_id=msg_id)
+            if act == "shift" and len(parts) >= 4:
+                delta = int(parts[3])
+                doc_info = get_store().get_doc_token_info(token) or {}
+                meta = doc_info.get("meta") or {}
+                cur_s = doc_info.get("seat_info") or get_store().get_ticket_seat_str(token) or ""
+                p = seat_tools.parse_seat_input(cur_s) if cur_s else {}
+                if not p.get("row") and meta.get("row"):
+                    p["row"] = str(meta["row"])
+                cur_seat_val = p.get("seat")
+                if not cur_seat_val and meta.get("seats"):
+                    cur_seat_val = str(meta["seats"][0])
+                m_dig = re.search(r"\d+", str(cur_seat_val or ""))
+                cur_num = int(m_dig.group(0)) if m_dig else 1
+                new_num = max(1, cur_num + delta)
+                p["seat"] = str(new_num)
+                summary = seat_tools.format_seat_summary(p)
+                return apply_ticket_seat(chat, uid, token, new_seat_input=summary, prompt_msg_id=msg_id)
+        return
+
+    if data.startswith("bwiz:fio:"):
+        parts = data.split(":")
+        batch_token = parts[2]
+        idx = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+        text, kb = _build_batch_fio_wizard(batch_token, idx, uid)
+        if not text or not kb:
+            return send_text(chat, "⚠️ Сессия пачки не найдена или истекла.")
+        get_store().set_user_state(uid, f"waiting_batch_wizard_fio:{batch_token}:{idx}:{msg_id}")
+        return edit_or_send(chat, msg_id, text, markup=kb)
+
+    if data.startswith("qwfio:"):
+        parts = data.split(":")
+        if len(parts) >= 4:
+            batch_token = parts[1]
+            idx = int(parts[2])
+            act = parts[3]
+            session = get_store().get_batch_session(batch_token)
+            if not session:
+                return send_text(chat, "⚠️ Сессия пачки не найдена или истекла.")
+            total = len(session.get("items", []))
+
+            if act == "cancel":
+                get_store().set_user_state(uid, None)
+                try:
+                    tg("deleteMessage", chat_id=chat, message_id=msg_id)
+                except Exception:
+                    pass
+                text_dash, kb = _build_batch_dashboard(batch_token)
+                return send_text(chat, text_dash, markup=kb)
+
+            if act == "finish":
+                get_store().set_user_state(uid, None)
+                edit_or_send(chat, msg_id, "⏳ Настройка завершена! Выпускаю обновлённый файл...")
+                _deliver_updated_batch_result(chat, uid, batch_token, summary_text="✅ Настройка билетов завершена!")
+                try:
+                    tg("deleteMessage", chat_id=chat, message_id=msg_id)
+                except Exception:
+                    pass
+                return
+
+            if act == "skip":
+                next_idx = idx + 1
+                if next_idx < total:
+                    text, kb = _build_batch_fio_wizard(batch_token, next_idx, uid)
+                    get_store().set_user_state(uid, f"waiting_batch_wizard_fio:{batch_token}:{next_idx}:{msg_id}")
+                    return edit_or_send(chat, msg_id, text, markup=kb)
+                else:
+                    get_store().set_user_state(uid, None)
+                    edit_or_send(chat, msg_id, "⏳ Настройка завершена! Выпускаю обновлённый файл...")
+                    _deliver_updated_batch_result(chat, uid, batch_token, summary_text=f"✅ Все {total} {tickets_word(total)} обновлены!")
+                    try:
+                        tg("deleteMessage", chat_id=chat, message_id=msg_id)
+                    except Exception:
+                        pass
+                    return
+
+            if act == "empty":
+                _reprocess_batch_item(batch_token, idx, fio="clear")
+                next_idx = idx + 1
+                if next_idx < total:
+                    text, kb = _build_batch_fio_wizard(batch_token, next_idx, uid)
+                    get_store().set_user_state(uid, f"waiting_batch_wizard_fio:{batch_token}:{next_idx}:{msg_id}")
+                    return edit_or_send(chat, msg_id, text, markup=kb)
+                else:
+                    get_store().set_user_state(uid, None)
+                    edit_or_send(chat, msg_id, "⏳ Настройка завершена! Выпускаю обновлённый файл...")
+                    _deliver_updated_batch_result(chat, uid, batch_token, summary_text=f"✅ Все {total} {tickets_word(total)} обновлены!")
+                    try:
+                        tg("deleteMessage", chat_id=chat, message_id=msg_id)
+                    except Exception:
+                        pass
+                    return
+
+            if act == "rec" and len(parts) >= 5 and parts[4].isdigit():
+                r_idx = int(parts[4])
+                recent_fios = get_store().get_user_recent_fios(uid, limit=3)
+                if 0 <= r_idx < len(recent_fios):
+                    sel_fio = recent_fios[r_idx]
+                    _reprocess_batch_item(batch_token, idx, fio=sel_fio)
+                next_idx = idx + 1
+                if next_idx < total:
+                    text, kb = _build_batch_fio_wizard(batch_token, next_idx, uid)
+                    get_store().set_user_state(uid, f"waiting_batch_wizard_fio:{batch_token}:{next_idx}:{msg_id}")
+                    return edit_or_send(chat, msg_id, text, markup=kb)
+                else:
+                    get_store().set_user_state(uid, None)
+                    edit_or_send(chat, msg_id, "⏳ Настройка завершена! Выпускаю обновлённый файл...")
+                    _deliver_updated_batch_result(chat, uid, batch_token, summary_text=f"✅ Все {total} {tickets_word(total)} обновлены!")
+                    try:
+                        tg("deleteMessage", chat_id=chat, message_id=msg_id)
+                    except Exception:
+                        pass
+                    return
+        return
+
 
     if data.startswith("split:"):
         token = data.split(":", 1)[1]
@@ -3844,16 +4174,23 @@ def handle_callback_query(cb):
         elif action == "fio":
             get_store().set_user_state(uid, f"waiting_batch_fio:{batch_token}")
             prompt = (
-                f"👥 **Массовое назначение ФИО** (в пачке {total} билетов):\n\n"
-                f"Отправьте список ФИО одним сообщением, каждое ФИО с новой строки.\n\n"
-                f"Пример:\n"
-                f"Иванов Иван Иванович\n"
-                f"Петров Петр Сергеевич\n"
-                f"Сидорова Анна Павловна\n\n"
-                f"Имена будут назначены на билеты 1, 2, 3... по порядку.\n"
-                f"(для отмены напишите: отмена)"
+                f"👥 **Быстрое назначение разных ФИО на все билеты** (всего {total} шт.):\n\n"
+                f"📋 **Способ 1: Вставить список одним сообщением**\n"
+                f"Скопируйте из чата или заметок и отправьте сюда:\n\n"
+                f"`Иванов Иван Иванович`\n"
+                f"`Петров Петр Сергеевич`\n"
+                f"`Сидорова Анна Павловна`\n\n"
+                f"💡 *Любой формат: с номерами 1., 2. или без них, через запятую или с новой строки.*\n\n"
+                f"⏩ **Способ 2: Заполнить по очереди в 1 клик**\n"
+                f"Нажмите кнопку ниже, чтобы выбрать имена кнопками из недавних:"
             )
-            return send_text(chat, prompt)
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⏩ Заполнить по очереди в 1 клик (Мастер)", "callback_data": f"bwiz:fio:{batch_token}:0"}],
+                    [{"text": "🔙 Отмена", "callback_data": f"bcfg:{batch_token}"}],
+                ]
+            }
+            return send_text(chat, prompt, markup=markup)
         elif action == "seat":
             get_store().set_user_state(uid, f"waiting_batch_seat:{batch_token}")
             prompt = (
@@ -4034,13 +4371,15 @@ def handle_callback_query(cb):
         state_key = token or target_file_id
         get_store().set_user_state(uid, f"waiting_seat:{state_key}")
         cur_seat = doc_info.get("seat_info") if doc_info else None
-        kb = _sector_keyboard(state_key)
-        prefix = f"🪑 Сейчас указано: {cur_seat}\n\n" if cur_seat else "🪑 Введите новый ряд, место или сектор:\n\n"
+        if not cur_seat:
+            cur_seat = get_store().get_ticket_seat_str(state_key)
+        meta = doc_info.get("meta") if doc_info else None
+        kb = _seat_picker_markup(state_key, cur_seat=cur_seat, meta=meta)
+        prefix = f"🪑 Сейчас указано: **{cur_seat}**\n\n" if cur_seat else "🪑 Введите новый ряд, место или сектор:\n\n"
         prompt = (
             f"{prefix}"
-            f"Выберите сектор кнопкой ниже или напишите в чат вручную:\n"
-            f"(бывают и любые другие сектора: Сектор А, VIP-ложа, Танцпол, Подиум, Ярус 2 и т.д.)\n\n"
-            f"Примеры ввода:\n"
+            f"Или выберите действие / сектор в 1 клик кнопками ниже:\n\n"
+            f"Примеры ручного ввода:\n"
             f"• Ряд 3 Место 12\n"
             f"• Партер, ряд 5, место 10\n"
             f"• 3 12 (быстрый ввод: ряд 3, место 12)\n"
@@ -4048,7 +4387,7 @@ def handle_callback_query(cb):
             f"• сброс — вернуть исходные места\n"
             f"(для отмены напишите: отмена)"
         )
-        return send_text(chat, prompt, reply_markup=kb)
+        return send_text(chat, prompt, markup=kb)
 
     if data.startswith("choose_sec:"):
         parts = data.split(":", 2)
@@ -4367,15 +4706,20 @@ def apply_ticket_fio(chat, uid, token, spectator_fio, prompt_msg_id=None):
     return True
 
 
-def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
+def apply_ticket_seat(chat, uid, token, new_seat_input, prompt_msg_id=None):
     if not cooldown_ok(uid):
-        return send_text(chat, "Слишком часто. Подожди пару секунд и повтори.")
+        return send_text(chat, "Слишком часто. Подождите пару секунд и повторите.")
     get_store().set_user_state(uid, None)
-    cleaned_cmd = seat_input_text.strip()
+    cleaned_cmd = (new_seat_input or "").strip()
     if cleaned_cmd.lower() in {"отмена", "cancel"}:
+        if prompt_msg_id:
+            try:
+                tg("deleteMessage", chat_id=chat, message_id=prompt_msg_id)
+            except Exception:
+                pass
         return send_text(chat, "Изменение места отменено.")
 
-    doc_info = get_store().get_doc_token_info(ref)
+    doc_info = get_store().get_doc_token_info(token)
     if doc_info:
         target_file_id = doc_info["file_id"]
         tok_price = doc_info["custom_price"]
@@ -4384,16 +4728,19 @@ def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
         tok_del = doc_info.get("del_texts")
         tok_pushkin = doc_info.get("strip_pushkin")
     else:
-        target_file_id = get_store().get_doc_by_token(ref) or ref
+        target_file_id = get_store().get_doc_by_token(token) or token
         tok_price = None
         tok_hide = None
         tok_fio = None
         tok_del = None
         tok_pushkin = False
 
-    if cleaned_cmd.lower() in {"сброс", "reset", "clear", "none"}:
+    if cleaned_cmd.lower() in {"сброс", "reset", "none"}:
         new_seat = None
-        send_text(chat, "Место сброшено к исходному. Перевыпускаю билет...")
+        seat_desc = "исходное из билета"
+    elif cleaned_cmd.lower() in {"empty", "clear", "стереть", "очистить"}:
+        new_seat = "стереть"
+        seat_desc = "очищено (скрыто)"
     else:
         parsed = seat_tools.parse_seat_input(cleaned_cmd)
         if not parsed:
@@ -4408,8 +4755,14 @@ def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
                 "(для отмены напишите: отмена)"
             )
         new_seat = cleaned_cmd
-        summary = seat_tools.format_seat_summary(parsed)
-        send_text(chat, f"Место выбрано ({summary}). Перевыпускаю билет...")
+        seat_desc = seat_tools.format_seat_summary(parsed)
+
+    if prompt_msg_id:
+        try:
+            tg("deleteMessage", chat_id=chat, message_id=prompt_msg_id)
+        except Exception:
+            pass
+    send_text(chat, f"🪑 Применяю место: {seat_desc}... Перевыпускаю билет...")
 
     data = download_file(target_file_id)
     if not data:
@@ -4433,10 +4786,15 @@ def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
         return send_text(chat, f"Не удалось обновить билет: {result}")
 
     meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
-    out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price)
+    out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price, fio=cur_fio)
     caption = ticket_meta.format_single_ticket_caption(meta, info)
     new_token = secrets.token_hex(8)
-    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=new_seat, del_texts=tok_del, strip_pushkin=tok_pushkin, uid=uid)
+    _save_doc_token(
+        new_token, target_file_id,
+        custom_price=custom_price, hide_price=hide_price, fio=cur_fio,
+        seat_info=new_seat, del_texts=tok_del, strip_pushkin=tok_pushkin,
+        uid=uid, meta=meta
+    )
     pages_cnt = 1
     try:
         with fitz.open(stream=result, filetype="pdf") as _d:
@@ -4452,7 +4810,12 @@ def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
         img_bytes = render_pdf_preview(result)
         if img_bytes:
             send_photo(chat, img_bytes, caption="🖼 Авто-превью билета")
-    return
+    return True
+
+
+def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
+    return apply_ticket_seat(chat, uid, ref, seat_input_text)
+
 
 
 def _reissue_ticket_with_pushkin_strip(chat, uid, ref):
@@ -5107,14 +5470,66 @@ def handle(msg, update_id=None, queued=False):
             text_dash, kb = _build_batch_dashboard(batch_token)
             return send_text(chat, text_dash, markup=kb) if kb else None
 
-        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        lines = split_fio_list(text)
         if not lines:
             return send_text(chat, "Список пуст. Отправьте ФИО с новой строки.")
-        send_text(chat, f"👥 Назначаю ФИО на билеты пачки ({len(lines)} указано)...")
-        count = _apply_mass_fio_to_batch(batch_token, lines)
+        send_text(chat, f"👥 Назначаю разные ФИО на билеты пачки ({len(lines)} указано)...")
+        count = _apply_mass_fio_to_batch(batch_token, lines, user_id=uid)
         send_text(chat, f"✅ ФИО успешно назначены на {count} {tickets_word(count)}!")
-        text_dash, kb = _build_batch_dashboard(batch_token)
-        return send_text(chat, text_dash, markup=kb)
+        return _deliver_updated_batch_result(chat, uid, batch_token, summary_text=f"✅ Готово! ФИО назначены на {count} {tickets_word(count)}.")
+
+    if state and state.startswith("waiting_batch_wizard_fio:") and text and not command.startswith("/"):
+        parts = state.split(":", 3)
+        batch_token = parts[1]
+        idx = int(parts[2])
+        wizard_msg_id = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else None
+
+        user_msg_id = msg.get("message_id")
+        if user_msg_id:
+            try:
+                tg("deleteMessage", chat_id=chat, message_id=user_msg_id)
+            except Exception:
+                pass
+
+        session = get_store().get_batch_session(batch_token)
+        if not session:
+            get_store().set_user_state(uid, None)
+            return send_text(chat, "⚠️ Сессия пачки не найдена или истекла.")
+        total = len(session.get("items", []))
+
+        if text.lower() in {"отмена", "cancel"}:
+            get_store().set_user_state(uid, None)
+            if wizard_msg_id:
+                try:
+                    tg("deleteMessage", chat_id=chat, message_id=wizard_msg_id)
+                except Exception:
+                    pass
+            text_dash, kb = _build_batch_dashboard(batch_token)
+            return send_text(chat, text_dash, markup=kb)
+
+        clean_fio = text.strip()
+        get_store().record_recent_fio(uid, clean_fio)
+        _reprocess_batch_item(batch_token, idx, fio=clean_fio)
+
+        next_idx = idx + 1
+        if next_idx < total:
+            w_text, w_kb = _build_batch_fio_wizard(batch_token, next_idx, uid)
+            get_store().set_user_state(uid, f"waiting_batch_wizard_fio:{batch_token}:{next_idx}:{wizard_msg_id}")
+            if wizard_msg_id:
+                return edit_or_send(chat, wizard_msg_id, w_text, markup=w_kb)
+            else:
+                return send_text(chat, w_text, markup=w_kb)
+        else:
+            get_store().set_user_state(uid, None)
+            if wizard_msg_id:
+                edit_or_send(chat, wizard_msg_id, "⏳ Все билеты настроены! Выпускаю обновлённый файл...")
+            _deliver_updated_batch_result(chat, uid, batch_token, summary_text=f"✅ Все {total} {tickets_word(total)} обновлены с новыми ФИО!")
+            if wizard_msg_id:
+                try:
+                    tg("deleteMessage", chat_id=chat, message_id=wizard_msg_id)
+                except Exception:
+                    pass
+            return
 
     if state and state.startswith("waiting_batch_seat:") and text and not command.startswith("/"):
         batch_token = state.split(":", 1)[1]
