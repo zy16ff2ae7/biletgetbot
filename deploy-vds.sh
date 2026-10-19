@@ -206,5 +206,6 @@ HEALTH
 fi
 trap - ERR
 rm -rf "$bilet_stage"
+find "$bilet_root/.deploy-backups" -mindepth 1 -maxdepth 1 -type d | sort -r | tail -n +6 | xargs rm -rf 2>/dev/null || true
 printf 'DEPLOYED; backup=%s\n' "$bilet_backup"
 REMOTE
