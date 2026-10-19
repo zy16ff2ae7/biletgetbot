@@ -260,6 +260,69 @@ class NewTemplatesAndFioTests(unittest.TestCase):
                     self.assertIn("Анна Ахматова", recent_after)
 
 
+    def test_concurrent_user_jobs_claim(self):
+        import tempfile
+        from subscriptions import SubscriptionStore
+        with tempfile.TemporaryDirectory() as td:
+            store = SubscriptionStore(Path(td) / "test_jobs.sqlite3")
+            # User 1 sends two jobs
+            store.enqueue(101, {"kind": "message", "message": {"chat": {"id": 1001}, "from": {"id": 555}, "document": {"file_name": "t1.pdf"}}})
+            store.enqueue(102, {"kind": "message", "message": {"chat": {"id": 1001}, "from": {"id": 555}, "document": {"file_name": "t2.pdf"}}})
+            # User 2 sends one job
+            store.enqueue(103, {"kind": "message", "message": {"chat": {"id": 1002}, "from": {"id": 777}, "document": {"file_name": "t3.pdf"}}})
+
+            # Worker 1 claims job 101 for user 555
+            j1 = store.claim()
+            self.assertIsNotNone(j1)
+            self.assertEqual(j1[0], 101)
+
+            # Worker 2 attempts claim; job 102 (user 555) must be skipped because user 555 is active!
+            # It should claim job 103 (user 777) instead!
+            j2 = store.claim()
+            self.assertIsNotNone(j2)
+            self.assertEqual(j2[0], 103)
+
+            # Once worker 1 finishes job 101, job 102 can be claimed
+            store.finish(101)
+            j3 = store.claim()
+            self.assertIsNotNone(j3)
+            self.assertEqual(j3[0], 102)
+
+    def test_download_file_retry_and_timeout(self):
+        import requests
+        from unittest.mock import MagicMock
+        with patch.object(bot, "file_metadata", return_value={"file_path": "documents/ticket.pdf"}), \
+             patch.object(bot.time, "sleep"):
+            mock_resp_ok = MagicMock()
+            mock_resp_ok.status_code = 200
+            mock_resp_ok.iter_content.return_value = [b"%PDF-1.4 mock"]
+            mock_resp_ok.__enter__.return_value = mock_resp_ok
+            mock_resp_ok.__exit__.return_value = False
+
+            mock_session = MagicMock()
+            mock_session.get.side_effect = [
+                requests.exceptions.ReadTimeout("Read timed out"),
+                mock_resp_ok
+            ]
+
+            with patch.object(bot, "http_session", return_value=mock_session):
+                data = bot.download_file("mock_file_id")
+                self.assertEqual(data, b"%PDF-1.4 mock")
+                self.assertEqual(mock_session.get.call_count, 2)
+
+    def test_button_cooldown_debounces_silently(self):
+        with patch.object(bot, "cooldown_ok", return_value=False), \
+             patch.object(bot, "send_text") as mock_send:
+            # When prompt_msg_id is provided (interactive button click), cooldown debounces silently
+            res = bot.apply_ticket_fio(1001, 555, "dummy_tok", "Иванов И.И.", prompt_msg_id=12345)
+            mock_send.assert_not_called()
+
+            # When prompt_msg_id is NOT provided (direct text input), cooldown warns user
+            res2 = bot.apply_ticket_fio(1001, 555, "dummy_tok", "Иванов И.И.", prompt_msg_id=None)
+            mock_send.assert_called_once()
+            self.assertIn("Слишком часто", mock_send.call_args[0][1])
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -215,11 +215,35 @@ class SubscriptionStore:
     def claim(self):
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY update_id LIMIT 1").fetchone()
-            if not row:
-                return None
-            db.execute("UPDATE jobs SET state='processing' WHERE update_id=?", (row["update_id"],))
-            return row["update_id"], json.loads(row["payload"])
+            proc_rows = db.execute("SELECT payload FROM jobs WHERE state='processing'").fetchall()
+            active_users = set()
+            for pr in proc_rows:
+                try:
+                    p = json.loads(pr["payload"])
+                    u = (p.get("user_id") or
+                         p.get("from", {}).get("id") or
+                         p.get("message", {}).get("from", {}).get("id") or
+                         p.get("callback", {}).get("from", {}).get("id"))
+                    if u:
+                        active_users.add(u)
+                except Exception:
+                    pass
+
+            queued_rows = db.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY update_id").fetchall()
+            for qrow in queued_rows:
+                try:
+                    p = json.loads(qrow["payload"])
+                    u = (p.get("user_id") or
+                         p.get("from", {}).get("id") or
+                         p.get("message", {}).get("from", {}).get("id") or
+                         p.get("callback", {}).get("from", {}).get("id"))
+                    if u and u in active_users:
+                        continue
+                except Exception:
+                    pass
+                db.execute("UPDATE jobs SET state='processing' WHERE update_id=?", (qrow["update_id"],))
+                return qrow["update_id"], json.loads(qrow["payload"])
+            return None
 
     def claim_pending_documents(self, user_id, chat_id, limit=50):
         with self.db() as db:

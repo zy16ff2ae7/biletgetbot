@@ -183,7 +183,7 @@ def cooldown_ok(uid, seconds=None):
     if seconds is None:
         if os.environ.get("BILET_NO_COOLDOWN") or "unittest" in sys.modules:
             return True
-        seconds = float(os.environ.get("BILET_COOLDOWN", "3.0"))
+        seconds = float(os.environ.get("BILET_COOLDOWN", "1.5"))
     if seconds <= 0:
         return True
     now = time.monotonic()
@@ -723,24 +723,33 @@ def download_file(file_id):
     path = res.get("file_path")
     if not path:
         return None
-    url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}"
     started = time.monotonic()
-    size = 0
-    try:
-        with http_session().get(url, timeout=(3, 45), stream=True) as response:
-            if response.status_code != 200:
-                return None
-            buf = io.BytesIO()
-            for chunk in response.iter_content(65536):
-                if buf.tell() + len(chunk) > MAX_BYTES:
-                    return None
-                buf.write(chunk)
-                size = buf.tell()
-            return buf.getvalue()
-    except requests.RequestException as e:
-        log.warning("download: %s", _safe_error(e))
-    finally:
-        log.info("File body download: %.3fs, %d bytes", time.monotonic() - started, size)
+    max_retries = 3
+    for attempt in range(max_retries):
+        url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}"
+        try:
+            with http_session().get(url, timeout=(3, 45), stream=True) as response:
+                if response.status_code == 200:
+                    buf = io.BytesIO()
+                    for chunk in response.iter_content(65536):
+                        if buf.tell() + len(chunk) > MAX_BYTES:
+                            log.warning("download: file exceeds MAX_BYTES (%d)", MAX_BYTES)
+                            return None
+                        buf.write(chunk)
+                    data = buf.getvalue()
+                    log.info("File body download: %.3fs, %d bytes (attempt %d)",
+                             time.monotonic() - started, len(data), attempt + 1)
+                    return data
+                elif response.status_code == 404 and attempt == 0:
+                    res = file_metadata(file_id)
+                    if res and res.get("file_path"):
+                        path = res.get("file_path")
+                log.warning("download attempt %d status=%s", attempt + 1, response.status_code)
+        except requests.RequestException as e:
+            log.warning("download attempt %d failed: %s", attempt + 1, _safe_error(e))
+        if attempt < max_retries - 1:
+            time.sleep(0.5 * (attempt + 1))
+    log.error("File body download failed after %d attempts (%.3fs)", max_retries, time.monotonic() - started)
     return None
 
 
@@ -3120,7 +3129,7 @@ def process_document(msg, collection_id=None, job_id=None):
         data = download_file(document["file_id"])
         log.info("File download: %.3fs, %d bytes", time.monotonic() - download_started, len(data or b""))
         if data is None:
-            return _progress_error(progress, chat, "Не удалось скачать файл или он превышает 20 МБ. Отправьте его ещё раз.")
+            return _progress_error(progress, chat, "Не удалось загрузить файл из Telegram. Пожалуйста, отправьте его ещё раз.")
         if collection_id:
             progress.update(1, "Сохраняю PDF в твою пачку.")
             collection = get_store().collection(collection_id)
@@ -3497,11 +3506,9 @@ def handle_callback_query(cb):
     if not has_access(uid):
         return show_status(chat, uid)
 
-    if not cooldown_ok(uid):
-        return  # тяжёлый рендер не чаще раза в 3 секунды
-
-
     if data.startswith("toggleprice:"):
+        if not cooldown_ok(uid):
+            return
         parts = data.split(":")
         token = parts[1]
         hide_flag = (parts[2] == "1") if len(parts) > 2 else True
@@ -4414,7 +4421,7 @@ def handle_callback_query(cb):
 
 def _reissue_ticket_with_quick(chat, uid, ref, text_input):
     if not cooldown_ok(uid):
-        return send_text(chat, "Слишком часто. Подожди пару секунд и повтори.")
+        return send_text(chat, "Слишком часто. Подождите пару секунд и повторите.")
     get_store().set_user_state(uid, None)
     cleaned_cmd = text_input.strip()
     if cleaned_cmd.lower() in {"отмена", "cancel"}:
@@ -4552,7 +4559,9 @@ def _reissue_ticket_with_quick(chat, uid, ref, text_input):
 
 def apply_ticket_price(chat, uid, token, new_price, hide_price=False, prompt_msg_id=None):
     if not cooldown_ok(uid):
-        return send_text(chat, "Слишком часто. Подождите пару секунд и повторите.")
+        if not prompt_msg_id:
+            return send_text(chat, "Слишком часто. Подождите пару секунд и повторите.")
+        return
     get_store().set_user_state(uid, None)
     doc_info = get_store().get_doc_token_info(token)
     if doc_info:
@@ -4625,7 +4634,9 @@ def apply_ticket_price(chat, uid, token, new_price, hide_price=False, prompt_msg
 
 def apply_ticket_fio(chat, uid, token, spectator_fio, prompt_msg_id=None):
     if not cooldown_ok(uid):
-        return send_text(chat, "Слишком часто. Подождите пару секунд и повторите.")
+        if not prompt_msg_id:
+            return send_text(chat, "Слишком часто. Подождите пару секунд и повторите.")
+        return
     get_store().set_user_state(uid, None)
     doc_info = get_store().get_doc_token_info(token)
     if doc_info:
@@ -4708,7 +4719,9 @@ def apply_ticket_fio(chat, uid, token, spectator_fio, prompt_msg_id=None):
 
 def apply_ticket_seat(chat, uid, token, new_seat_input, prompt_msg_id=None):
     if not cooldown_ok(uid):
-        return send_text(chat, "Слишком часто. Подождите пару секунд и повторите.")
+        if not prompt_msg_id:
+            return send_text(chat, "Слишком часто. Подождите пару секунд и повторите.")
+        return
     get_store().set_user_state(uid, None)
     cleaned_cmd = (new_seat_input or "").strip()
     if cleaned_cmd.lower() in {"отмена", "cancel"}:
@@ -4819,6 +4832,8 @@ def _reissue_ticket_with_seat(chat, uid, ref, seat_input_text):
 
 
 def _reissue_ticket_with_pushkin_strip(chat, uid, ref):
+    if not cooldown_ok(uid):
+        return
     get_store().set_user_state(uid, None)
     doc_info = get_store().get_doc_token_info(ref)
     if doc_info:
