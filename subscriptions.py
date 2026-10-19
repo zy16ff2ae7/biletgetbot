@@ -533,11 +533,11 @@ class SubscriptionStore:
             db.execute(
                 "INSERT INTO user_recent_fios(user_id, fio, updated) VALUES(?, ?, ?) "
                 "ON CONFLICT(user_id, fio) DO UPDATE SET updated=excluded.updated",
-                (user_id, clean, int(time.time()))
+                (user_id, clean, time.time())
             )
             db.execute(
                 "DELETE FROM user_recent_fios WHERE user_id=? AND fio NOT IN ("
-                "SELECT fio FROM user_recent_fios WHERE user_id=? ORDER BY updated DESC LIMIT 10)",
+                "SELECT fio FROM user_recent_fios WHERE user_id=? ORDER BY updated DESC, rowid DESC LIMIT 10)",
                 (user_id, user_id)
             )
 
@@ -546,7 +546,7 @@ class SubscriptionStore:
             return []
         with self.db() as db:
             rows = db.execute(
-                "SELECT fio FROM user_recent_fios WHERE user_id=? ORDER BY updated DESC LIMIT ?",
+                "SELECT fio FROM user_recent_fios WHERE user_id=? ORDER BY updated DESC, rowid DESC LIMIT ?",
                 (user_id, limit)
             ).fetchall()
             res = [r["fio"] for r in rows if r["fio"]]

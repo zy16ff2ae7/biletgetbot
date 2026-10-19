@@ -3976,15 +3976,17 @@ def handle_callback_query(cb):
         if not target_file_id:
             return send_text(chat, "Не удалось определить файл билета.")
         state_key = token or target_file_id
+        get_store().set_user_state(uid, f"waiting_price:{state_key}")
         cur_price = doc_info["custom_price"] if doc_info and doc_info["custom_price"] is not None else get_store().get_user_custom_price(uid)
         hide_price = bool(doc_info["hide_price"]) if doc_info and doc_info["hide_price"] is not None else False
         price_str = "скрыта 🎁" if hide_price else (f"{cur_price} ₽" if cur_price is not None else "из оригинального билета")
 
         kb = _price_picker_markup(state_key, cur_price=cur_price, hide_price=hide_price)
         prompt = (
-            f"💰 **Быстрое изменение цены билета**\n"
+            f"💰 **Введите новую цену билета** в рублях (например: 2500 или 3500)\n"
             f"Текущая цена: **{price_str}**\n\n"
-            f"Нажмите готовую сумму в 1 клик или укажите свою:"
+            f"Или выберите готовую сумму в 1 клик кнопкой ниже:\n"
+            f"(для отмены напишите: отмена)"
         )
         return send_text(chat, prompt, markup=kb)
 
@@ -4002,14 +4004,17 @@ def handle_callback_query(cb):
         if not target_file_id:
             return send_text(chat, "Не удалось определить файл билета.")
         state_key = token or target_file_id
+        get_store().set_user_state(uid, f"waiting_fio:{state_key}")
         cur_fio = doc_info["fio"] if doc_info and doc_info["fio"] is not None else get_store().get_user_fio(uid)
         fio_str = cur_fio if cur_fio else "пусто (без зрителя)"
 
         kb = _fio_picker_markup(state_key, uid, cur_fio=cur_fio)
         prompt = (
-            f"👤 **Быстрое изменение ФИО зрителя**\n"
+            f"👤 **Введите новое ФИО зрителя** (например: Иванов Иван Иванович)\n"
             f"Текущее ФИО: **{fio_str}**\n\n"
-            f"Выберите из сохранённых или нажмите действие:"
+            f"Или выберите из сохранённых / действий ниже:\n"
+            f"💡 Для многостраничных билетов можно указать несколько ФИО через запятую.\n"
+            f"(для отмены напишите: отмена)"
         )
         return send_text(chat, prompt, markup=kb)
 

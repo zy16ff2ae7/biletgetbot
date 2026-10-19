@@ -195,6 +195,7 @@ class NewTemplatesAndFioTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             store = SubscriptionStore(Path(td) / "test_sub.sqlite3")
             store.record_recent_fio(101, "Иванов И.И.")
+            time.sleep(0.01)
             store.record_recent_fio(101, "Петров П.П.")
             recent = store.get_user_recent_fios(101)
             self.assertEqual(recent, ["Петров П.П.", "Иванов И.И."])
