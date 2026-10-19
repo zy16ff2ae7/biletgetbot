@@ -111,14 +111,21 @@ def clean_theater_name(raw: str | None) -> str:
     return ""
 
 
+PATRONYMIC_RE = re.compile(r"\b[А-ЯЁ][а-яё]+(?:ович|евич|ич|овна|евна|ична|инична)\b")
+
+
 def clean_show_title(raw: str | None) -> str:
     """Normalize show / performance / event title."""
     if not raw:
         return ""
     title = " ".join(raw.split()).strip(" «»\"'.,:;-")
-    if SKIP_TITLE_RE.search(title):
+    if SKIP_TITLE_RE.search(title) or PATRONYMIC_RE.search(title):
         return ""
     if LABEL_START_RE.match(title):
+        return ""
+    if re.search(r"\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\b", title) or re.search(r"\b\d{1,2}:\d{2}\b", title):
+        return ""
+    if re.search(r"\d+\s*(?:руб|₽|р\.)", title, re.I):
         return ""
     if re.match(r"^\d{1,2}\+$", title) or re.match(r"^[.\s_—-]+$", title) or re.match(r"^\d+$", title):
         return ""
@@ -337,7 +344,7 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
             if m_sec2:
                 sector = m_sec2.group(1).strip()
     if not price_str:
-        m_pr = re.search(r"(\d[\d\s]{2,})(?:[.,]\d{2})?\s*(?:руб|₽|р\.)", text, re.I)
+        m_pr = re.search(r"(\d[0-9 \t\xa0]{1,7})(?:[.,]\d{2})?\s*(?:руб|₽|р\.)", text, re.I)
         if m_pr:
             price_val, price_str = parse_price(m_pr.group(0))
 

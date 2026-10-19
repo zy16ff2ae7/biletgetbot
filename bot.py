@@ -402,6 +402,19 @@ def trim_memory():
         pass
 
 
+def split_fio_list(raw: str | None) -> list[str]:
+    """Parse multiple FIO entries separated by newlines, semicolons, //, or numbered lines."""
+    if not raw or not raw.strip():
+        return []
+    lines = [l.strip() for l in raw.replace(";", "\n").replace("||", "\n").replace("//", "\n").splitlines() if l.strip()]
+    fios = []
+    for l in lines:
+        cleaned = re.sub(r"^\s*\d+[\s.)\-:]+", "", l).strip()
+        if cleaned:
+            fios.append(cleaned)
+    return fios or [raw.strip()]
+
+
 def clean_ticket_with_report(data, on_progress=None, spectator_fio=None, hide_price=False, custom_price=None, seat_info=None, del_texts=None, strip_pushkin=False):
     """Return (ok, PDF bytes or explanation, cleanup metadata)."""
     try:
@@ -476,13 +489,17 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
         try:
             fio_val = spectator_fio.strip() if spectator_fio and spectator_fio.strip() else None
             fio_applied = False
-            if fio_val:
+            fio_list = split_fio_list(fio_val) if fio_val else []
+            if fio_list:
                 for pno, (page, slot) in enumerate(zip(cleaned, name_slots)):
+                    cur_fio = fio_list[pno] if pno < len(fio_list) else fio_list[-1]
                     if slot:
                         origin = slot["origin"]
                         size = slot.get("size", 8.0)
                         color = srv.int_to_rgb(slot.get("color", 0))
-                        text_to_write = fio_val.upper() if slot.get("text", "").isupper() else fio_val
+                        text_to_write = cur_fio.upper() if slot.get("text", "").isupper() else cur_fio
+                        if slot.get("text", "").upper().startswith("ПОКУПАТЕЛЬ"):
+                            text_to_write = f"ПОКУПАТЕЛЬ {cur_fio}"
                         if slot.get("align_right"):
                             text_w = srv.FONT_REG.text_length(text_to_write, fontsize=size)
                             origin = (slot["align_right"] - text_w, origin[1])
@@ -492,7 +509,7 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                         fio_applied = True
                     elif any(srv.AFISHA_SELLER_RE.search(l["text"] or "") for l in srv.extract_lines(page)):
                         writer = fitz.TextWriter(page.rect)
-                        writer.append((155, 222), f"Зритель: {fio_val}", font=srv.FONT_REG, fontsize=8.0)
+                        writer.append((155, 222), f"Зритель: {cur_fio}", font=srv.FONT_REG, fontsize=8.0)
                         writer.write_text(page, color=(0, 0, 0))
                         fio_applied = True
 
@@ -547,8 +564,9 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                 return False, ("Автоочистка не смогла завершиться полностью. "
                                "Файл не отправлен. "
                                "Свяжись с администратором: /paysupport."), info
-            for page, expected in zip(cleaned, personal_targets):
-                rem_expected = expected - ({_normalized(fio_val)} if fio_val else set())
+            for pno, (page, expected) in enumerate(zip(cleaned, personal_targets)):
+                cur_fio = fio_list[pno] if pno < len(fio_list) else (fio_list[-1] if fio_list else None)
+                rem_expected = expected - ({_normalized(cur_fio)} if cur_fio else set())
                 remaining = {_normalized(line["text"]) for line in srv.extract_lines(page)}
                 if rem_expected & remaining:
                     log.warning("cleanup incomplete: recognized personal/program lines remain")
@@ -3791,9 +3809,11 @@ def handle_callback_query(cb):
         prompt = (
             f"👤 Сейчас установлено: {cur_fio}\n\n"
             f"Введите новое ФИО зрителя (например, Иванов Иван Иванович) или команду /fio сброс:\n"
+            f"💡 Для многостраничных билетов можно указать разные ФИО с новой строки.\n"
             f"(для отмены напишите: отмена)"
             if cur_fio else
             f"👤 Введите ФИО зрителя (например, Иванов Иван Иванович) для печати на билете:\n"
+            f"💡 Для многостраничных билетов можно указать разные ФИО с новой строки.\n"
             f"(для отмены напишите: отмена)"
         )
         return send_text(chat, prompt)
@@ -4731,7 +4751,11 @@ def handle(msg, update_id=None, queued=False):
         else:
             spectator_fio = text.strip()
             get_store().set_user_fio(uid, spectator_fio)
-            send_text(chat, f"ФИО зрителя сохранено: {spectator_fio}. Перевыпускаю билет...")
+            fio_lines = split_fio_list(spectator_fio)
+            if len(fio_lines) > 1:
+                send_text(chat, f"👥 ФИО для билетов ({len(fio_lines)} чел.):\n" + "\n".join(f"{i+1}. {f}" for i, f in enumerate(fio_lines)) + "\n\nПеревыпускаю билеты...")
+            else:
+                send_text(chat, f"ФИО зрителя сохранено: {spectator_fio}. Перевыпускаю билет...")
 
         data = download_file(target_file_id)
         if not data:

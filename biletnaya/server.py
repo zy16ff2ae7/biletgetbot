@@ -625,7 +625,7 @@ def _table_grid_lines(page):
         if not r or not f or len(f) < 3 or max(f[:3]) > 0.4:
             continue
         thin = r.height < 2.5 or r.width < 2.5
-        if not thin or r.get_area() < 8:
+        if not thin or abs(r) < 8:
             continue
         # только сетка самой таблицы (низ рамки ~y=229); хвосты под ней
         # (y=232–258) сюда не входят — restore не должен их возвращать
@@ -675,7 +675,9 @@ def _personal_line_what(l):
     """Что персонального в строке (ПОКУПАТЕЛЬ / КЛИЕНТ / ФИО / ЗРИТЕЛЬ) или None."""
     t = (l.get("text") or "").strip()
     tl = t.lower()
-    if re.match(r"покупатель(?:\s|[:.\-]|$)", tl):
+    if "линия сгиба" in tl:
+        return None
+    if tl.startswith("покупатель"):
         return f"покупатель: {t[:40]}"
     # kassy.ru: подпись и ФИО в одной строке — «Клиент: Рязанов Максим Юрьевич»
     if re.match(r"(клиент|фио)\s*[:.\-]", tl):
@@ -1051,12 +1053,13 @@ def strip_pushkin_doc(doc, clear_name=True):
             f = d.get("fill")
             if not rd or not f or len(f) < 3 or min(f[:3]) <= 0.95:
                 continue
-            if not rd.intersects(zone) or rd.get_area() >= 0.05 * page_area:
+            if not rd.intersects(zone) or abs(rd) >= 0.05 * page_area:
                 continue
             if _grid_key(rd) in wm_set:
                 continue
             if any(rd.intersects(b) for b in barcode_rects):
-                continue
+                if not (is_afisha and any(rd.intersects(l["bbox"]) for l in pk_hits)):
+                    continue
             if any(rd.intersects(r) for rects in uses.values() for r in rects
                    if abs(r.width - r.height) < r.width * 0.45 and r.width < 80):
                 continue
@@ -1064,15 +1067,16 @@ def strip_pushkin_doc(doc, clear_name=True):
 
         # хвостовая черта под таблицей: на эталоне «Партер 5…» зона y≈232–258
         # пустая, на сырых Afisha остаётся короткая линия — снимаем
-        for d in (() if preserve_art else page.get_drawings()):
-            rd = d.get("rect") and fitz.Rect(d["rect"])
-            f = d.get("fill")
-            if not rd or not f or len(f) < 3:
-                continue
-            if (rd.height < 3 and 20 < rd.width < 90
-                    and 232 <= rd.y0 <= 258 and max(f[:3]) < 0.45):
-                page.add_redact_annot(rd, fill=False)
-                removed.append(f"хвост под таблицей {rd}")
+        if is_afisha:
+            for d in (() if preserve_art else page.get_drawings()):
+                rd = d.get("rect") and fitz.Rect(d["rect"])
+                f = d.get("fill")
+                if not rd or not f or len(f) < 3:
+                    continue
+                if (rd.height < 3 and 20 < rd.width < 90
+                        and 232 <= rd.y0 <= 258 and rd.x0 > 100 and max(f[:3]) < 0.45):
+                    page.add_redact_annot(rd, fill=False)
+                    removed.append(f"хвост под таблицей {rd}")
 
         if removed:
             page.apply_redactions(
@@ -1091,6 +1095,49 @@ def strip_pushkin_doc(doc, clear_name=True):
                     removed.append(f"картинка Пушкина xref={xref}")
                 except Exception:
                     pass
+
+        # Составные растровые элементы (шапка с контактами/бюстом и постер с логотипом):
+        for xref, rects in uses.items():
+            for r in rects:
+                if 250 <= r.x0 <= 330 and 70 <= r.y0 <= 130 and 200 <= r.width <= 320 and 70 <= r.height <= 150:
+                    try:
+                        from PIL import Image, ImageDraw
+                        pix = fitz.Pixmap(doc, xref)
+                        im = Image.open(io.BytesIO(pix.tobytes("png")))
+                        w, h = im.size
+                        if im.getpixel((5, 5))[:3] == (255, 255, 255):
+                            draw = ImageDraw.Draw(im)
+                            cut_x = int(w * 0.32)
+                            draw.rectangle([0, 0, cut_x, h], fill=(255, 255, 255))
+                            buf = io.BytesIO()
+                            im.save(buf, format="PNG")
+                            page.replace_image(xref, stream=buf.getvalue())
+                            removed.append(f"шапка с бюстом Пушкина xref={xref}")
+                    except Exception:
+                        pass
+                elif r.width >= page.rect.width * 0.95 and r.height >= page.rect.height * 0.95:
+                    try:
+                        from PIL import Image
+                        pix = fitz.Pixmap(doc, xref)
+                        im = Image.open(io.BytesIO(pix.tobytes("png")))
+                        w, h = im.size
+                        rx0, rx1 = int(0.70 * w), int(0.89 * w)
+                        ry0, ry1 = int(0.945 * h), int(0.99 * h)
+                        crop_area = im.crop((rx0, ry0, rx1, ry1)).convert("RGB")
+                        cb = crop_area.tobytes()
+                        has_white = any(cb[i] > 230 and cb[i+1] > 230 and cb[i+2] > 230 for i in range(0, len(cb), 3))
+                        has_dark = any(cb[i] < 50 and cb[i+1] < 50 and cb[i+2] < 50 for i in range(0, len(cb), 3))
+                        if has_white and has_dark:
+                            slice_h = ry1 - ry0
+                            src_y0 = max(0, ry0 - slice_h)
+                            bg_slice = im.crop((rx0, src_y0, rx1, src_y0 + slice_h))
+                            im.paste(bg_slice, (rx0, ry0))
+                            buf = io.BytesIO()
+                            im.save(buf, format="PNG")
+                            page.replace_image(xref, stream=buf.getvalue())
+                            removed.append(f"логотип Пушкина на афише xref={xref}")
+                    except Exception:
+                        pass
 
         # Векторный логотип «Пушкинская карта» внизу у QR — тёмная плашка с
         # белыми буквами. Текст «QR-код должен…» рядом не трогаем (TEXT_NONE).
@@ -2192,7 +2239,7 @@ MONTH_RE = re.compile(r"(январ|феврал|март|апрел|ма[йя]|
 
 
 NAME_STOP_WORDS_RE = re.compile(
-    r"\b(пушкинск\w*|карт\w*|билет\w*|театр\w*|партер|балкон|ложа|бельэтаж|ярус|амфитеатр|"
+    r"\b(линия|сгиб\w*|пушкинск\w*|карт\w*|билет\w*|театр\w*|партер|балкон|ложа|бельэтаж|ярус|амфитеатр|"
     r"сектор\w*|ряд\w*|мест\w*|заказ\w*|руб\w*|копейк\w*|инн|кпп|офд|чек|смен\w*|"
     r"зал\w*|вход\w*|подъезд\w*|этаж\w*|мероприят\w*|спектакл\w*|концерт\w*)\b", re.I
 )
@@ -2226,7 +2273,7 @@ def name_value_ok(text):
     """Кандидат в значение метки «Посетитель/ФИО»: 1–4 слова (в любом регистре),
     без цифр/двоеточий/@ — чтобы под метку не попало «Действителен: с … по …»."""
     s = text.strip()
-    if re.search(r"[:@\d]", s):
+    if re.search(r"[:@\d]", s) or NAME_STOP_WORDS_RE.search(s):
         return False
     toks = s.split()
     return 1 <= len(toks) <= 4 and all(re.match(r"[А-Яа-яЁёA-Za-z]", w) for w in toks)
@@ -2305,6 +2352,11 @@ def field_tags(lines):
                      r"(?:sector|zone|level|tier)?\b[\s:.№/-]*(.*)$", t)
         if m and re.search(r"[a-zа-яё0-9]", m.group(1)) and sector_value_ok(m.group(1)):
             tags[i].add("sector")
+        # ПОКУПАТЕЛЬ / КЛИЕНТ / ФИО в одной строке: «ПОКУПАТЕЛЬ Султанова...»
+        if t.startswith("покупатель"):
+            val_part = re.sub(r"^покупатель[\s:.№/-]*", "", t)
+            if val_part and (name_value_ok(val_part) or is_name(val_part) or len(val_part.split()) >= 2):
+                tags[i].add("name")
         # Сектор / зона в начале строки (в т.ч. перед рядом: «Партер, ряд 9, место 10»,
         # «Ложа 1-го яруса правая №1, ряд 1, место 3»)
         if zone_value_ok(l["text"]) and not re.match(r"^(?:ряд|row|мест|seat)\b", t):
@@ -2322,7 +2374,7 @@ def field_tags(lines):
             tags[i].update(("row", "seat"))
 
     for i, l in enumerate(lines):
-        if l.get("stale"):
+        if l.get("stale") or "name" in tags[i] or "sector" in tags[i] or "price" in tags[i]:
             continue
         tag = label_tag(l["text"])
         if not tag:

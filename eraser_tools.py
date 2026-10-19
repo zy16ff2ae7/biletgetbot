@@ -98,6 +98,13 @@ def strip_pushkin_card_from_doc(doc: fitz.Document, srv: Any = None) -> tuple[in
             except Exception:
                 page_lines = []
 
+        # Collect barcode rects to protect them from solid white boxes
+        barcode_rects = []
+        for im in page.get_image_info():
+            br = fitz.Rect(im["bbox"])
+            if (br.width > 20 and br.height > 20 and (br.width > 1.4 * br.height or br.height > 1.4 * br.width)):
+                barcode_rects.append(br)
+
         # Find matching lines
         for l in page_lines:
             t = (l.get("text") or "").strip()
@@ -106,18 +113,30 @@ def strip_pushkin_card_from_doc(doc: fitz.Document, srv: Any = None) -> tuple[in
             matched = any(p.search(t) for p in PUSHKIN_PATTERNS)
             if matched:
                 r = (fitz.Rect(l["bbox"]) + (-1.5, -1.5, 1.5, 1.5)) & page_rect
-                page.add_redact_annot(r, fill=(1, 1, 1))
+                in_barcode = any(r.intersects(b) for b in barcode_rects)
+                page.add_redact_annot(r, fill=False if in_barcode else (1, 1, 1))
                 removal_count += 1
                 removed_texts.append(t)
 
         # Fallback text search for standard phrases
         for phrase in ("Пушкинская карта", "Пушкинская Карта", "ПУШКИНСКАЯ КАРТА",
-                       "В рамках программы «Пушкинская карта»", "В рамках программы \"Пушкинская карта\""):
+                       "В рамках программы «Пушкинская карта»", "В рамках программы \"Пушкинская карта\"",
+                       "В рамках программы «ПУШКИНСКАЯ КАРТА»", "В рамках программы \"ПУШКИНСКАЯ КАРТА\""):
             for r in page.search_for(phrase):
                 box = (fitz.Rect(r) + (-1.5, -1.5, 1.5, 1.5)) & page_rect
-                page.add_redact_annot(box, fill=(1, 1, 1))
+                in_barcode = any(box.intersects(b) for b in barcode_rects)
+                page.add_redact_annot(box, fill=False if in_barcode else (1, 1, 1))
                 removal_count += 1
                 removed_texts.append(phrase)
+
+        # Clean white boxes overlaid on top of barcodes (e.g. Afisha)
+        for d in page.get_drawings():
+            rd = d.get("rect") and fitz.Rect(d["rect"])
+            f = d.get("fill")
+            if rd and f and len(f) >= 3 and min(f[:3]) > 0.95:
+                if any(rd.intersects(b) for b in barcode_rects):
+                    page.add_redact_annot(rd, fill=False)
+                    removal_count += 1
 
         # Check for Pushkin header banner image (175x50 etc.) or Kassir magenta Pushkin logo
         for im in page.get_image_info(xrefs=True):
