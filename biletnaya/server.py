@@ -619,6 +619,10 @@ def _is_pushkin_image(r, pk_hits=(), page=None, xref=None):
     if r.width < 2 or r.height < 2:
         return False
 
+    # Фон на весь лист или крупная подложка страницы — никогда не удаляем
+    if (page is not None and r.width >= 0.80 * page.rect.width and r.height >= 0.80 * page.rect.height) or (r.width >= 450 and r.height >= 600):
+        return False
+
     # Фиолетовый профиль Пушкина в шапке Kassir (между номером билета и Kassir.ru)
     if pk_hits and r.y0 < 90 and 250 <= r.x0 <= 430 and 15 <= r.width <= 75 and 15 <= r.height <= 75:
         return True
@@ -630,7 +634,7 @@ def _is_pushkin_image(r, pk_hits=(), page=None, xref=None):
         return True
 
     # Рамка паспорта на Яндекс Афише: картинка накрывает строки Пушкинской карты
-    if pk_hits and any(r.intersects(fitz.Rect(l["bbox"])) for l in pk_hits) and r.width > 150:
+    if pk_hits and any(r.intersects(fitz.Rect(l["bbox"])) for l in pk_hits) and 150 < r.width and r.height < 250:
         return True
 
     # квадратная иконка / QR
@@ -966,35 +970,48 @@ def _muza_pushkin_hit(line):
 def _chelny_fields(page, lines):
     """Поля шаблона Челнинского театра: метки запечены в фон, значения — текст.
 
-    Узнаём его по двум инструкциям к считывателю, фону на весь лист и паре
-    «заказ / тип оплаты» в левой колонке. ФИО ищем только в следующей ячейке.
+    Поддерживает как реальные билеты театра «Мастеровые» (russdramteatr.ru),
+    так и синтетический тестовый шаблон (BRING TICKET TO THE READER).
     """
-    if sum("BRING TICKET TO THE READER" in l["text"] for l in lines) < 2:
+    if sum("BRING TICKET TO THE READER" in l["text"] for l in lines) >= 2:
+        has_table_bg = any(
+            (fitz.Rect(im["bbox"]) & page.rect).get_area() >= 0.95 * page.rect.get_area()
+            or (fitz.Rect(im["bbox"]).width > 450 and 80 < fitz.Rect(im["bbox"]).height < 250 and fitz.Rect(im["bbox"]).y0 < 100)
+            for im in page.get_image_info()
+        )
+        if not has_table_bg:
+            return None, None
+        x = page.rect.width * 179 / 595
+        for i, l in enumerate(lines):
+            b = l["bbox"]
+            text = re.sub(r"\s+", "", l["text"]).lower()
+            if (text not in ("пушкинскаякарта", "банковскаякарта")
+                    or abs(b[0] - x) > 5 or not 0.08 * page.rect.height < b[1] < 0.13 * page.rect.height):
+                continue
+            order = any(re.fullmatch(r"\d{5,10}", o["text"].strip())
+                        and abs(o["bbox"][0] - b[0]) < 3
+                        and 15 < b[1] - o["bbox"][1] < 35 for o in lines)
+            if not order:
+                continue
+            buyer = next((j for j, n in enumerate(lines)
+                          if abs(n["bbox"][0] - b[0]) < 3
+                          and 15 < n["bbox"][1] - b[1] < 35
+                          and n["text"].strip()), None)
+            return i, buyer
         return None, None
-    has_table_bg = any(
-        (fitz.Rect(im["bbox"]) & page.rect).get_area() >= 0.95 * page.rect.get_area()
-        or (fitz.Rect(im["bbox"]).width > 450 and 80 < fitz.Rect(im["bbox"]).height < 250 and fitz.Rect(im["bbox"]).y0 < 100)
-        for im in page.get_image_info()
+
+    # Реальные билеты МАУК РДТ «Мастеровые» (г. Набережные Челны)
+    is_chelny_real = any(
+        "мастеровые" in l["text"].lower() or "russdramteatr" in l["text"].lower()
+        for l in lines
     )
-    if not has_table_bg:
-        return None, None
-    x = page.rect.width * 179 / 595
-    for i, l in enumerate(lines):
-        b = l["bbox"]
-        text = re.sub(r"\s+", "", l["text"]).lower()
-        if (text not in ("пушкинскаякарта", "банковскаякарта")
-                or abs(b[0] - x) > 5 or not 0.08 * page.rect.height < b[1] < 0.13 * page.rect.height):
-            continue
-        order = any(re.fullmatch(r"\d{5,10}", o["text"].strip())
-                    and abs(o["bbox"][0] - b[0]) < 3
-                    and 15 < b[1] - o["bbox"][1] < 35 for o in lines)
-        if not order:
-            continue
-        buyer = next((j for j, n in enumerate(lines)
-                      if abs(n["bbox"][0] - b[0]) < 3
-                      and 15 < n["bbox"][1] - b[1] < 35
-                      and n["text"].strip()), None)
-        return i, buyer
+    if is_chelny_real:
+        buyer = next((i for i, l in enumerate(lines)
+                      if 150 <= l["bbox"][0] <= 185 and 200 <= l["bbox"][1] <= 245
+                      and not re.search(r"[:@\d]", l["text"])
+                      and (is_name(l["text"]) or len(l["text"].split()) >= 2)), None)
+        return None, buyer
+
     return None, None
 
 
@@ -1112,11 +1129,11 @@ def strip_pushkin_doc(doc, clear_name=True):
         is_yandex_afisha = _is_yandex_afisha_template(page, lines)
         yandex_names = _yandex_afisha_name_rows(page, lines) if is_yandex_afisha else set()
         yandex_header = _yandex_afisha_buyer_header(page, lines) if is_yandex_afisha else None
-        preserve_art = ticketland_block or intickets or operann or muza or is_yandex_afisha
         payment, buyer = _chelny_fields(page, lines)
         if buyer is not None:
             lines[buyer]["tags"] = ["name"]
-        family = payment is not None or (_is_kassa24_family(lines) and not muza)
+        preserve_art = ticketland_block or intickets or operann or muza or is_yandex_afisha or (buyer is not None)
+        family = payment is not None or (buyer is not None) or (_is_kassa24_family(lines) and not muza)
         ticketland_names = _ticketland_name_rows(page, lines)
         is_afisha = any(AFISHA_SELLER_RE.search(l["text"] or "") for l in lines)
         removed = []
@@ -1137,7 +1154,7 @@ def strip_pushkin_doc(doc, clear_name=True):
                     continue
                 if not (family or is_afisha or operann or muza or is_yandex_afisha) and i not in (ticketland_names | intickets_names) and not is_tl_email:
                     continue
-                if payment is not None and i != buyer:
+                if (payment is not None or buyer is not None) and i != buyer:
                     continue
                 buyer_fio = None if (muza or is_yandex_afisha) else _buyer_fio_from_text(l["text"])
                 if buyer_fio:
@@ -1153,6 +1170,8 @@ def strip_pushkin_doc(doc, clear_name=True):
                     removed.append(f"фио покупателя: {buyer_fio[:40]}")
                     continue
                 what = _personal_line_what(l)
+                if buyer is not None and i == buyer:
+                    what = f"фио Chelny: {l['text'][:40]}"
                 if operann and i in operann_names:
                     what = f"зритель Operann: {l['text'][:40]}"
                 elif not what and is_afisha and 208 <= l["bbox"][1] <= 235 and 150 <= l["bbox"][0] <= 450:
@@ -2496,8 +2515,14 @@ def _token_is_name_part(w):
             return False
         if sp.lower() in {"оглы", "кызы", "де", "фон", "ван", "эль"}:
             continue
-        if not (re.fullmatch(r"[А-ЯЁA-Z][а-яёa-z]{1,}", sp) or re.fullmatch(r"[А-ЯЁA-Z]{2,}", sp)):
-            return False
+        if re.fullmatch(r"[А-ЯЁA-Z][а-яёa-z]{1,}", sp) or re.fullmatch(r"[А-ЯЁA-Z]{2,}", sp):
+            continue
+        # Допускаем отчество или фамилию со строчной буквы (например, «муратханович»),
+        # если это слово из 3+ букв с характерным суффиксом
+        if len(sp) >= 3 and re.fullmatch(r"[а-яёa-z]{3,}", sp):
+            if re.search(r"(ович|евич|овна|евна|ич|ична|ов|ев|ин|ын|ский|ская|цкий|цкая|ова|ева|ина|ына)$", sp.lower()):
+                continue
+        return False
     return True
 
 
@@ -2509,6 +2534,8 @@ def is_name(text):
         return False
     toks = s.split()
     if not 2 <= len(toks) <= 4:
+        return False
+    if not any(re.match(r"[А-ЯЁA-Z]", w) for w in toks):
         return False
     return all(_token_is_name_part(w) for w in toks)
 

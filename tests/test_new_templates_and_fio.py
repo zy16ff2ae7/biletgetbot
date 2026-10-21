@@ -636,5 +636,52 @@ class MetadataFixesTests(unittest.TestCase):
         doc4.close()
 
 
+class ChelnyMasterovyeTemplateTests(unittest.TestCase):
+    """Реальные билеты театра «Мастеровые» (г. Набережные Челны): сохранение фона и удаление/замена ФИО."""
+
+    def setUp(self):
+        progress = patch.object(bot, "progress_request", return_value={})
+        progress.start()
+        self.addCleanup(progress.stop)
+
+    def load_fixture(self):
+        path = FIXTURES / "chelny_masterovye_pushkin.pdf"
+        if not path.exists():
+            self.skipTest(f"missing fixture: {path}")
+        return path.read_bytes()
+
+    def test_is_name_lowercase_patronymic(self):
+        self.assertTrue(srv.is_name("Мутагиров Марат муратханович"))
+        self.assertTrue(srv.is_name("Набиев Аллахверди Яшарович"))
+        self.assertFalse(srv.is_name("Ловкач из Неаполя"))
+
+    def test_cleaning_preserves_background_and_removes_fio(self):
+        ok, result, info = bot.clean_ticket_with_report(self.load_fixture())
+        self.assertTrue(ok, result)
+        with fitz.open(stream=result, filetype="pdf") as doc:
+            text = doc[0].get_text()
+            self.assertNotIn("Мутагиров", text)
+            self.assertNotIn("ПУШКИНСКАЯ", text)
+            self.assertIn("Ловкач из Неаполя", text)
+            images = [doc.extract_image(img[0]) for img in doc[0].get_images()]
+            has_full_bg = any(im["width"] >= 2000 and im["height"] >= 3000 for im in images)
+            self.assertTrue(has_full_bg, "Фоновое изображение билета должно быть сохранено")
+
+    def test_spectator_fio_replacement(self):
+        ok, result, info = bot.clean_ticket_with_report(
+            self.load_fixture(), spectator_fio="Алексеев Алексей Алексеевич"
+        )
+        self.assertTrue(ok, result)
+        with fitz.open(stream=result, filetype="pdf") as doc:
+            text = doc[0].get_text()
+            self.assertNotIn("Мутагиров", text)
+            self.assertNotIn("ПУШКИНСКАЯ", text)
+            self.assertIn("Алексеев", text)
+            images = [doc.extract_image(img[0]) for img in doc[0].get_images()]
+            has_full_bg = any(im["width"] >= 2000 and im["height"] >= 3000 for im in images)
+            self.assertTrue(has_full_bg, "Фоновое изображение билета должно быть сохранено")
+
+
 if __name__ == "__main__":
     unittest.main()
+

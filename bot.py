@@ -284,7 +284,7 @@ def _cleanup_targets(doc):
         yandex = srv._is_yandex_afisha_template(page, lines) if hasattr(srv, "_is_yandex_afisha_template") else False
         yandex_names = srv._yandex_afisha_name_rows(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_name_rows")) else set()
         yandex_header = srv._yandex_afisha_buyer_header(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_buyer_header")) else None
-        family = payment is not None or (srv._is_kassa24_family(lines) and not muza and not yandex)
+        family = payment is not None or (buyer is not None) or (srv._is_kassa24_family(lines) and not muza and not yandex)
         personal = srv._ticketland_name_rows(page, lines)
         if srv._is_intickets_template(page, lines):
             personal = srv._intickets_name_rows(page, lines)
@@ -298,6 +298,8 @@ def _cleanup_targets(doc):
             personal = set(yandex_names)
             if yandex_header is not None:
                 personal.add(yandex_header)
+        elif buyer is not None:
+            personal = {buyer}
         elif payment is not None:
             personal = {buyer} if buyer is not None else set()
         elif family:
@@ -332,7 +334,7 @@ def _find_name_slots(source):
         yandex = srv._is_yandex_afisha_template(page, lines) if hasattr(srv, "_is_yandex_afisha_template") else False
         yandex_names = srv._yandex_afisha_name_rows(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_name_rows")) else set()
         payment, buyer = srv._chelny_fields(page, lines)
-        family = payment is not None or (srv._is_kassa24_family(lines) and not muza and not yandex)
+        family = payment is not None or (buyer is not None) or (srv._is_kassa24_family(lines) and not muza and not yandex)
         t_names = srv._ticketland_name_rows(page, lines)
         k_rows = srv._kassir_name_rows(lines)
         is_af = any(srv.AFISHA_SELLER_RE.search(l["text"] or "") for l in lines)
@@ -348,9 +350,11 @@ def _find_name_slots(source):
                 continue
             if not (family or is_af or is_operann or muza or yandex) and i not in (t_names | intickets_names):
                 continue
-            if payment is not None and i != buyer:
+            if (payment is not None or buyer is not None) and i != buyer:
                 continue
             what = srv._personal_line_what(l)
+            if buyer is not None and i == buyer:
+                what = "chelny"
             if is_operann and i in operann_names:
                 if not srv.PUSHKIN_TEXT_RE.search(l["text"]) and not re.search(r"в рамках программы", l["text"], re.I):
                     what = "operann"
