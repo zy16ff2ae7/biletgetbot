@@ -93,10 +93,17 @@ def _raster_code_regions(page):
         bars = aspect > 1.8 or aspect < 0.56
         if not square and not bars:
             continue
+        if bars and rect.width > 260:
+            continue
         scale = min(2, 512 / max(rect.width, rect.height))
         pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=rect, colorspace=fitz.csGRAY)
         pixels = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
         if pixels.size < 100 or (pixels < 120).mean() < 0.08 or (pixels > 170).mean() < 0.08:
+            continue
+        # Код — ЧБ; цветной значок промо-баннера (mos.ru и т.п.) не защищаем.
+        rgb_pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=rect, colorspace=fitz.csRGB)
+        rgb = np.frombuffer(rgb_pix.samples, dtype=np.uint8).reshape(rgb_pix.height, rgb_pix.width, 3).astype(np.int16)
+        if (rgb.max(axis=2) - rgb.min(axis=2)).mean() > 40:
             continue
         binary = pixels < 145
         horizontal = (binary[:, 1:] != binary[:, :-1]).mean()
@@ -257,12 +264,15 @@ def validate_ticket(source, output, engine, removed_targets):
         lines = engine.field_tags(engine.extract_lines(before))
         _ages, banners = engine._ticketland_pushkin_block(before, lines)
         pk_hits = [l for l in lines if _text(l["text"]) in removed and engine.PUSHKIN_TEXT_RE.search(l.get("text") or "")]
+        has_pk = bool(pk_hits or any(engine.PUSHKIN_TEXT_RE.search(l.get("text") or "") for l in lines))
         for item in before.get_image_info(xrefs=True):
             r = fitz.Rect(item["bbox"])
             if item.get("xref") in banners:
                 promos.append(r)
             elif (r.y0 < 90 and r.width >= 80 and r.height <= 90 and r.width >= 1.8 * r.height
                   and any(r.intersects(fitz.Rect(l["bbox"]) + (-2, -12, 2, 12)) for l in pk_hits)):
+                promos.append(r)
+            elif has_pk and 70 <= r.width <= 130 and 15 <= r.height <= 40 and r.width >= 2.8 * r.height:
                 promos.append(r)
         result_lines = engine.extract_lines(after)
         captions = [fitz.Rect(line["bbox"]) for line in lines

@@ -7,6 +7,7 @@ Designed for @biletgetbot to provide:
 """
 from __future__ import annotations
 
+import base64
 import io
 import re
 from typing import Any
@@ -14,6 +15,7 @@ from typing import Any
 import fitz
 import numpy as np
 
+TRANSPARENT_1X1_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==")
 
 PUSHKIN_PATTERNS = [
     re.compile(r"пушкинск\w*\s+карт\w*", re.I),
@@ -23,6 +25,8 @@ PUSHKIN_PATTERNS = [
     re.compile(r"номинал\s*пк\b", re.I),
     re.compile(r"\bпушкинск\w*\b", re.I),
     re.compile(r"билет\s+в\s+рамках\s+программы", re.I),
+    re.compile(r"не\s+забудьте\s+паспорт", re.I),
+    re.compile(r"на\s+входе\s+проверят.*имен", re.I),
 ]
 
 
@@ -73,7 +77,7 @@ def redact_text_from_doc(doc: fitz.Document, target_text: str, srv: Any = None) 
             hits_count += 1
             removed_texts.append(clean_target)
 
-        page.apply_redactions()
+        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
 
     return hits_count, removed_texts
 
@@ -121,7 +125,8 @@ def strip_pushkin_card_from_doc(doc: fitz.Document, srv: Any = None) -> tuple[in
         # Fallback text search for standard phrases
         for phrase in ("Пушкинская карта", "Пушкинская Карта", "ПУШКИНСКАЯ КАРТА",
                        "В рамках программы «Пушкинская карта»", "В рамках программы \"Пушкинская карта\"",
-                       "В рамках программы «ПУШКИНСКАЯ КАРТА»", "В рамках программы \"ПУШКИНСКАЯ КАРТА\""):
+                       "В рамках программы «ПУШКИНСКАЯ КАРТА»", "В рамках программы \"ПУШКИНСКАЯ КАРТА\"",
+                       "Не забудьте паспорт", "не забудьте паспорт", "НЕ ЗАБУДЬТЕ ПАСПОРТ"):
             for r in page.search_for(phrase):
                 box = (fitz.Rect(r) + (-1.5, -1.5, 1.5, 1.5)) & page_rect
                 in_barcode = any(box.intersects(b) for b in barcode_rects)
@@ -138,15 +143,21 @@ def strip_pushkin_card_from_doc(doc: fitz.Document, srv: Any = None) -> tuple[in
                     page.add_redact_annot(rd, fill=False)
                     removal_count += 1
 
-        # Check for Pushkin header banner image (175x50 etc.) or Kassir magenta Pushkin logo
+        # Check for Pushkin header banner image (175x50 etc.), badges, passport box, or Kassir magenta Pushkin logo
         for im in page.get_image_info(xrefs=True):
             r = fitz.Rect(im["bbox"])
             is_banner = r.y0 < 120 and r.width >= 70 and r.height <= 100 and r.width >= 1.6 * r.height
             is_kassir_head = r.y0 < 90 and 250 <= r.x0 <= 430 and 15 <= r.width <= 75 and 15 <= r.height <= 75
-            if is_banner or is_kassir_head:
+            is_badge = 70 <= r.width <= 130 and 15 <= r.height <= 40 and r.width >= 2.8 * r.height
+            is_passport_box = r.width > 200 and 30 <= r.height <= 90 and any(r.intersects(fitz.Rect(l["bbox"])) for l in page_lines if any(p.search((l.get("text") or "")) for p in PUSHKIN_PATTERNS))
+            if is_banner or is_kassir_head or is_badge or is_passport_box:
                 if im.get("xref"):
                     try:
-                        page.delete_image(im["xref"])
+                        im_info = page.parent.extract_image(im["xref"])
+                        if im_info.get("smask") or is_passport_box or is_badge:
+                            page.replace_image(im["xref"], stream=TRANSPARENT_1X1_PNG)
+                        else:
+                            page.delete_image(im["xref"])
                         removal_count += 1
                         continue
                     except Exception:
@@ -155,7 +166,7 @@ def strip_pushkin_card_from_doc(doc: fitz.Document, srv: Any = None) -> tuple[in
                 page.add_redact_annot(box, fill=(1, 1, 1))
                 removal_count += 1
 
-        page.apply_redactions()
+        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
 
     return removal_count, removed_texts
 

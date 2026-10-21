@@ -2,6 +2,7 @@
 
 The editor engine is loaded from BILETNAYA. Offline tests do not poll Telegram.
 """
+from __future__ import annotations
 
 import importlib.util
 import hashlib
@@ -24,6 +25,10 @@ import time
 import urllib.parse
 
 import fitz
+
+if not hasattr(fitz.Rect, "get_area"):
+    fitz.Rect.get_area = lambda self: max(0.0, self.width) * max(0.0, self.height)
+
 import requests
 
 import batches
@@ -273,12 +278,26 @@ def _cleanup_targets(doc):
     for page in doc:
         lines = srv.field_tags(srv.extract_lines(page))
         payment, buyer = srv._chelny_fields(page, lines)
-        family = payment is not None or srv._is_kassa24_family(lines)
+        muza = srv._is_muza_template(page, lines)
+        muza_header = srv._muza_buyer_header(page, lines) if muza else None
+        muza_names = srv._muza_name_rows(page, lines) if muza else set()
+        yandex = srv._is_yandex_afisha_template(page, lines) if hasattr(srv, "_is_yandex_afisha_template") else False
+        yandex_names = srv._yandex_afisha_name_rows(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_name_rows")) else set()
+        yandex_header = srv._yandex_afisha_buyer_header(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_buyer_header")) else None
+        family = payment is not None or (srv._is_kassa24_family(lines) and not muza and not yandex)
         personal = srv._ticketland_name_rows(page, lines)
         if srv._is_intickets_template(page, lines):
             personal = srv._intickets_name_rows(page, lines)
         elif hasattr(srv, "_is_operann_template") and srv._is_operann_template(page, lines):
             personal = srv._operann_name_rows(page, lines)
+        elif muza_names or muza_header is not None:
+            personal = set(muza_names)
+            if muza_header is not None:
+                personal.add(muza_header)
+        elif yandex_names or yandex_header is not None:
+            personal = set(yandex_names)
+            if yandex_header is not None:
+                personal.add(yandex_header)
         elif payment is not None:
             personal = {buyer} if buyer is not None else set()
         elif family:
@@ -289,8 +308,13 @@ def _cleanup_targets(doc):
             if ages:
                 personal |= {i for i, line in enumerate(lines)
                              if srv.EMAIL_RE.search(line["text"])}
+        if not personal:
+            personal = set()
         targets.append({_normalized(line["text"]) for i, line in enumerate(lines)
-                        if i in personal or srv.PUSHKIN_TEXT_RE.search(line["text"])})
+                        if i in personal
+                        or (srv.PUSHKIN_TEXT_RE.search(line["text"])
+                            and (not muza or srv._muza_pushkin_hit(line)))
+                        or (yandex and any(k in line["text"].lower() for k in ("не забудьте паспорт", "на входе проверят")))})
     return targets
 
 
@@ -303,8 +327,12 @@ def _find_name_slots(source):
         intickets_names = srv._intickets_name_rows(page, lines)
         is_operann = hasattr(srv, "_is_operann_template") and srv._is_operann_template(page, lines)
         operann_names = srv._operann_name_rows(page, lines) if is_operann else set()
+        muza = srv._is_muza_template(page, lines)
+        muza_names = srv._muza_name_rows(page, lines) if muza else set()
+        yandex = srv._is_yandex_afisha_template(page, lines) if hasattr(srv, "_is_yandex_afisha_template") else False
+        yandex_names = srv._yandex_afisha_name_rows(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_name_rows")) else set()
         payment, buyer = srv._chelny_fields(page, lines)
-        family = payment is not None or srv._is_kassa24_family(lines)
+        family = payment is not None or (srv._is_kassa24_family(lines) and not muza and not yandex)
         t_names = srv._ticketland_name_rows(page, lines)
         k_rows = srv._kassir_name_rows(lines)
         is_af = any(srv.AFISHA_SELLER_RE.search(l["text"] or "") for l in lines)
@@ -314,7 +342,11 @@ def _find_name_slots(source):
                 continue
             if is_operann and i not in operann_names:
                 continue
-            if not (family or is_af or is_operann) and i not in (t_names | intickets_names):
+            if muza and i not in muza_names:
+                continue
+            if yandex and i not in yandex_names:
+                continue
+            if not (family or is_af or is_operann or muza or yandex) and i not in (t_names | intickets_names):
                 continue
             if payment is not None and i != buyer:
                 continue
@@ -331,12 +363,29 @@ def _find_name_slots(source):
                 what = "intickets"
             if i in k_rows:
                 what = "kassir"
+            if i in muza_names:
+                what = "muza"
+            if yandex and i in yandex_names:
+                what = "yandex"
             if not what or "почта" in what:
                 continue
             p_slots.append(l)
 
         name_candidates = [s for s in p_slots if srv.is_name(s["text"])]
         chosen = name_candidates[0] if name_candidates else (p_slots[-1] if p_slots else None)
+        if yandex and yandex_names:
+            first = min(yandex_names)
+            chosen = dict(lines[first])
+            chosen["extra_bboxes"] = [lines[r]["bbox"] for r in sorted(yandex_names) if r != first]
+            chosen["yandex_afisha"] = True
+            chosen["line_h"] = 12.7
+            chosen["size"] = lines[first].get("size", 9.8)
+            header_id = srv._yandex_afisha_buyer_header(page, lines)
+            if header_id is not None:
+                chosen["header"] = dict(lines[header_id])
+        elif muza_names:
+            chosen = dict(lines[min(muza_names)])
+            chosen["max_width"] = max(60.0, min(100.0, page.rect.width * 0.12))
         if not chosen:
             fallback_candidates = [
                 l for l in lines
@@ -417,6 +466,46 @@ def split_fio_list(raw: str | None) -> list[str]:
     return fios or [raw.strip()]
 
 
+def _line_style(line):
+    """Стиль строки для перерисовки: родной шрифт, жирность, засечки."""
+    line = line or {}
+    return {"font": line.get("font") or "",
+            "bold": bool(line.get("bold")),
+            "serif": bool(line.get("serif"))}
+
+
+def _replacement_runs(doc, doc_id, text, style):
+    """Текст по кускам с РОДНЫМИ шрифтами билета (та же цепочка, что у редактора):
+    сабсеты GolosText/Liberation сохраняют начертание и толщину 1:1, чужие символы
+    добираются стиль-совместимым фолбэком той же жирности."""
+    try:
+        fonts = srv.font_chain(doc, doc_id, style["font"], style["bold"], style["serif"])
+    except Exception:
+        fonts = None
+    if not fonts:
+        fonts = [srv.FONT_BOLD if style["bold"] else srv.FONT_REG]
+    try:
+        runs = srv.font_runs(text, fonts)
+        if runs:
+            return runs
+    except Exception:
+        pass
+    return [(fonts[0], text)]
+
+
+def _runs_width(runs, size):
+    return sum(font.text_length(part, size) for font, part in runs)
+
+
+def _draw_runs(page, runs, origin, size, color):
+    writer = fitz.TextWriter(page.rect)
+    x = origin[0]
+    for font, part in runs:
+        writer.append((x, origin[1]), part, font=font, fontsize=size)
+        x += font.text_length(part, size)
+    writer.write_text(page, color=color)
+
+
 def clean_ticket_with_report(data, on_progress=None, spectator_fio=None, hide_price=False, custom_price=None, seat_info=None, del_texts=None, strip_pushkin=False):
     """Return (ok, PDF bytes or explanation, cleanup metadata)."""
     try:
@@ -438,6 +527,7 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
     """Return (ok, PDF bytes or explanation, cleanup metadata)."""
     info = {"changed": False, "removed": 0}
     started = time.monotonic()
+    doc_id = f"bot-{secrets.token_hex(6)}"
     if not data or len(data) > MAX_BYTES:
         return False, "Нужен непустой PDF-файл размером до 20 МБ.", info
     try:
@@ -446,7 +536,9 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                 return False, "PDF защищён паролем или в нём нет страниц.", info
             if len(source) > 100 or any(page.rect.get_area() * 4 > 15_000_000 for page in source):
                 return False, "Максимум 100 страниц, с обычным размером листа.", info
-    except Exception:
+    except Exception as error:
+        log.warning("PDF open failed: bytes=%d sha256=%s head=%r err=%s",
+                    len(data), hashlib.sha256(data).hexdigest()[:16], data[:12], error)
         return False, "Не удалось открыть файл как PDF.", info
 
     try:
@@ -456,8 +548,20 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
         with fitz.open(stream=sanitized, filetype="pdf") as source:
             personal_targets = _cleanup_targets(source)
             name_slots = _find_name_slots(source)
+            fio_val = spectator_fio.strip() if spectator_fio and spectator_fio.strip() else None
+            if fio_val:
+                # Старое ФИО обязано исчезнуть из выходного файла: на mos.ru-шаблоне
+                # движок его не удаляет (в _cleanup_targets он не распознаётся),
+                # поэтому имя попадает в цели проверки и вырезается перед отрисовкой.
+                for pno, slot in enumerate(name_slots):
+                    if pno < len(personal_targets) and slot and slot.get("text"):
+                        personal_targets[pno].add(_normalized(slot["text"]))
             cleaned, report = srv.autoclean_doc(source)
             validation_targets = [set(t) for t in personal_targets]
+            if fio_val:
+                for pno, slot in enumerate(name_slots):
+                    if pno < len(validation_targets) and slot and slot.get("header"):
+                        validation_targets[pno].discard(_normalized(slot["header"]["text"]))
             price_val = None
             if custom_price is not None:
                 try:
@@ -474,8 +578,8 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                         if ("price" in l.get("tags", []) or srv.PRICE_RE.search(t)
                                 or t in {"цена", "цена:", "стоимость", "стоимость:", "номинал", "номинал:"}):
                             validation_targets[pno].add(_normalized(l["text"]))
-                            cpage.add_redact_annot(fitz.Rect(l["bbox"]) + (-1, -1, 1, 1), fill=(1, 1, 1))
-                    cpage.apply_redactions()
+                            cpage.add_redact_annot(fitz.Rect(l["bbox"]) + (-1, -1, 1, 1), fill=False)
+                    cpage.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
             elif price_val is not None:
                 for pno, (spage, cpage) in enumerate(zip(source, cleaned)):
                     lines = srv.field_tags(srv.extract_lines(spage))
@@ -484,31 +588,52 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                         tags = set(l.get("tags", []))
                         if re.search(r"\d", l.get("text", "")) and ("price" in tags or srv.PRICE_RE.search(t_txt)):
                             validation_targets[pno].add(_normalized(l["text"]))
-                            cpage.add_redact_annot(fitz.Rect(l["bbox"]) + (-1, -1, 1, 1), fill=(1, 1, 1))
+                            cpage.add_redact_annot(fitz.Rect(l["bbox"]) + (-1, -1, 1, 1), fill=False)
                             new_text = replace_price_in_text(l["text"], price_val)
-                            price_replacements.append((pno, l["origin"], new_text, l.get("size", 8.0), l.get("color", 0)))
-                    cpage.apply_redactions()
+                            price_replacements.append((pno, l["origin"], new_text, l.get("size", 8.0), l.get("color", 0), _line_style(l)))
+                    cpage.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
         try:
-            fio_val = spectator_fio.strip() if spectator_fio and spectator_fio.strip() else None
             fio_applied = False
             fio_list = split_fio_list(fio_val) if fio_val else []
             if fio_list:
                 for pno, (page, slot) in enumerate(zip(cleaned, name_slots)):
                     cur_fio = fio_list[pno] if pno < len(fio_list) else fio_list[-1]
                     if slot:
-                        origin = slot["origin"]
+                        for eb in slot.get("extra_bboxes", []):
+                            page.add_redact_annot(fitz.Rect(eb) + (-1, -1, 1, 1), fill=False)
+                        page.add_redact_annot(fitz.Rect(slot["bbox"]) + (-1, -1, 1, 1), fill=False)
+                        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+                        origin = tuple(slot["origin"])
                         size = slot.get("size", 8.0)
                         color = srv.int_to_rgb(slot.get("color", 0))
-                        text_to_write = cur_fio.upper() if slot.get("text", "").isupper() else cur_fio
-                        if slot.get("text", "").upper().startswith("ПОКУПАТЕЛЬ"):
-                            text_to_write = f"ПОКУПАТЕЛЬ {cur_fio}"
-                        if slot.get("align_right"):
-                            text_w = srv.FONT_REG.text_length(text_to_write, fontsize=size)
-                            origin = (slot["align_right"] - text_w, origin[1])
-                        writer = fitz.TextWriter(page.rect)
-                        writer.append(origin, text_to_write, font=srv.FONT_REG, fontsize=size)
-                        writer.write_text(page, color=color)
-                        fio_applied = True
+                        if slot.get("yandex_afisha"):
+                            if slot.get("header"):
+                                h = slot["header"]
+                                h_runs = _replacement_runs(cleaned, doc_id, h["text"], _line_style(h))
+                                _draw_runs(page, h_runs, tuple(h["origin"]), h.get("size", 6.8), srv.int_to_rgb(h.get("color", 10066329)))
+                            words = cur_fio.split()
+                            line_h = slot.get("line_h", 12.7)
+                            for wi, word in enumerate(words[:3]):
+                                if wi == 2 and len(words) > 3:
+                                    word = " ".join(words[2:])
+                                w_orig = (origin[0], origin[1] + wi * line_h)
+                                runs = _replacement_runs(cleaned, doc_id, word, _line_style(slot))
+                                _draw_runs(page, runs, w_orig, size, color)
+                            fio_applied = True
+                        else:
+                            text_to_write = cur_fio.upper() if slot.get("text", "").isupper() else cur_fio
+                            if slot.get("text", "").upper().startswith("ПОКУПАТЕЛЬ"):
+                                text_to_write = f"ПОКУПАТЕЛЬ {cur_fio}"
+                            runs = _replacement_runs(cleaned, doc_id, text_to_write, _line_style(slot))
+                            max_width = slot.get("max_width")
+                            if max_width:
+                                width = _runs_width(runs, size)
+                                if width > max_width > 0:
+                                    size = max(4.5, size * max_width / width)
+                            if slot.get("align_right"):
+                                origin = (slot["align_right"] - _runs_width(runs, size), origin[1])
+                            _draw_runs(page, runs, origin, size, color)
+                            fio_applied = True
                     elif any(srv.AFISHA_SELLER_RE.search(l["text"] or "") for l in srv.extract_lines(page)):
                         writer = fitz.TextWriter(page.rect)
                         writer.append((155, 222), f"Зритель: {cur_fio}", font=srv.FONT_REG, fontsize=8.0)
@@ -516,11 +641,10 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                         fio_applied = True
 
             if price_replacements:
-                for pno, origin, new_text, size, color in price_replacements:
+                for pno, origin, new_text, size, color, style in price_replacements:
                     page = cleaned[pno]
-                    writer = fitz.TextWriter(page.rect)
-                    writer.append(origin, new_text, font=srv.FONT_REG, fontsize=size)
-                    writer.write_text(page, color=srv.int_to_rgb(color))
+                    runs = _replacement_runs(cleaned, doc_id, new_text, style)
+                    _draw_runs(page, runs, origin, size, srv.int_to_rgb(color))
 
             seat_applied = False
             if seat_info:
@@ -568,7 +692,9 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                                "Свяжись с администратором: /paysupport."), info
             for pno, (page, expected) in enumerate(zip(cleaned, personal_targets)):
                 cur_fio = fio_list[pno] if pno < len(fio_list) else (fio_list[-1] if fio_list else None)
-                rem_expected = expected - ({_normalized(cur_fio)} if cur_fio else set())
+                rem_expected = expected - (({_normalized(cur_fio)} | {_normalized(w) for w in cur_fio.split()}) if cur_fio else set())
+                if cur_fio and pno < len(name_slots) and name_slots[pno] and name_slots[pno].get("header"):
+                    rem_expected.discard(_normalized(name_slots[pno]["header"]["text"]))
                 remaining = {_normalized(line["text"]) for line in srv.extract_lines(page)}
                 if rem_expected & remaining:
                     log.warning("cleanup incomplete: recognized personal/program lines remain")
@@ -603,6 +729,11 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
             return True, result, info
         finally:
             cleaned.close()
+            try:
+                with srv.LOCK:
+                    srv._doc_fonts.pop(doc_id, None)
+            except Exception:
+                pass
     except validation.ValidationError as error:
         log.warning("ticket preservation failed: %s", error)
         return False, "Проверка сохранности не пройдена. Файл не отправлен: " + str(error), info

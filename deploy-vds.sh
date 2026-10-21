@@ -13,6 +13,7 @@ if [ -f "$bilet_root/.cryptobot_token" ]; then cp "$bilet_root/.cryptobot_token"
 cp -R "$bilet_root/migrations" "$bilet_package/"
 cp "$bilet_root/tests/"test_*.py "$bilet_package/tests/"
 if [ -f "$bilet_root/tests/_stub_engine.py" ]; then cp "$bilet_root/tests/_stub_engine.py" "$bilet_package/tests/"; fi
+if [ -d "$bilet_root/tests/fixtures" ]; then cp -R "$bilet_root/tests/fixtures" "$bilet_package/tests/"; fi
 if [ -d "$bilet_root/scripts" ]; then cp -R "$bilet_root/scripts" "$bilet_package/"; fi
 for bilet_unit in bilet-bot.service bilet-backup.service bilet-backup.timer; do
     if [ -f "$bilet_root/$bilet_unit" ]; then cp "$bilet_root/$bilet_unit" "$bilet_package/"; fi

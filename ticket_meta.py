@@ -45,14 +45,19 @@ THEATER_ALIASES = [
     (re.compile(r"табаков|табакерк", re.I), "Театр Табакова"),
     (re.compile(r"нижегородский.*театр|operann", re.I), "Нижегородский театр оперы и балета"),
     (re.compile(r"пушкин", re.I), "Театр Пушкина"),
+    (re.compile(r"казанский.*тюз|гбу.*казанский тюз", re.I), "Казанский ТЮЗ"),
     (re.compile(r"драматический театр рб|гардт рб", re.I), "Русский драмтеатр РБ"),
     (re.compile(r"русский драмтеатр|русский драматический театр", re.I), "Русский драмтеатр"),
+    (re.compile(r"бгатоиб|башопера|башкирск\w*\s+(?:государственн\w*\s+)?"
+                r"(?:академическ\w*\s+)?театр\w*\s+оперы", re.I),
+     "Башкирский театр оперы и балета"),
 ]
 
 THEATER_KEYWORDS = [
     "театр", "мхт", "бдт", "мариинск", "вахтангов", "ленком", "сатирикон",
     "моссовет", "образцов", "елизаров", "драмтеатр", "габт", "филармония",
-    "консерватория", "дворец культуры", "кз ", "концертный зал",
+    "консерватория", "дворец культуры", "кз ", "концертный зал", "тюз",
+    "бгатоиб", "башопера",
 ]
 
 SKIP_TITLE_RE = re.compile(
@@ -60,12 +65,13 @@ SKIP_TITLE_RE = re.compile(
     r"запрещается|распечатать|использование|штрих-код|сложить билет|билетоприемник|поместить билет|"
     r"правила|информация|категория|возрастной ценз|справочная служба|справки|адрес|место проведения|"
     r"организатор|сервис|крымская онлайн|возврат|паспорт|покупатель|зритель|клиент|проход|условия|"
-    r"стоимость|без сервисного сбора|распространитель|оферта",
+    r"стоимость|без сервисного сбора|распространитель|оферта|тип оплаты|фио|комиссия|полная цена|"
+    r"код электронного билета|дата покупки",
     re.I,
 )
 
 LABEL_START_RE = re.compile(
-    r"^(?:дата|время|начало|цена|стоимость|ряд|место|сектор|секция|билет|заказ|номер|e-ticket|ticket|order)[\s#№:.]",
+    r"^(?:дата|время|начало|цена|полная\s+цена|стоимость|ряд|место|сектор|секция|билет|электронный\s+билет|заказ|номер|код\s+электронного\s+билета|тип\s+оплаты|фио(?:\s+покупателя)?|комиссия|e-ticket|ticket|order)(?:[\s#№:.]|$)",
     re.I,
 )
 
@@ -119,6 +125,9 @@ def clean_show_title(raw: str | None) -> str:
     if not raw:
         return ""
     title = " ".join(raw.split()).strip(" «»\"'.,:;-")
+    title = re.sub(r"\s*[\[(]?\s*\d{1,2}\s*\+\s*[\])]?\s*$", "", title).strip()
+    if re.search(r"\b[a-z0-9-]+\.(?:ru|com|org|net|io|me)\b", title, re.I) or re.search(r"^[a-z0-9.-]+\.[a-z]{2,}", title, re.I):
+        return ""
     if SKIP_TITLE_RE.search(title) or PATRONYMIC_RE.search(title):
         return ""
     if LABEL_START_RE.match(title):
@@ -137,40 +146,80 @@ def parse_date_and_time(text: str, lines: list[str]) -> tuple[str, str, str]:
     full_date = ""
     time_str = ""
 
-    # Labeled lines
+    # 0. Check adjacent pure date and time in lines (without transaction seconds)
     for i, line in enumerate(lines):
-        norm = line.lower().strip()
-        if norm in {"дата", "дата проведения", "дата события"} and i + 1 < len(lines):
-            cand = lines[i + 1].strip()
-            m = re.search(r"\b(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)\b", cand)
-            if m:
-                full_date = m.group(1)
-        elif norm in {"время", "начало", "время начала"} and i + 1 < len(lines):
-            cand = lines[i + 1].strip()
-            m = re.search(r"\b(\d{1,2}:\d{2})\b", cand)
-            if m:
-                time_str = m.group(1)
+        if re.search(r"покупк|заказ|оплат", line, re.I):
+            continue
+        m_dt = re.fullmatch(r"(\d{2}\.\d{2}\.\d{4})", line.strip())
+        if m_dt and i + 1 < len(lines):
+            m_tm = re.fullmatch(r"([012]?\d:[0-5]\d)", lines[i + 1].strip())
+            if m_tm:
+                full_date = m_dt.group(1)
+                time_str = m_tm.group(1)
+                break
+        m_both = re.fullmatch(r"(\d{2}\.\d{2}\.\d{4})\s+([012]?\d:[0-5]\d)", line.strip())
+        if m_both:
+            full_date = m_both.group(1)
+            time_str = m_both.group(2)
+            break
+
+    # Labeled lines
+    if not full_date or not time_str:
+        for i, line in enumerate(lines):
+            norm = line.lower().strip()
+            if not full_date and norm in {"дата", "дата проведения", "дата события"} and i + 1 < len(lines):
+                cand = lines[i + 1].strip()
+                m = re.search(r"\b(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)\b", cand)
+                if m:
+                    full_date = m.group(1)
+            elif not time_str and norm in {"время", "начало", "время начала"} and i + 1 < len(lines):
+                cand = lines[i + 1].strip()
+                m = re.search(r"\b(\d{1,2}:\d{2})\b", cand)
+                if m:
+                    time_str = m.group(1)
 
     # Russian month textual search: "17 октября 2026" or "17 декабря 2026 19:00"
     if not full_date:
+        months_pat = "|".join(MONTH_MAP.keys())
+        date_pattern = re.compile(rf"\b(\d{{1,2}})\s+({months_pat})(?:\s+(\d{{4}}))?", re.I)
+        for line in lines[:25]:
+            if re.search(r"приказ|министерств|утвержд|закон|купил|покупк|заказ", line, re.I):
+                continue
+            m = date_pattern.search(line)
+            if m:
+                day = int(m.group(1))
+                month_num = MONTH_MAP[m.group(2).lower()]
+                year = m.group(3) or "2026"
+                full_date = f"{day:02d}.{month_num}.{year}"
+                if not time_str:
+                    m_tm = re.search(r"\b([012]?\d:[0-5]\d)\b", line)
+                    if m_tm:
+                        time_str = m_tm.group(1)
+                break
+
+    if not full_date:
+        clean_month_text = re.sub(r"(?:приказ|министерств|утвержд|закон)[^\n]*", "", text, flags=re.I)
         for month_name, month_num in MONTH_MAP.items():
             pattern = rf"\b(\d{{1,2}})\s+{month_name}(?:\s+(\d{{4}}))?"
-            match = re.search(pattern, text, re.I)
+            match = re.search(pattern, clean_month_text, re.I)
             if match:
                 day = int(match.group(1))
                 year = match.group(2) or "2026"
                 full_date = f"{day:02d}.{month_num}.{year}"
                 break
 
-    # Standard numeric date DD.MM.YYYY
+    # Standard numeric date DD.MM.YYYY (filtering out order timestamps with seconds)
     if not full_date:
-        m_num = re.search(r"\b(\d{2}\.\d{2}\.\d{4})\b", text)
+        clean_text = re.sub(r"\b\d{2}\.\d{2}\.\d{4}\s+\d{1,2}:\d{2}:\d{2}\b", "", text)
+        clean_text = re.sub(r"(?:дата\s+покупки|дата\s+заказа)[^\n]*", "", clean_text, flags=re.I)
+        m_num = re.search(r"\b(\d{2}\.\d{2}\.\d{4})\b", clean_text)
         if m_num:
             full_date = m_num.group(1)
 
-    # Search for HH:MM time
+    # Search for HH:MM time (filtering out seconds)
     if not time_str:
-        m_tm = re.search(r"\b([012]?\d:[0-5]\d)\b", text)
+        clean_text = re.sub(r"\b\d{1,2}:\d{2}:\d{2}\b", "", text)
+        m_tm = re.search(r"\b([012]?\d:[0-5]\d)\b", clean_text)
         if m_tm:
             time_str = m_tm.group(1)
 
@@ -200,6 +249,85 @@ def parse_price(val: str | None) -> tuple[int, str]:
         return num, formatted
     except ValueError:
         return 0, ""
+
+
+def _extract_muza_table(page: fitz.Page, srv=None) -> dict[str, str]:
+    """Таблица электронного билета «Муза»: зал/сектор/ряд/место по колонкам.
+
+    На бланке Башкирской оперы заголовок ЛОЖА стоит пустым, а field_tags
+    принимает его за сектор. Читаем строку значений по границам заголовков.
+    """
+    if srv is None:
+        return {}
+    try:
+        lines = srv.field_tags(srv.extract_lines(page))
+    except Exception:
+        return {}
+    blob = " ".join((l.get("text") or "") for l in lines).lower()
+    if not ("билетной платформы муза" in blob
+            or ("электронный билет" in blob and "покупатель" in blob
+                and ("бгатоиб" in blob or "bashopera.ru" in blob
+                     or "башкирск" in blob))):
+        return {}
+    all_labels = []
+    for line in lines:
+        if line.get("stale"):
+            continue
+        text = re.sub(r"\s+", " ", line.get("text") or "").strip().upper()
+        b = fitz.Rect(line["bbox"])
+        if text in {"ЗАЛ", "СЕКТОР", "ЛОЖА", "РЯД", "МЕСТО", "ПОКУПАТЕЛЬ"}:
+            all_labels.append((text, line))
+    labels = {}
+    required = {"ЗАЛ", "СЕКТОР", "РЯД", "МЕСТО"}
+    for _name, reference in all_labels:
+        ry = (reference["bbox"][1] + reference["bbox"][3]) / 2
+        row = {}
+        for name, line in all_labels:
+            if abs((line["bbox"][1] + line["bbox"][3]) / 2 - ry) <= 3:
+                row.setdefault(name, line)
+        if required <= row.keys():
+            labels = row
+            break
+    if not labels:
+        return {}
+    ordered = sorted(labels.items(), key=lambda item: item[1]["bbox"][0])
+    bounds = []
+    for i, (name, line) in enumerate(ordered):
+        b = fitz.Rect(line["bbox"])
+        left = (page.rect.x0 if i == 0
+                else (fitz.Rect(ordered[i - 1][1]["bbox"]).x1 + b.x0) / 2)
+        right = (page.rect.x1 if i == len(ordered) - 1
+                 else (b.x1 + fitz.Rect(ordered[i + 1][1]["bbox"]).x0) / 2)
+        bounds.append((name, left, right))
+    values = {name: [] for name, _left, _right in bounds}
+    row_bottom = max(fitz.Rect(line["bbox"]).y1 for line in labels.values())
+    for line in lines:
+        if line.get("stale") or not (line.get("text") or "").strip():
+            continue
+        b = fitz.Rect(line["bbox"])
+        if not (row_bottom - 1 <= b.y0 <= row_bottom + 55):
+            continue
+        cx = (b.x0 + b.x1) / 2
+        for name, left, right in bounds:
+            if left <= cx < right:
+                values[name].append((b.y0, b.x0, line["text"].strip()))
+                break
+
+    def joined(name):
+        return " ".join(text for _y, _x, text in sorted(values.get(name, []))).strip()
+
+    sector = joined("СЕКТОР") or joined("ЛОЖА")
+    row_match = re.search(r"\d+", joined("РЯД"))
+    seat_match = re.search(r"\d+", joined("МЕСТО"))
+    theater = ""
+    if "бгатоиб" in blob or "bashopera.ru" in blob or "башкирск" in blob:
+        theater = "Башкирский театр оперы и балета"
+    return {
+        "theater": theater,
+        "sector": re.sub(r"\s+", " ", sector).strip(),
+        "row": row_match.group(0) if row_match else "",
+        "seat": seat_match.group(0) if seat_match else "",
+    }
 
 
 def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
@@ -245,7 +373,7 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
 
     # Show title search: 2. check top lines
     if not title:
-        for line in lines[:15]:
+        for line in lines[:25]:
             cand = clean_show_title(line)
             if cand and not clean_theater_name(cand) and not clean_theater_name(line):
                 title = cand
@@ -280,6 +408,13 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
                     price_val, price_str = parse_price(val)
         except Exception:
             pass
+
+    muza_meta = _extract_muza_table(page, srv=srv)
+    if muza_meta:
+        theater = muza_meta.get("theater") or theater
+        sector = muza_meta.get("sector") or sector
+        row = muza_meta.get("row") or row
+        seat = muza_meta.get("seat") or seat
 
     # Special handler: Ticketland / MTS Live structured layout
     if "TICKETLAND" in text.upper() or "МТС ЛАЙВ" in text.upper() or "НАИМЕНОВАНИЕ МЕРОПРИЯТИЯ" in text.upper():

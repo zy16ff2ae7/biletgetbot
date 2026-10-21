@@ -1,3 +1,4 @@
+import base64
 import difflib
 import hashlib
 import io
@@ -12,6 +13,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
 
 import fitz
+
+TRANSPARENT_1X1_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==")
+
+if not hasattr(fitz.Rect, "get_area"):
+    fitz.Rect.get_area = lambda self: max(0.0, self.width) * max(0.0, self.height)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 FONT_REG = fitz.Font(fontfile=os.path.join(ROOT, "vendor", "Arial.ttf"))
@@ -562,7 +568,7 @@ def _pushkin_wm_rects(page):
 
 def _is_barcode_rect(r):
     """Вытянутый штрихкод (широкий и низкий), а не квадратный QR."""
-    return r.width >= 2.5 * max(r.height, 1.0) and r.width > 20
+    return 20 < r.width <= 260 and r.width >= 2.5 * max(r.height, 1.0)
 
 
 def _has_pushkin_magenta(page, xref):
@@ -587,10 +593,29 @@ def _has_pushkin_magenta(page, xref):
         return False
 
 
+def _is_pushkin_badge(page, xref, r):
+    if not (70 <= r.width <= 130 and 15 <= r.height <= 40 and r.width >= 2.8 * r.height):
+        return False
+    if page is not None and xref is not None:
+        try:
+            im_data = page.parent.extract_image(xref).get("image")
+            if im_data:
+                from PIL import Image
+                import io, numpy as np
+                img = Image.open(io.BytesIO(im_data)).convert("RGB")
+                arr = np.array(img)
+                dark_ratio = (arr < 40).mean()
+                if dark_ratio > 0.70:
+                    return True
+        except Exception:
+            pass
+    return False
+
+
 def _is_pushkin_image(r, pk_hits=(), page=None, xref=None):
     """Картинки блока «Пушкинская карта»: баннер в шапке (175×50), крупный
-    водяной знак (451×372) и фиолетовый силуэт Пушкина в шапке KASSIR.RU (~44×43).
-    Мелкие квадратные QR/логотипы театра — нет."""
+    водяной знак (451×372), фиолетовый силуэт Пушкина в шапке KASSIR.RU (~44×43),
+    плашка «Пушкинская карта» и рамка паспорта на Яндекс Афише."""
     if r.width < 2 or r.height < 2:
         return False
 
@@ -599,6 +624,13 @@ def _is_pushkin_image(r, pk_hits=(), page=None, xref=None):
         return True
 
     if page is not None and xref is not None and _has_pushkin_magenta(page, xref):
+        return True
+
+    if pk_hits and _is_pushkin_badge(page, xref, r):
+        return True
+
+    # Рамка паспорта на Яндекс Афише: картинка накрывает строки Пушкинской карты
+    if pk_hits and any(r.intersects(fitz.Rect(l["bbox"])) for l in pk_hits) and r.width > 150:
         return True
 
     # квадратная иконка / QR
@@ -671,6 +703,34 @@ def _is_kassa24_family(lines):
             or "kassa24" in blob)
 
 
+BUYER_LABEL_RE = re.compile(r"^покупатель[\s:.№/–—-]*(.*)$", re.I)
+BUYER_FIO_STOP_RE = re.compile(
+    r"[,;]|\b(?:фискальн\w*|фн|рн|инн|кпп|офд|чек\w*|"
+    r"дата\s+выдачи|номер\s+смены|документ\w*)\b", re.I)
+
+
+def _buyer_fio_from_text(text):
+    """ФИО после метки «Покупатель», без самой метки и служебного хвоста.
+
+    Нужно для частичной зачистки: на обычных бланках метка «Покупатель»
+    остаётся, а имя под ней вырезается. У Музы заголовок удаляется отдельно.
+    """
+    m = BUYER_LABEL_RE.match((text or "").strip())
+    if not m:
+        return None
+    rest = BUYER_FIO_STOP_RE.split(m.group(1), 1)[0].strip()
+    if not rest or re.search(r"\d", rest):
+        return None
+    if is_name(rest):
+        return rest
+    toks = rest.split()
+    for n in range(min(4, len(toks)), 1, -1):
+        cand = " ".join(toks[:n])
+        if is_name(cand):
+            return cand
+    return None
+
+
 def _personal_line_what(l):
     """Что персонального в строке (ПОКУПАТЕЛЬ / КЛИЕНТ / ФИО / ЗРИТЕЛЬ) или None."""
     t = (l.get("text") or "").strip()
@@ -678,7 +738,7 @@ def _personal_line_what(l):
     if "линия сгиба" in tl:
         return None
     if tl.startswith("покупатель"):
-        return f"покупатель: {t[:40]}"
+        return f"покупатель: {t[:40]}" if _buyer_fio_from_text(t) else None
     # kassy.ru: подпись и ФИО в одной строке — «Клиент: Рязанов Максим Юрьевич»
     if re.match(r"(клиент|фио)\s*[:.\-]", tl):
         return f"фио: {t[:40]}"
@@ -686,7 +746,7 @@ def _personal_line_what(l):
         return f"билет на имя: {t[:40]}"
     if "name" in (l.get("tags") or []):
         return f"имя: {t[:40]}"
-    if re.fullmatch(r"(зритель|viewer|посетитель)\s*[:.\-–]?", tl):
+    if re.fullmatch(r"(зритель|viewer)\s*[:.\-–]?", tl):
         return f"метка: {t[:20]}"
     return None
 
@@ -713,7 +773,7 @@ def _kassir_name_rows(lines):
 
 
 def _pushkin_notice_lines(lines):
-    """Инструкция о документе между двумя строками Пушкинской карты.
+    """Инструкция о документе рядом со строками Пушкинской карты.
 
     Та же инструкция в общих правилах билета не относится к этому блоку.
     """
@@ -722,13 +782,25 @@ def _pushkin_notice_lines(lines):
     result = []
     for line in lines:
         text = line["text"].strip().lower()
-        if (not text.startswith("при входе на мероприятие")
-                or "документ, удостоверяющий личность" not in text):
+        norm = re.sub(r"\s+", "", text)
+        is_notice_phrase = (
+            ("документ" in norm and "удостоверяющ" in norm)
+            or "незабудьтепаспорт" in norm
+            or "паспорт" in norm
+            or "навходепроверят" in norm
+        )
+        if not is_notice_phrase:
             continue
         b = fitz.Rect(line["bbox"])
-        aligned = [r for r in captions if abs(r.x0 - b.x0) < 3]
-        if (any(0 <= b.y0 - r.y1 <= 4 for r in aligned)
-                and any(0 <= r.y0 - b.y1 <= 4 for r in aligned)):
+        aligned = [r for r in captions if abs(r.x0 - b.x0) < 15]
+        if (any(0 <= b.y0 - r.y1 <= 25 for r in aligned)
+                or any(0 <= r.y0 - b.y1 <= 25 for r in aligned)):
+            result.append(line)
+            continue
+        close = [r for r in captions
+                 if (min(b.x1, r.x1) > max(b.x0, r.x0))
+                 and (0 <= b.y0 - r.y1 <= 25 or 0 <= r.y0 - b.y1 <= 25)]
+        if close:
             result.append(line)
     return result
 
@@ -795,6 +867,102 @@ def _operann_name_rows(page, lines):
     return found
 
 
+def _is_yandex_afisha_template(page, lines):
+    """Электронный билет Яндекс Афиша (ООО «Яндекс Музыка» / ya.cc)."""
+    blob = " ".join((l.get("text") or "") for l in lines).lower()
+    return ("ya.cc/refund-afisha" in blob or "ya.cc/no-ponyatno" in blob
+            or "яндекс музыка" in blob or "яндекс афиша" in blob
+            or ("как работает билет" in blob and "серия и номер билета" in blob))
+
+
+def _yandex_afisha_buyer_header(page, lines):
+    """Индекс заголовка ПОСЕТИТЕЛЬ / ПОКУПАТЕЛЬ на бланке Яндекс Афиши."""
+    if not _is_yandex_afisha_template(page, lines):
+        return None
+    return next((i for i, l in enumerate(lines)
+                 if not l.get("stale")
+                 and re.fullmatch(r"(?:посетитель|покупатель)\s*:?", (l["text"] or "").strip(), re.I)),
+                None)
+
+
+def _yandex_afisha_name_rows(page, lines):
+    """Строки ФИО посетителя под заголовком ПОСЕТИТЕЛЬ на бланке Яндекс Афиши."""
+    header_id = _yandex_afisha_buyer_header(page, lines)
+    if header_id is None:
+        return set()
+    header = lines[header_id]
+    hb = fitz.Rect(header["bbox"])
+    stop_headers = {"номер заказа", "дата заказа", "цена", "серия и номер билета", "продавец:", "сервис:", "организатор:"}
+    found = set()
+    for i, line in enumerate(lines):
+        if i == header_id or line.get("stale") or not (line.get("text") or "").strip():
+            continue
+        t = line["text"].strip().lower()
+        if t in stop_headers:
+            continue
+        b = fitz.Rect(line["bbox"])
+        # Колонка выровнена по левому краю hb.x0
+        if abs(b.x0 - hb.x0) <= 15 and hb.y1 - 2 <= b.y0 <= hb.y1 + 80:
+            found.add(i)
+    return found
+
+
+def _is_muza_template(page, lines):
+    """Электронный билет на платформе «Муза» (eTicket, горизонтальный бланк).
+
+    У шаблона таблица ЗАЛ/СЕКТОР/ЛОЖА/РЯД/МЕСТО/ПОКУПАТЕЛЬ и подпись
+    «Продажи производятся при помощи билетной платформы Муза»."""
+    if page.rotation or page.rect.width <= page.rect.height:
+        return False
+    blob = " ".join((l.get("text") or "") for l in lines).lower()
+    return ("билетной платформы муза" in blob
+            or ("электронный билет" in blob and "покупатель" in blob
+                and ("бгатоиб" in blob or "bashopera.ru" in blob
+                     or "башкирск" in blob)))
+
+
+def _muza_buyer_header(page, lines):
+    """Индекс заголовка ПОКУПАТЕЛЬ у Музы (нужен и для полного удаления)."""
+    if not _is_muza_template(page, lines):
+        return None
+    return next((i for i, l in enumerate(lines)
+                 if not l.get("stale")
+                 and re.fullmatch(r"покупатель\s*:?", (l["text"] or "").strip(), re.I)),
+                None)
+
+
+def _muza_name_rows(page, lines):
+    """Все строки ФИО в колонке ПОКУПАТЕЛЬ под её заголовком (Муза)."""
+    header_id = _muza_buyer_header(page, lines)
+    if header_id is None:
+        return set()
+    header = lines[header_id]
+    hb = fitz.Rect(header["bbox"])
+    candidates = []
+    for i, line in enumerate(lines):
+        if line is header or line.get("stale") or not (line.get("text") or "").strip():
+            continue
+        b = fitz.Rect(line["bbox"])
+        if abs(b.x0 - hb.x0) <= 6 and b.y0 >= hb.y1 - 1:
+            candidates.append((b.y0, i))
+    found = set()
+    prev_y1 = hb.y1
+    for y0, i in sorted(candidates):
+        if y0 - prev_y1 > 18:
+            break
+        found.add(i)
+        prev_y1 = fitz.Rect(lines[i]["bbox"]).y1
+    return found
+
+
+def _muza_pushkin_hit(line):
+    """Что на бланке Музы действительно удаляем: маркер программы, но не
+    юридическую фразу «...приобретенным по Пушкинской карте.»."""
+    text = (line.get("text") or "").strip().lower()
+    return ("в рамках программы" in text
+            or bool(re.fullmatch(r"пушкинская\s+карта[.:]?", text)))
+
+
 def _chelny_fields(page, lines):
     """Поля шаблона Челнинского театра: метки запечены в фон, значения — текст.
 
@@ -803,8 +971,12 @@ def _chelny_fields(page, lines):
     """
     if sum("BRING TICKET TO THE READER" in l["text"] for l in lines) < 2:
         return None, None
-    if not any((fitz.Rect(im["bbox"]) & page.rect).get_area()
-               >= 0.95 * page.rect.get_area() for im in page.get_image_info()):
+    has_table_bg = any(
+        (fitz.Rect(im["bbox"]) & page.rect).get_area() >= 0.95 * page.rect.get_area()
+        or (fitz.Rect(im["bbox"]).width > 450 and 80 < fitz.Rect(im["bbox"]).height < 250 and fitz.Rect(im["bbox"]).y0 < 100)
+        for im in page.get_image_info()
+    )
+    if not has_table_bg:
         return None, None
     x = page.rect.width * 179 / 595
     for i, l in enumerate(lines):
@@ -933,28 +1105,52 @@ def strip_pushkin_doc(doc, clear_name=True):
         intickets_names = _intickets_name_rows(page, lines)
         operann = _is_operann_template(page, lines)
         operann_names = _operann_name_rows(page, lines)
-        preserve_art = ticketland_block or intickets or operann
+        muza = _is_muza_template(page, lines)
+        muza_header = _muza_buyer_header(page, lines) if muza else None
+        muza_names = _muza_name_rows(page, lines) if muza else set()
+        muza_pk = {i for i, l in enumerate(lines) if muza and _muza_pushkin_hit(l)}
+        is_yandex_afisha = _is_yandex_afisha_template(page, lines)
+        yandex_names = _yandex_afisha_name_rows(page, lines) if is_yandex_afisha else set()
+        yandex_header = _yandex_afisha_buyer_header(page, lines) if is_yandex_afisha else None
+        preserve_art = ticketland_block or intickets or operann or muza or is_yandex_afisha
         payment, buyer = _chelny_fields(page, lines)
         if buyer is not None:
             lines[buyer]["tags"] = ["name"]
-        family = payment is not None or _is_kassa24_family(lines)
+        family = payment is not None or (_is_kassa24_family(lines) and not muza)
         ticketland_names = _ticketland_name_rows(page, lines)
         is_afisha = any(AFISHA_SELLER_RE.search(l["text"] or "") for l in lines)
         removed = []
         personal = set()
-        if clear_name and (family or ticketland_names or intickets_names or is_afisha or operann_names):
+        if clear_name and (family or ticketland_names or intickets_names or is_afisha or operann_names or muza_names or muza_header is not None or yandex_names or yandex_header is not None):
             kassir_rows = _kassir_name_rows(lines)
             for i, l in enumerate(lines):
                 if intickets and i not in intickets_names:
                     continue
                 if operann and i not in operann_names:
                     continue
+                if muza and i not in muza_names and i != muza_header:
+                    continue
+                if is_yandex_afisha and i not in yandex_names and i != yandex_header:
+                    continue
                 is_tl_email = ticketland_block and bool(EMAIL_RE.search(l["text"]))
                 if (ticketland_block or ticketland_names) and i not in ticketland_names and not is_tl_email:
                     continue
-                if not (family or is_afisha or operann) and i not in (ticketland_names | intickets_names) and not is_tl_email:
+                if not (family or is_afisha or operann or muza or is_yandex_afisha) and i not in (ticketland_names | intickets_names) and not is_tl_email:
                     continue
                 if payment is not None and i != buyer:
+                    continue
+                buyer_fio = None if (muza or is_yandex_afisha) else _buyer_fio_from_text(l["text"])
+                if buyer_fio:
+                    box = fitz.Rect(l["bbox"])
+                    hits = [r for r in page.search_for(buyer_fio)
+                            if (r & box).get_area() > 0]
+                    if hits:
+                        hit = max(hits, key=lambda r: (r & box).get_area())
+                        page.add_redact_annot(hit, fill=False)
+                    else:
+                        page.add_redact_annot(box, fill=False)
+                    personal.add(i)
+                    removed.append(f"фио покупателя: {buyer_fio[:40]}")
                     continue
                 what = _personal_line_what(l)
                 if operann and i in operann_names:
@@ -968,6 +1164,14 @@ def strip_pushkin_doc(doc, clear_name=True):
                     what = f"фио Intickets: {l['text'][:40]}"
                 if i in kassir_rows:
                     what = f"строка имени: {l['text'][:40]}"
+                if i in muza_names:
+                    what = f"фио Muza: {l['text'][:40]}"
+                if i == muza_header:
+                    what = "заголовок Muza: ПОКУПАТЕЛЬ"
+                if is_yandex_afisha and i in yandex_names:
+                    what = f"фио Yandex: {l['text'][:40]}"
+                if is_yandex_afisha and i == yandex_header:
+                    what = "заголовок Yandex: ПОСЕТИТЕЛЬ"
                 if ticketland_block and EMAIL_RE.search(l["text"]):
                     what = f"почта: {l['text'][:40]}"
                 if not what:
@@ -994,13 +1198,29 @@ def strip_pushkin_doc(doc, clear_name=True):
             page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
                                   graphics=fitz.PDF_REDACT_LINE_ART_NONE,
                                   text=fitz.PDF_REDACT_TEXT_REMOVE)
+            # «Банковская карта» рисуем родным шрифтом строки (напр. GolosText-
+            # SemiBold), а не голым Arial: замена должна совпадать с оригиналом
+            # по начертанию и толщине 1:1.
+            card_doc_id = "card-" + uuid.uuid4().hex[:12]
+            try:
+                card_chain = font_chain(doc, card_doc_id, l.get("font"),
+                                        bool(l.get("bold")), bool(l.get("serif")))
+            except Exception:
+                card_chain = [FONT_BOLD if l.get("bold") else FONT_REG]
+            card_runs = font_runs("Банковская карта", card_chain)
             writer = fitz.TextWriter(page.rect)
-            writer.append(l["origin"], "Банковская карта", font=FONT_REG, fontsize=l["size"])
+            card_x = l["origin"][0]
+            for card_font, card_part in card_runs:
+                writer.append((card_x, l["origin"][1]), card_part, font=card_font, fontsize=l["size"])
+                card_x += card_font.text_length(card_part, l["size"])
             writer.write_text(page, color=int_to_rgb(l["color"]))
+            with LOCK:
+                _doc_fonts.pop(card_doc_id, None)
             removed.append("тип оплаты: Банковская карта")
         pk_hits = [l for i, l in enumerate(lines)
                    if i != payment and i not in personal
-                   and PUSHKIN_TEXT_RE.search(l["text"] or "")]
+                   and PUSHKIN_TEXT_RE.search(l["text"] or "")
+                   and (not muza or i in muza_pk)]
         if not pk_hits:
             if removed:
                 page.apply_redactions(
@@ -1043,7 +1263,8 @@ def strip_pushkin_doc(doc, clear_name=True):
                 continue
             r = fitz.Rect(l["bbox"])
             t = (l["text"] or "").strip()
-            if (PUSHKIN_TEXT_RE.search(t) or l in notices or l in ticketland_ages
+            if ((PUSHKIN_TEXT_RE.search(t) and (not muza or i in muza_pk))
+                    or l in notices or l in ticketland_ages
                     or (is_afisha and AFISHA_NOISE_RE.search(t))):
                 page.add_redact_annot(r, fill=False)
                 removed.append(t[:48])
@@ -1091,7 +1312,11 @@ def strip_pushkin_doc(doc, clear_name=True):
         for xref, rects in (() if intickets else uses.items()):
             if xref in ticketland_banners or all(_is_pushkin_image(r, pk_hits, page=page, xref=xref) for r in rects):
                 try:
-                    page.delete_image(xref)
+                    im_info = page.parent.extract_image(xref)
+                    if im_info.get("smask") or is_yandex_afisha:
+                        page.replace_image(xref, stream=TRANSPARENT_1X1_PNG)
+                    else:
+                        page.delete_image(xref)
                     removed.append(f"картинка Пушкина xref={xref}")
                 except Exception:
                     pass
@@ -1214,12 +1439,31 @@ def _file_font(path):
     return _file_fonts[path]
 
 
-def _fallbacks(bold, serif=False):
+def _golos_weight(name, bold):
+    """Вес Golos-фолбэка: явный из имени шрифта, иначе по флагу жирности."""
+    n = re.sub(r"[^a-z0-9]", "", (name or "").lower())
+    for key, weight in (("extrabold", "Bold"), ("semibold", "SemiBold"),
+                        ("medium", "Medium"), ("bold", "Bold")):
+        if key in n:
+            return weight
+    return "Bold" if bold else "Regular"
+
+
+def _fallbacks(bold, serif=False, name=None):
     """Хвост цепочки для символов вне сабсета: сперва стиль-совместимый полный
     шрифт (Times для засечки / Arial для рубленого, той же жирности) — чтобы новые
     цифры/буквы совпали по начертанию с оригиналом; затем системный шрифт с ₽ и
-    кириллицей (₽ нет в Times/Arial); в самом хвосте — vendor Arial как гарантия."""
+    кириллицей (₽ нет в Times/Arial); в самом хвосте — vendor Arial как гарантия.
+    Для Golos-документов первым идёт vendor Golos Text нужного веса: буква,
+    которой нет в сабсете (заглавная «Е» в новом ФИО), рисуется той же гарнитурой,
+    а не Arial (был Arial-BoldMT посреди GolosText-SemiBold)."""
     out = []
+    short = re.sub(r"^[A-Z]{6}\+", "", name or "")
+    if not serif and short.lower().startswith("golostext"):
+        g = _file_font(os.path.join(ROOT, "vendor", "golos",
+                                    "GolosText-%s.ttf" % _golos_weight(short, bold)))
+        if g:
+            out.append(g)
     # первый существующий из кандидатов: путь один на всю цепочку, остальные —
     # чужие ОС, на этой машине их просто нет
     for path in (SERIF_FONTS if serif else SANS_FONTS).get(bool(bold)) or ():
@@ -1290,7 +1534,7 @@ def font_chain(doc, doc_id, name, bold, serif=False):
     chain = []
     for f in fonts.get(re.sub(r"^[A-Z]{6}\+", "", name or ""), []):
         chain.append(f)
-    for f in _fallbacks(bold, serif):
+    for f in _fallbacks(bold, serif, name):
         if f not in chain:
             chain.append(f)
     for key, lst in fonts.items():
@@ -2286,12 +2530,20 @@ def zone_value_ok(text):
     return bool(ZONE_RE.match(s)) and not NOT_ZONE_RE.search(s)
 
 
+NOT_SECTOR_WORDS = {
+    "ряд", "место", "места", "билет", "заказ", "цена", "стоимость",
+    "зона", "сектор", "дата", "время", "номер", "seat", "row",
+}
+
+
 def sector_value_ok(text):
     """Значение сектора: название зоны или КОРОТКИЙ идентификатор («A», «12», «II»,
     «2 этаж»). Свободный текст сектором не считаем — иначе «Зона отдыха на 2 этаже»
     и «Уровень сервиса премиум» метились сектором."""
     s = text.strip().strip(":.№/-").strip()
     if not s or NOT_ZONE_RE.search(s):
+        return False
+    if s.lower() in NOT_SECTOR_WORDS:
         return False
     if ZONE_RE.match(s):
         return True
