@@ -58,13 +58,17 @@ THEATER_ALIASES = [
     (re.compile(r"камал[а-я]*\b|тгат\s+им", re.I), "Театр им. Камала"),
     (re.compile(r"московский.*(?:театр\s+)?юн(?:ого\s+зрителя|оз)|мтюз", re.I), "МТЮЗ"),
     (re.compile(r"нижегородский.*театр|operann|234-05-34", re.I), "Нижегородский театр оперы и балета"),
+    (re.compile(r"модерн", re.I), "Театр «Модерн»"),
+    (re.compile(r"брянцев|тюз\s+им\.\s*а\.?а\.?\s*брянцев", re.I), "ТЮЗ им. Брянцева"),
+    (re.compile(r"казанск\w*\s+.*(?:театр\s+юн|тюз)", re.I), "Казанский ТЮЗ"),
+    (re.compile(r"татарск\w*\s+драмтеатр|низаметдинов", re.I), "Татарский драмтеатр"),
 ]
 
 THEATER_KEYWORDS = [
     "театр", "мхт", "бдт", "мариинск", "вахтангов", "ленком", "сатирикон",
     "моссовет", "образцов", "елизаров", "драмтеатр", "габт", "филармония",
     "консерватория", "дворец культуры", "кз ", "концертный зал", "тюз",
-    "бгатоиб", "башопера", "тинчурин", "мастеровые", "угтт",
+    "бгатоиб", "башопера", "тинчурин", "мастеровые", "угтт", "модерн", "брянцев",
 ]
 
 SKIP_TITLE_RE = re.compile(
@@ -482,15 +486,73 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
         except Exception:
             pass
 
-    # Regex fallbacks
+    # Layout-based extraction & regex fallbacks
+    # 1. In-line on same line (e.g. "Ряд 3 Место 11")
     if not row:
-        m_r = re.search(r"(?:Ряд|ряд|РЯД)\s*[:№]?\s*(\d+)", text)
+        m_r = re.search(r"(?:Ряд|ряд|РЯД)[ \t\xa0]*[:№]?[ \t\xa0]*([0-9]+[а-яА-Яa-zA-Z]?)", text)
         if m_r:
             row = m_r.group(1)
     if not seat:
-        m_s = re.search(r"(?:Место|место|МЕСТО)\s*[:№]?\s*(\d+)", text)
+        m_s = re.search(r"(?:Место|место|МЕСТО)[ \t\xa0]*[:№]?[ \t\xa0]*([0-9]+[а-яА-Яa-zA-Z]?|[а-яА-Яa-zA-Z])", text)
         if m_s:
             seat = m_s.group(1)
+
+    # 2. Bilingual with newline (Row / Seat)
+    if not row:
+        m_rb = re.search(r"(?:Ряд|ряд|РЯД)\s*(?:\n|\r|\s)*(?:Row|row|Line|line)\s*[:№]?\s*([0-9]+[а-яА-Яa-zA-Z]?)", text)
+        if m_rb:
+            row = m_rb.group(1)
+    if not seat:
+        m_sb = re.search(r"(?:Место|место|МЕСТО)\s*(?:\n|\r|\s)*(?:Seat|seat)\s*[:№]?\s*([0-9]+[а-яА-Яa-zA-Z]?|[а-яА-Яa-zA-Z])", text)
+        if m_sb:
+            seat = m_sb.group(1)
+
+    # 3. Table header format: РЯД \n МЕСТО \n <row> \n <seat>
+    if not row or not seat:
+        m_tab = re.search(r"(?:РЯД|ряд|Ряд)[^\n\d]*\n\s*(?:МЕСТО|место|Место)[^\n\d]*\n\s*(\d{1,2}[а-яА-Яa-zA-Z]?)\s*\n\s*(\d{1,3}[а-яА-Яa-zA-Z]?)", text)
+        if m_tab:
+            if not row:
+                row = m_tab.group(1)
+            if not seat:
+                seat = m_tab.group(2)
+
+    # 4. Table column coordinate alignment
+    if not row or not seat:
+        try:
+            words = page.get_text("words")
+            row_headers = [w for w in words if w[4].lower() in ("ряд", "ряд:")]
+            seat_headers = [w for w in words if w[4].lower() in ("место", "место:")]
+            for rh in row_headers:
+                same_line_num = any(abs(w[1] - rh[1]) < 5 and w[0] > rh[0] and w[4].isdigit() for w in words)
+                if same_line_num:
+                    continue
+                candidates = [w for w in words if abs(w[0] - rh[0]) < 20 and 5 < (w[1] - rh[1]) < 45 and re.match(r"^\d{1,2}[а-яА-Яa-zA-Z]?$", w[4])]
+                if candidates and not row:
+                    row = candidates[0][4]
+            for sh in seat_headers:
+                same_line_num = any(abs(w[1] - sh[1]) < 5 and w[0] > sh[0] and (w[4].isdigit() or len(w[4]) == 1) for w in words)
+                if same_line_num:
+                    continue
+                candidates = [w for w in words if abs(w[0] - sh[0]) < 20 and 5 < (w[1] - sh[1]) < 45 and re.match(r"^(?:\d{1,3}[а-яА-Яa-zA-Z]?|[а-яА-Яa-zA-Z])$", w[4])]
+                if candidates and not seat:
+                    seat = candidates[0][4]
+        except Exception:
+            pass
+
+    # 5. Letter seat fallback
+    if not seat:
+        m_let = re.search(r"(?:Место|место|МЕСТО)\s*[:№]?\s*([а-яА-Яa-zA-Z])\b", text)
+        if m_let:
+            seat = m_let.group(1)
+
+    # 6. Chelny ticket pattern
+    if not row or not seat:
+        m_ch = re.search(r"(\d+)\s*руб\.\s*\n\s*(\d{1,2})\s*\n\s*(\d{1,3})", text)
+        if m_ch and ("мастеровые" in text.lower() or "russdramteatr" in text.lower()):
+            if not row:
+                row = m_ch.group(2)
+            if not seat:
+                seat = m_ch.group(3)
     if not sector:
         m_sec = re.search(r"\b(Партер|Балкон[^\n,]*|Бельэтаж[^\n,]*|Амфитеатр[^\n,]*|Ложа[^\n,]*)\b", text, re.I)
         if m_sec:

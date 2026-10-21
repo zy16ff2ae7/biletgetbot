@@ -104,7 +104,8 @@ class SubscriptionTests(unittest.TestCase):
 
     def test_version_one_database_migrates_without_losing_access(self):
         self.store.apply_payment(222, self.payment)
-        with sqlite3.connect(self.store.path) as db:
+        from contextlib import closing
+        with closing(sqlite3.connect(self.store.path)) as db, db:
             db.execute("DROP TABLE payment_incidents")
             db.execute("PRAGMA user_version=1")
         upgraded = SubscriptionStore(self.store.path)

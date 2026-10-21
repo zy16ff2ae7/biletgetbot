@@ -588,6 +588,52 @@ class MetadataFixesTests(unittest.TestCase):
         self.assertEqual("Театр им. Камала", ticket_meta.clean_theater_name("ТГАТ им. Г.Камала"))
         self.assertEqual("МТЮЗ", ticket_meta.clean_theater_name("Московский театр Юного Зрителя"))
         self.assertEqual("Нижегородский театр оперы и балета", ticket_meta.clean_theater_name("Нижегородский государственный академический театр оперы и балета"))
+        self.assertEqual("Театр «Модерн»", ticket_meta.clean_theater_name("Московский драматический театр «Модерн»"))
+        self.assertEqual("ТЮЗ им. Брянцева", ticket_meta.clean_theater_name("СПб ГБУК\"Театр Юных Зрителей им. А.А. Брянцева\""))
+        self.assertEqual("Казанский ТЮЗ", ticket_meta.clean_theater_name("ГБУ Казанский государственный театр юного зрителя"))
+        self.assertEqual("Татарский драмтеатр", ticket_meta.clean_theater_name("Татарский драмтеатр, ул.Низаметдинова, д.29"))
+
+    def test_row_and_seat_extraction_varieties(self):
+        font = str(Path(bot.BILETNAYA) / "vendor/Arial.ttf")
+
+        # 1. Bilingual
+        doc1 = fitz.open()
+        p1 = doc1.new_page(width=500, height=500)
+        p1.insert_text((50, 50), "Ряд\nRow\n4\nМесто\nSeat\n17", fontname="F0", fontfile=font)
+        meta1 = ticket_meta.extract_page_meta(p1)
+        self.assertEqual("4", meta1["row"])
+        self.assertEqual("17", meta1["seat"])
+        doc1.close()
+
+        # 2. Letter seat (МХТ откидное)
+        doc2 = fitz.open()
+        p2 = doc2.new_page(width=500, height=500)
+        p2.insert_text((50, 50), "Ряд\n13\nМесто\nА", fontname="F0", fontfile=font)
+        meta2 = ticket_meta.extract_page_meta(p2)
+        self.assertEqual("13", meta2["row"])
+        self.assertEqual("А", meta2["seat"])
+        doc2.close()
+
+        # 3. Chelny ticket pattern
+        doc3 = fitz.open()
+        p3 = doc3.new_page(width=500, height=500)
+        p3.insert_text((50, 50), "МАУК РДТ «Мастеровые»\n1800 руб.\n5\n9", fontname="F0", fontfile=font)
+        meta3 = ticket_meta.extract_page_meta(p3)
+        self.assertEqual("5", meta3["row"])
+        self.assertEqual("9", meta3["seat"])
+        doc3.close()
+
+        # 4. Table column alignment (Ufa / БГАТОиБ)
+        doc4 = fitz.open()
+        p4 = doc4.new_page(width=500, height=500)
+        p4.insert_text((50, 50), "РЯД", fontname="F0", fontfile=font)
+        p4.insert_text((150, 50), "МЕСТО", fontname="F0", fontfile=font)
+        p4.insert_text((50, 75), "7", fontname="F0", fontfile=font)
+        p4.insert_text((150, 75), "23", fontname="F0", fontfile=font)
+        meta4 = ticket_meta.extract_page_meta(p4)
+        self.assertEqual("7", meta4["row"])
+        self.assertEqual("23", meta4["seat"])
+        doc4.close()
 
 
 if __name__ == "__main__":

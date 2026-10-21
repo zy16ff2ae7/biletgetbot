@@ -766,7 +766,12 @@ def tg(method, **data):
             j = r.json()
             if j.get("ok"):
                 return j.get("result")
-            log.warning("tg %s: %s", method, j.get("description"))
+            desc = j.get("description", "")
+            if "message is not modified" in desc:
+                return True
+            if method == "editMessageText" and "there is no text in the message to edit" in desc:
+                return None
+            log.warning("tg %s: %s", method, desc)
             retry = (j.get("parameters") or {}).get("retry_after")
             if retry and method != "answerPreCheckoutQuery" and attempt < 2:
                 time.sleep(min(int(retry), 30))
@@ -789,8 +794,8 @@ def send_text(chat, text, markup=None):
 
 def edit_or_send(chat, msg_id, text, markup=None):
     """Edit message text in-place if possible (for text messages),
-    otherwise seamlessly send a new message (e.g. when triggered from media captions,
-    stale messages, or when edit fails)."""
+    or caption for media messages, otherwise seamlessly send a new message
+    (e.g. when text exceeds caption limits or message was deleted)."""
     if msg_id:
         try:
             payload = {"chat_id": chat, "message_id": msg_id, "text": text[:4000]}
@@ -799,6 +804,13 @@ def edit_or_send(chat, msg_id, text, markup=None):
             res = tg("editMessageText", **payload)
             if res:
                 return res
+            if len(text) <= 1000:
+                cap_payload = {"chat_id": chat, "message_id": msg_id, "caption": text}
+                if markup is not None:
+                    cap_payload["reply_markup"] = markup
+                cap_res = tg("editMessageCaption", **cap_payload)
+                if cap_res:
+                    return cap_res
         except Exception:
             pass
     return send_text(chat, text, markup=markup)
@@ -1549,7 +1561,7 @@ def send_welcome(chat, user_id=None, username=None):
     welcome_text = format_welcome_greeting(user_id, username)
     if WELCOME_ANIMATION.exists() and _send_brand_media(chat, WELCOME_ANIMATION, "video", welcome_text, markup):
         return True
-    photo = _photo_or_none(WELCOME_IMAGE)
+    photo = _photo_or_none(BRAND_AVATAR)
     if photo:
         payload = {"chat_id": str(chat), "caption": welcome_text[:1000], "reply_markup": json.dumps(markup)}
         try:
