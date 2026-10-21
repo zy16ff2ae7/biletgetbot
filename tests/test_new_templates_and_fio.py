@@ -569,8 +569,26 @@ class YandexAfishaTemplateTests(unittest.TestCase):
             self.assertNotIn(unwanted, text)
 
 
+class MetadataFixesTests(unittest.TestCase):
+    """Тесты фильтрации UUID / служебных номеров в названии спектакля и новых алиасов театров."""
+
+    def test_clean_show_title_rejects_uuid_and_order_series(self):
+        self.assertEqual("", ticket_meta.clean_show_title("27fcb7dc-f3ef-4398-adda-a95b286acffe"))
+        self.assertEqual("", ticket_meta.clean_show_title("01a154dc-1a14-5d73-13a1-7a417a3ff268"))
+        self.assertEqual("", ticket_meta.clean_show_title("РМ | 231648"))
+        self.assertEqual("", ticket_meta.clean_show_title("Заказ #12345"))
+        self.assertEqual("Завещание Чарльза Адамса", ticket_meta.clean_show_title("Завещание Чарльза Адамса"))
+        self.assertEqual("Свидетель обвинения", ticket_meta.clean_show_title("Свидетель обвинения"))
+
+    def test_theater_aliases_expansion(self):
+        self.assertEqual("Театр «Мастеровые»", ticket_meta.clean_theater_name("МАУК РДТ «Мастеровые»"))
+        self.assertEqual("Театр им. Тинчурина", ticket_meta.clean_theater_name("ТГТДиК им. К.Тинчурина"))
+        self.assertEqual("Театр «Нур»", ticket_meta.clean_theater_name("УГТТ «Нур»"))
+        self.assertEqual("Театр Терезы Дуровой", ticket_meta.clean_theater_name("ГБУК г. Москвы «Театр Терезы Дуровой»"))
+        self.assertEqual("Театр им. Камала", ticket_meta.clean_theater_name("ТГАТ им. Г.Камала"))
+        self.assertEqual("МТЮЗ", ticket_meta.clean_theater_name("Московский театр Юного Зрителя"))
+        self.assertEqual("Нижегородский театр оперы и балета", ticket_meta.clean_theater_name("Нижегородский государственный академический театр оперы и балета"))
+
+
 if __name__ == "__main__":
     unittest.main()
-
-
-

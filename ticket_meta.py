@@ -51,13 +51,20 @@ THEATER_ALIASES = [
     (re.compile(r"бгатоиб|башопера|башкирск\w*\s+(?:государственн\w*\s+)?"
                 r"(?:академическ\w*\s+)?театр\w*\s+оперы", re.I),
      "Башкирский театр оперы и балета"),
+    (re.compile(r"мастеров(?:ые|ых)|рдт\s*«?\s*мастеровые", re.I), "Театр «Мастеровые»"),
+    (re.compile(r"тинчурин|тгтдик", re.I), "Театр им. Тинчурина"),
+    (re.compile(r"\bнур\b|угтт", re.I), "Театр «Нур»"),
+    (re.compile(r"терезы?\s+дуровой", re.I), "Театр Терезы Дуровой"),
+    (re.compile(r"камал[а-я]*\b|тгат\s+им", re.I), "Театр им. Камала"),
+    (re.compile(r"московский.*(?:театр\s+)?юн(?:ого\s+зрителя|оз)|мтюз", re.I), "МТЮЗ"),
+    (re.compile(r"нижегородский.*театр|operann|234-05-34", re.I), "Нижегородский театр оперы и балета"),
 ]
 
 THEATER_KEYWORDS = [
     "театр", "мхт", "бдт", "мариинск", "вахтангов", "ленком", "сатирикон",
     "моссовет", "образцов", "елизаров", "драмтеатр", "габт", "филармония",
     "консерватория", "дворец культуры", "кз ", "концертный зал", "тюз",
-    "бгатоиб", "башопера",
+    "бгатоиб", "башопера", "тинчурин", "мастеровые", "угтт",
 ]
 
 SKIP_TITLE_RE = re.compile(
@@ -137,6 +144,16 @@ def clean_show_title(raw: str | None) -> str:
     if re.search(r"\d+\s*(?:руб|₽|р\.)", title, re.I):
         return ""
     if re.match(r"^\d{1,2}\+$", title) or re.match(r"^[.\s_—-]+$", title) or re.match(r"^\d+$", title):
+        return ""
+    if re.search(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", title, re.I):
+        return ""
+    if re.search(r"\b[0-9a-f]{16,64}\b", title, re.I):
+        return ""
+    if re.match(r"^[0-9a-f-]{20,}$", title, re.I):
+        return ""
+    if re.search(r"\|\s*\d+", title):
+        return ""
+    if re.match(r"^(?:рм|заказ|серия|номер|билет)\s*[|:№#]\s*\d+", title, re.I):
         return ""
     return title[:42]
 
@@ -429,6 +446,10 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
                         title = tl_title
                 elif "Место проведения:" in t and i + 1 < len(tl_blocks):
                     tl_th = clean_theater_name(tl_blocks[i + 1][4].strip().splitlines()[0])
+                    if not tl_th:
+                        raw_cand = tl_blocks[i + 1][4].strip().splitlines()[0].strip(" «»\"'.,:;-")
+                        if raw_cand and len(raw_cand) < 40 and not any(k in raw_cand.lower() for k in ["http", "ооо", "инн", "www"]):
+                            tl_th = raw_cand
                     if tl_th:
                         theater = tl_th
                 elif "Дата и время" in t and i + 1 < len(tl_blocks):
