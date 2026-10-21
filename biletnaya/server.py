@@ -558,6 +558,10 @@ def _pushkin_wm_rects(page):
         if _is_green_fill(f):
             continue
         if _is_gray_fill(f) and r.get_area() >= 200:
+            # Панель контента, содержащая QR-код или штрихкод — не водяной знак
+            if any(r.contains(fitz.Rect(im["bbox"])) for im in page.get_image_info()
+                   if im.get("width", 0) > 20 and im.get("height", 0) > 20):
+                continue
             gray.append(r)
         # тёмные акценты НЕ трогаем: плашка «Вход в зрительный зал…» (y≈339)
         # на эталоне есть, а зона правил не имеет отношения к Пушкину
