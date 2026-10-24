@@ -2,9 +2,21 @@ import os
 import unittest
 import fitz
 import bot
-import server as srv
+srv = bot.srv
 
-FILES_DIR = "/Users/mac/Downloads/ChatExport_UmaPalata ДОСТУПНЫЙ ДОСУГ СОЦРЕСУРС_2/files"
+def _find_files_dir():
+    candidates = [
+        os.environ.get("PARTNER_FILES_DIR", ""),
+        "/tmp/partner_test_files",
+        os.path.join(os.path.dirname(__file__), "fixtures", "partner"),
+        "/Users/mac/Downloads/ChatExport_UmaPalata ДОСТУПНЫЙ ДОСУГ СОЦРЕСУРС_2/files",
+    ]
+    for c in candidates:
+        if c and os.path.isdir(c):
+            return c
+    return ""
+
+FILES_DIR = _find_files_dir()
 
 
 @unittest.skipUnless(os.path.isdir(FILES_DIR), "Chat export files not available")

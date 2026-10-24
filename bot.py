@@ -50,9 +50,20 @@ from texts import (BRAND_NAME, BRAND_AVATAR, WELCOME_ANIMATION, FREE_DAILY,
 # Дневной бесплатный лимит (env BILET_DAILY_FREE) — чтобы копирайты не разошлись с ним.
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# Редактор Билетная: по умолчанию ~/Билетная, но на VDS его кладут куда
-# удобнее — путь можно перекрыть переменной окружения.
-BILETNAYA = os.environ.get("BILETNAYA") or os.path.expanduser("~/Билетная")
+# Редактор Билетная: сначала env BILETNAYA, затем встроенная папка biletnaya, затем ~/Билетная
+def _default_biletnaya():
+    env = os.environ.get("BILETNAYA", "").strip()
+    if env and os.path.exists(os.path.join(env, "server.py")):
+        return env
+    bundled = os.path.join(HERE, "biletnaya")
+    if os.path.exists(os.path.join(bundled, "server.py")):
+        return bundled
+    home_dir = os.path.expanduser("~/Билетная")
+    if os.path.exists(os.path.join(home_dir, "server.py")):
+        return home_dir
+    return env or bundled or home_dir
+
+BILETNAYA = _default_biletnaya()
 BOT_START_TIME = time.monotonic()
 _last_admin_alert = {}
 
