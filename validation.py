@@ -259,6 +259,8 @@ def validate_ticket(source, output, engine, removed_targets):
         if before.rect != after.rect or before.rotation != after.rotation:
             raise ValidationError("Изменились размер или поворот страницы.")
         promos = [fitz.Rect(r) for _xref, r in engine._promo_qr_geom(before)]
+        if hasattr(engine, "_fiscal_qr_geom"):
+            promos += [fitz.Rect(r) for _xref, r in engine._fiscal_qr_geom(before)]
         allowed_text = [fitz.Rect(r) for _kind, r, _text_value in engine._removal_rects(before)]
         removed = set(removed_targets[pno]) if pno < len(removed_targets) else set()
         lines = engine.field_tags(engine.extract_lines(before))
@@ -299,7 +301,9 @@ def validate_ticket(source, output, engine, removed_targets):
                        for candidate in result_lines):
                 raise ValidationError("Не сохранились дата, место, цена или номер билета.")
             counts["fields"] += 1
-        decoded = [(value, box) for value, box in _codes(before) if not _inside(box, promos)]
+        decoded = [(value, box) for value, box in _codes(before)
+                   if not _inside(box, promos)
+                   and not re.search(r"https?://(?:cheques|[^/\s]*ofd\.ru)|\b(?:fn|fp|i)=\d+", str(value), re.I)]
         remaining = Counter(value for value, _box in _codes(after))
         expected = Counter(value for value, _box in decoded)
         if expected - remaining:

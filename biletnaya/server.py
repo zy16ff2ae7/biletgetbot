@@ -2469,6 +2469,24 @@ MOSRU_PATS = [
     r"пин-код вашего билета",
     r"bilet\.mos\.ru",
 ]
+PROMO_PATS = [
+    r"(?:промо[- ]?код|промокод|скидка\s+по\s+промо[- ]?коду)\s*[:\s]\s*\S+",
+]
+DISCOUNT_WARN_PATS = [
+    r"Этот\s+билет\s+куплен\s+со\s+скидкой",
+    r"куплен\s+со\s+скидкой.*(?:\bФЗ\b|отмены\s+или\s+переноса)",
+]
+FISCAL_PATS = [
+    r"https?://(?:cheques[^\s]+|[^/\s]*ofd\.ru/[^\s]+)",
+    r"Для того, чтобы скачать фискальный чек",
+    r"отсканируйте QR-код или перейдите по ссылке",
+]
+DISCOUNT_FIELD_PATS = [
+    r"^(?:скидк[аеиу]|discount)\b",
+]
+SERVICE_FEE_PATS = [
+    r"^(?:сервисный\s+сбор|сбор|service\s+fee)\b",
+]
 
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 # Цели правки — только те поля, что реально меняют на билете. Дата и номер
@@ -2480,6 +2498,8 @@ FIELD_LABELS = [
     (r"^(сектор|сектор\s*/\s*sector|sector|зона|ярус|уровень|вход|подъезд)", "sector"),
     (r"^(посетитель|зритель|билетодержатель|владелец|покупатель|гость|фио|ф\.?\s*и\.?\s*о|билет\s+на\s+имя|на\s+имя)", "name"),
     (r"^(стоимость( билета)?|цена|номинал|тариф|сумма|к оплате|итого)\b", "price"),
+    (r"^(скидк[аеиу]|discount)\b", "discount"),
+    (r"^(сервисный\s+сбор|сбор|service\s+fee)\b", "service_fee"),
     (r"^(почта|электронн\w* почт\w*|e-?mail)", "email"),
 ]
 # Зона/сектор как ЗНАЧЕНИЕ. Слова целиком (\b и закрытые окончания), иначе
@@ -2595,6 +2615,9 @@ def field_value_ok(tag, text):
         # Число само по себе или с валютой; чужой код с буквами — нет.
         return bool(re.search(r"\d", t)) and bool(
             PRICE_RE.search(t) or re.fullmatch(r"\d[\d\s.,]*", t))
+    if tag in ("discount", "service_fee"):
+        return bool(re.search(r"\d", t)) and bool(
+            PRICE_RE.search(t) or re.search(r"%", t) or re.fullmatch(r"\d[\d\s.,]*", t))
     if tag == "name":
         return name_value_ok(text)
     if tag == "sector":
@@ -2626,7 +2649,8 @@ def field_tags(lines):
         t = l["text"].lower().strip()
         if EMAIL_RE.search(l["text"]) and not re.search(r"@maly\.ru\b", l["text"], re.I):
             tags[i].add("email")
-        if PRICE_RE.search(t) and re.search(r"\d", t) and len(t) < 30:
+        if (PRICE_RE.search(t) and re.search(r"\d", t) and len(t) < 30
+                and not re.search(r"\b(?:скидк[аеиу]|сбор|вернуть\s+деньги|фз\s*№?\s*193)\b", t)):
             tags[i].add("price")
         # «Сектор: Партер», «Зона A», «Ярус 2» — метка и значение в одной строке.
         # Голая метка («Сектор:», «Сектор/Sector») НЕ помечается: значение под ней
@@ -2667,7 +2691,7 @@ def field_tags(lines):
         ly = (l["bbox"][1] + l["bbox"][3]) / 2
         lh = max(l["bbox"][3] - l["bbox"][1], 1.0)
         for j, v in enumerate(lines):
-            if j == i or tags[j] or v.get("stale"):
+            if j == i or (tags[j] and not (tag in ("discount", "service_fee") and tags[j] <= {"price"})) or v.get("stale"):
                 continue
             vy0 = v["bbox"][1]
             if vy0 >= l["bbox"][3] - 1 and vy0 - l["bbox"][3] < 26:
@@ -2717,7 +2741,12 @@ def field_tags(lines):
         if best_h is not None and best_h[1] not in candidates and not already:
             candidates.append(best_h[1])
         for j in candidates:
-            if field_value_ok(tag, lines[j]["text"]):
+            if tag in ("discount", "service_fee"):
+                if field_value_ok(tag, lines[j]["text"]):
+                    tags[j].discard("price")
+                    tags[j].add(tag)
+                    break
+            elif field_value_ok(tag, lines[j]["text"]):
                 tags[j].add(tag)
                 break
 
@@ -2819,6 +2848,55 @@ def _removal_rects(page):
             cluster = []
         if l is not None:
             cluster.append(l)
+
+    # Промо-коды (например, «промо-код: АРМИЯ50»)
+    for l in lines:
+        if any(re.search(p, l["text"], re.I) for p in PROMO_PATS):
+            b = l["bbox"]
+            rects.append(("promo", fitz.Rect(b[0] - 1, b[1] - 1, b[2] + 1, b[3] + 1), l["text"][:60]))
+
+    # Блок предупреждения о покупке со скидкой (Ticketscloud и аналоги)
+    for idx, l in enumerate(lines):
+        if any(re.search(p, l["text"], re.I) for p in DISCOUNT_WARN_PATS):
+            col = [m for m in lines if abs(m["bbox"][0] - l["bbox"][0]) < 18 and m["bbox"][1] >= l["bbox"][1] - 1]
+            col.sort(key=lambda m: m["bbox"][1])
+            dw_cluster = [col[0]]
+            for next_l in col[1:]:
+                if next_l["bbox"][1] - dw_cluster[-1]["bbox"][3] < 14:
+                    dw_cluster.append(next_l)
+                    if re.search(r"\bФЗ\b|193", next_l["text"]):
+                        break
+                else:
+                    break
+            x0 = min(m["bbox"][0] for m in dw_cluster); x1 = max(m["bbox"][2] for m in dw_cluster)
+            y0 = min(m["bbox"][1] for m in dw_cluster); y1 = max(m["bbox"][3] for m in dw_cluster)
+            rects.append(("discount_warn", fitz.Rect(x0 - 2, y0 - 2, x1 + 2, y1 + 2),
+                          "; ".join(m["text"][:25] for m in dw_cluster)))
+
+    # Фискальный чек (OrangeData, ОФД и др.)
+    for idx, l in enumerate(lines):
+        if any(re.search(p, l["text"], re.I) for p in FISCAL_PATS):
+            b = l["bbox"]
+            rects.append(("fiscal", fitz.Rect(b[0] - 1, b[1] - 1, b[2] + 1, b[3] + 1), l["text"][:60]))
+            if idx + 1 < len(lines):
+                nl = lines[idx + 1]
+                if l["text"].endswith(("-", "/")) and nl["bbox"][1] - b[3] < 8 and abs(nl["bbox"][0] - b[0]) < 10:
+                    nb = nl["bbox"]
+                    rects.append(("fiscal", fitz.Rect(nb[0] - 1, nb[1] - 1, nb[2] + 1, nb[3] + 1), nl["text"][:60]))
+
+    # Блок скидки (метка «Скидка» и значение под ней)
+    for idx, l in enumerate(lines):
+        t_clean = l["text"].strip().lower()
+        if any(re.search(p, t_clean, re.I) for p in DISCOUNT_FIELD_PATS) and len(t_clean) < 25:
+            b = l["bbox"]
+            rects.append(("discount_field", fitz.Rect(b[0] - 1, b[1] - 1, b[2] + 1, b[3] + 1), l["text"][:60]))
+            for nl in lines:
+                if nl["bbox"][1] >= b[3] - 1 and nl["bbox"][1] - b[3] < 26:
+                    if abs((nl["bbox"][0] + nl["bbox"][2]) / 2 - (b[0] + b[2]) / 2) < 30:
+                        nb = nl["bbox"]
+                        rects.append(("discount_field", fitz.Rect(nb[0] - 1, nb[1] - 1, nb[2] + 1, nb[3] + 1), nl["text"][:60]))
+                        break
+
     return rects
 
 
@@ -2931,6 +3009,57 @@ def _promo_qr_geom(page):
             continue
         out.append((x, r))
     # последняя страховка: единственный код на странице удалять нельзя — вход по нему
+    if out and not _main_code(page, exclude={x for x, _ in out}):
+        return []
+    return out
+
+
+def _fiscal_qr_geom(page):
+    """Фискальный QR-код чека (OrangeData / ОФД): не является входным кодом
+    и выдаёт покупную цену билета при сканировании. Ищем QR-картинку,
+    которая декодируется в чек/ОФД либо примыкает к фискальному тексту."""
+    out = []
+    page_text = page.get_text()
+    has_fiscal_text = bool(re.search(r"https?://(?:cheques[^\s]+|[^/\s]*ofd\.ru/[^\s]+)|скачать фискальный чек", page_text, re.I))
+
+    fiscal_decoded_rects = []
+    try:
+        import zxingcpp, numpy as np
+        scale = 2.0
+        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csGRAY)
+        pixels = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+        for code in zxingcpp.read_barcodes(pixels):
+            t = code.text or ""
+            if re.search(r"https?://(?:cheques[^\s]+|[^/\s]*ofd\.ru/[^\s]+)|\b(?:fn|fp|i)=\d+", t, re.I):
+                pts = [code.position.top_left, code.position.top_right, code.position.bottom_left, code.position.bottom_right]
+                r = fitz.Rect(min(p.x for p in pts) / scale, min(p.y for p in pts) / scale,
+                              max(p.x for p in pts) / scale, max(p.y for p in pts) / scale)
+                fiscal_decoded_rects.append(r)
+    except Exception:
+        pass
+
+    for im in page.get_image_info(xrefs=True):
+        x = im.get("xref")
+        if not x:
+            continue
+        r = fitz.Rect(im["bbox"])
+        w, h = r.width, r.height
+        if min(w, h) < 15 or max(w, h) > 120:
+            continue
+        if abs(w - h) > 0.35 * max(w, h):
+            continue
+        matches_decoded = any(r.intersects(fdr + (-5, -5, 5, 5)) for fdr in fiscal_decoded_rects)
+        adjacent_text = False
+        if has_fiscal_text:
+            for b in page.get_text("blocks"):
+                if re.search(r"cheques|ofd\.ru|скачать фискальный чек", b[4], re.I):
+                    br = fitz.Rect(b[:4])
+                    if r.intersects(br + (-80, -80, 80, 80)):
+                        adjacent_text = True
+                        break
+        if matches_decoded or adjacent_text:
+            out.append((x, r))
+
     if out and not _main_code(page, exclude={x for x, _ in out}):
         return []
     return out
@@ -3345,10 +3474,12 @@ def autoclean_doc(doc):
         groups = _removal_rects(page)
         sber = [(r, t) for s, r, t in groups if s == "sber"]
         mos = [(r, t) for s, r, t in groups if s == "mos"]
+        other_clean = [(r, t, s) for s, r, t in groups if s not in ("sber", "mos")]
         # Промо-QR ищем геометрией (ДО редакта, картинка ещё на месте): работает и
         # когда текст блока извлекается, и когда он запечён в фон (get_text пуст).
         promo_qr = _promo_qr_geom(page)
-        if not (groups or promo_qr):
+        fiscal_qr = _fiscal_qr_geom(page)
+        if not (groups or promo_qr or fiscal_qr):
             continue
         removed = []
         _pin_form_res(page)
@@ -3372,6 +3503,31 @@ def autoclean_doc(doc):
             page.apply_redactions(
                 images=fitz.PDF_REDACT_IMAGE_NONE,
                 graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
+                text=fitz.PDF_REDACT_TEXT_REMOVE,
+            )
+        # Промо-коды, предупреждения о скидках, фискальный текст и поля скидок
+        if other_clean:
+            for rect, text, src in other_clean:
+                page.add_redact_annot(rect, fill=False)
+                removed.append(text)
+            page.apply_redactions(
+                images=fitz.PDF_REDACT_IMAGE_NONE,
+                graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+                text=fitz.PDF_REDACT_TEXT_REMOVE,
+            )
+        # Фискальный QR-код чека (OrangeData / ОФД)
+        for x in {x for x, _ in fiscal_qr}:
+            try:
+                page.delete_image(x)
+            except Exception:
+                pass
+        for x, r in fiscal_qr:
+            page.add_redact_annot(r, fill=False)
+            removed.append("фискальный QR-код чека")
+        if fiscal_qr:
+            page.apply_redactions(
+                images=fitz.PDF_REDACT_IMAGE_NONE,
+                graphics=fitz.PDF_REDACT_LINE_ART_NONE,
                 text=fitz.PDF_REDACT_TEXT_REMOVE,
             )
         # Осиротевшие синие подчёркивания в полосе промо-QR (вариант без текста — там
@@ -3403,7 +3559,8 @@ def autoclean_doc(doc):
         except Exception as e:
             # молчать нельзя: полосу могли уже стереть, а вставка сорваться
             warn.append(f"не удалось поднять вёрстку: {e}")
-        rec = {"page": pno, "removed": removed, "images": len({x for x, _ in promo_qr})}
+        cleaned_imgs = {x for x, _ in promo_qr} | {x for x, _ in fiscal_qr}
+        rec = {"page": pno, "removed": removed, "images": len(cleaned_imgs)}
         if warn:
             rec["warn"] = warn
         report.append(rec)

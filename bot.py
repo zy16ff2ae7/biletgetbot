@@ -590,6 +590,10 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                     for l in lines:
                         t_txt = l.get("text", "").strip().lower()
                         tags = set(l.get("tags", []))
+                        if tags & {"discount", "service_fee"}:
+                            continue
+                        if re.search(r"\b(?:скидк[аеиу]|сбор|вернуть\s+деньги|фз\s*№?\s*193)\b", t_txt):
+                            continue
                         if re.search(r"\d", l.get("text", "")) and ("price" in tags or srv.PRICE_RE.search(t_txt)):
                             validation_targets[pno].add(_normalized(l["text"]))
                             cpage.add_redact_annot(fitz.Rect(l["bbox"]) + (-1, -1, 1, 1), fill=False)
