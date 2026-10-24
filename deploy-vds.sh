@@ -20,7 +20,10 @@ for bilet_unit in bilet-bot.service bilet-backup.service bilet-backup.timer; do
 done
 cp "$bilet_editor/"{server.py,raster.py,requirements.txt,index.html} "$bilet_package/biletnaya/"
 cp -R "$bilet_editor/vendor" "$bilet_editor/tests" "$bilet_package/biletnaya/"
-if [ -d "$bilet_root/brand" ]; then cp -R "$bilet_root/brand" "$bilet_package/"; fi
+if [ -d "$bilet_root/brand" ]; then
+    mkdir -p "$bilet_package/brand"
+    rsync -a --exclude '*.mp4' --exclude '*.gif' "$bilet_root/brand/" "$bilet_package/brand/"
+fi
 COPYFILE_DISABLE=1 tar -czf "$bilet_work/package.tgz" -C "$bilet_package" .
 bilet_ssh=(ssh -o BatchMode=yes -o ConnectTimeout=45)
 bilet_scp=(scp -o BatchMode=yes -o ConnectTimeout=45)
@@ -171,8 +174,13 @@ if [ ! -f "$bilet_root/subscription.json" ] || [ "$bilet_settings" = 1 ]; then
 fi
 for bilet_dir in biletnaya tests migrations brand scripts; do
     if [ ! -d "$bilet_stage/$bilet_dir" ]; then continue; fi
-    rm -rf "$bilet_root/$bilet_dir"
-    cp -a "$bilet_stage/$bilet_dir" "$bilet_root/$bilet_dir"
+    if [ "$bilet_dir" = "brand" ]; then
+        mkdir -p "$bilet_root/brand"
+        cp -a "$bilet_stage/brand/." "$bilet_root/brand/"
+    else
+        rm -rf "$bilet_root/$bilet_dir"
+        cp -a "$bilet_stage/$bilet_dir" "$bilet_root/$bilet_dir"
+    fi
 done
 # Ежедневный бэкап state: скрипт + systemd-юниты (идемпотентно).
 if [ -f "$bilet_stage/scripts/backup-state.sh" ]; then
