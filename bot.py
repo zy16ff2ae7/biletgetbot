@@ -1436,7 +1436,7 @@ def build_referral_card(user_id):
     ref_link = f"https://t.me/{bot_user}?start=ref_{user_id}"
     stats = get_store().get_referral_stats(user_id)
     share_text = (
-        f"Редактируй билеты без чужих ФИО и служебных отметок: https://t.me/{bot_user}?start=ref_{user_id}"
+        f"Редактируй билеты: https://t.me/{bot_user}?start=ref_{user_id}"
         if is_neutral() else
         f"Перепечатывай билеты без чужих ФИО и чар Черномора: https://t.me/{bot_user}?start=ref_{user_id}"
     )
@@ -1960,18 +1960,18 @@ def set_my_profile_info():
     if is_free_all():
         description = (
             f"{BRAND_NAME}: сервис автоматической очистки и подготовки билетов.\n\n"
-            "Удаляет чужие ФИО, промокоды, скидки и служебные строки, сохраняя QR-коды, штрихкоды, даты, места и цену.\n\n"
+            "Удаляет промокоды, скидки и служебные строки, сохраняя QR-коды, штрихкоды, даты, места и цену.\n\n"
             "Поддерживает одиночные билеты и пачки файлов."
         )
         short_description = f"{BRAND_NAME}: редактор билетов."
     elif is_neutral():
         description = (
             f"{BRAND_NAME}: сервис автоматической очистки и подготовки билетов.\n\n"
-            "Удаляет чужие ФИО, промокоды, скидки и служебные строки, сохраняя QR-коды, штрихкоды, даты, места и цену.\n\n"
+            "Удаляет промокоды, скидки и служебные строки, сохраняя QR-коды, штрихкоды, даты, места и цену.\n\n"
             f"🎁 {free_daily} билета каждый день — бесплатно!\n"
             f"📦 Пачки и полный безлимит — с абонементом ({price_stars} ₽ / 30 дней вместо 1500 ₽)."
         )
-        short_description = f"{BRAND_NAME}: удаление чужих ФИО, промокодов и служебных отметок."
+        short_description = f"{BRAND_NAME}: удаление промокодов и служебных отметок."
     else:
         description = (
             "Дед сел за пишущую машинку и перепечатывает билеты заново — аккуратно, быстро и без лишних строк.\n\n"
@@ -3424,7 +3424,7 @@ def process_document(msg, collection_id=None, job_id=None):
 
         def phase(stage):
             if stage == "clean":
-                progress.update(1, "Стираем чужие ФИО и служебные строки ✍️" if is_neutral() else "Стираем чужие ФИО и чары Черномора ✍️")
+                progress.update(1, "Очищаем служебные строки ✍️" if is_neutral() else "Стираем чужие ФИО и чары Черномора ✍️")
             else:
                 progress.update(2, "Сверяем QR-коды, дату, сектор, ряд и цену 🔍")
 

@@ -32,6 +32,7 @@ class NeutralBrandingTests(unittest.TestCase):
                 self.assertNotIn("руб", text.lower())
                 self.assertNotIn("₽", text.lower())
                 self.assertNotIn("бесплат", text.lower())
+                self.assertNotIn("чуж", text.lower())
 
             import ticket_meta
             importlib.reload(ticket_meta)
@@ -46,6 +47,9 @@ class NeutralBrandingTests(unittest.TestCase):
 
             import progress
             importlib.reload(progress)
+            for stage_lines in progress.NEUTRAL_LINES.values():
+                for line in stage_lines:
+                    self.assertNotIn("чуж", line.lower())
             pr = progress.Progress("123", "test.pdf", lambda m, **p: {})
             rendered = pr.render()
             self.assertNotIn("дед", rendered.lower())
@@ -79,6 +83,9 @@ class NeutralBrandingTests(unittest.TestCase):
 
             import progress
             importlib.reload(progress)
+            for stage_lines in progress.NEUTRAL_LINES.values():
+                for line in stage_lines:
+                    self.assertNotIn("чуж", line.lower())
             pr = progress.Progress("123", "test.pdf", lambda m, **p: {})
             rendered = pr.render()
             self.assertIn("ДЕД РЕДАЧИТ", rendered)
