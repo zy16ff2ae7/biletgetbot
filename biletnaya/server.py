@@ -34,24 +34,28 @@ INK = (0.05, 0.05, 0.08)
 # DejaVu: рисунок другой, зато кириллица и ₽ на месте и не приходится падать на
 # встроенный фолбэк MuPDF (тот рисует ₽ засечкой посреди рубленой строки).
 SERIF_FONTS = {
-    False: ("/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+    False: (os.path.join(ROOT, "vendor", "LiberationSerif-Regular.ttf"),
+            "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
             "/usr/share/fonts/liberation/LiberationSerif-Regular.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
             "C:/Windows/Fonts/times.ttf"),
-    True:  ("/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
+    True:  (os.path.join(ROOT, "vendor", "LiberationSerif-Bold.ttf"),
+            "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
             "/usr/share/fonts/liberation/LiberationSerif-Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
             "C:/Windows/Fonts/timesbd.ttf"),
 }
 SANS_FONTS = {
-    False: ("/System/Library/Fonts/Supplemental/Arial.ttf",
+    False: (os.path.join(ROOT, "vendor", "Arial.ttf"),
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "C:/Windows/Fonts/arial.ttf"),
-    True:  ("/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    True:  (os.path.join(ROOT, "vendor", "Arial-Bold.ttf"),
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
             "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -1577,7 +1581,10 @@ def _has_ink(font, ch):
     сами контуры: has_glyph() говорит «есть», а на странице пусто (так пропадала
     «М» в «Мария»). Поэтому проверяем реальную краску пробным рендером."""
     if ch.isspace():
-        return True
+        try:
+            return bool(font.has_glyph(ord(ch)))
+        except Exception:
+            return False
     cp = ord(ch)
     key = (id(font), cp)
     # .get с маркером, а не «in + []»: между проверкой и чтением другой поток мог
@@ -1630,19 +1637,60 @@ def font_runs(text, chain, head=None):
     «Р» знака рубля достаётся фирменному рубль-шрифту (родной ₽ с чёрточкой), а не
     перехватывается обычной «Р» из Times. Пробел через head не гоняем — у рубль-
     сабсета нет метрики пробела (1 глиф), иначе съедет позиция следующего знака."""
-    runs = []
-    for ch in text:
-        seq = ([head] + chain) if (head and not ch.isspace()) else chain
-        pick = None
-        for cand in seq:
+    if not text:
+        return []
+
+    # Быстрый и самый качественный путь: если один шрифт из цепочки может отрисовать
+    # ВСЮ строку целиком (все непробельные символы), используем его единым куском.
+    # Так сохраняется гармоничная типографика, одинаковая толщина штриха и кернинг,
+    # не возникает лоскутной смены шрифтов буква-к-букве внутри одного слова.
+    # Если задан head со спецсимволами (напр. рубль), проверяем, есть ли они в тексте.
+    has_head_special = bool(head and any(_has_ink(head, c) for c in text if not c.isspace()))
+    if not has_head_special:
+        for cand in chain:
             try:
-                if _has_ink(cand, ch):
-                    pick = cand
-                    break
+                if all(_has_ink(cand, c) for c in text if not c.isspace()):
+                    return [(cand, text)]
             except Exception:
                 continue
-        if pick is None:
-            pick = chain[0]
+
+    # Иначе делим на куски, сохраняя пробелы в шрифте окружающего текста
+    default_font = None
+    for c in text:
+        if not c.isspace():
+            seq = ([head] + chain) if head else chain
+            for cand in seq:
+                try:
+                    if _has_ink(cand, c):
+                        default_font = cand
+                        break
+                except Exception:
+                    continue
+            if default_font:
+                break
+    if default_font is None:
+        default_font = chain[0]
+
+    runs = []
+    current_font = None
+    for ch in text:
+        if ch.isspace():
+            # Пробел не должен скакать в чужой сабсет — оставляем текущий активный шрифт
+            pick = current_font or default_font
+        else:
+            seq = ([head] + chain) if (head and not ch.isspace()) else chain
+            pick = None
+            for cand in seq:
+                try:
+                    if _has_ink(cand, ch):
+                        pick = cand
+                        break
+                except Exception:
+                    continue
+            if pick is None:
+                pick = default_font
+            current_font = pick
+
         if runs and runs[-1][0] is pick:
             runs[-1][1] += ch
         else:

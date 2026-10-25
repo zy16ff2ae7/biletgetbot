@@ -58,6 +58,37 @@ class TicketlandFixesTests(unittest.TestCase):
             self.assertEqual(price_full, "3 000 рублей")
             out.close()
 
+    def test_ticketland_typography_consistency(self):
+        biletnaya_dir = os.environ.get("BILETNAYA", "/Users/mac/Билетная")
+        with patch.dict(os.environ, {
+            "BRAND_MODE": "neutral",
+            "BILETNAYA": biletnaya_dir
+        }):
+            import fitz
+            import bot
+            import server
+
+            doc = fitz.open()
+            page = doc.new_page(width=842, height=595)
+            font_path = str(Path(biletnaya_dir) / "vendor" / "Arial.ttf")
+            page.insert_text((235, 501), "1 250 рублей", fontname="ArialMT", fontfile=font_path, fontsize=10)
+            cleaned, _ = server.autoclean_doc(doc)
+
+            # Test price replacement runs
+            style = {"font": "ArialMT", "bold": False, "serif": False}
+            price_runs = bot._replacement_runs(cleaned, "test-doc", "2 500 рублей", style)
+            self.assertEqual(len(price_runs), 1, f"Expected unified run, got: {price_runs}")
+            self.assertIn("Arial", price_runs[0][0].name)
+            self.assertEqual(price_runs[0][1], "2 500 рублей")
+
+            # Test FIO replacement runs
+            fio_runs = bot._replacement_runs(cleaned, "test-doc", "Иванов Иван Иванович", style)
+            self.assertEqual(len(fio_runs), 1, f"Expected unified run, got: {fio_runs}")
+            self.assertIn("Arial", fio_runs[0][0].name)
+            self.assertEqual(fio_runs[0][1], "Иванов Иван Иванович")
+
+            doc.close()
+
 
 if __name__ == "__main__":
     unittest.main()

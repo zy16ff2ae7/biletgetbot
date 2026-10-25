@@ -519,7 +519,11 @@ def _draw_runs(page, runs, origin, size, color):
     writer = fitz.TextWriter(page.rect)
     x = origin[0]
     for font, part in runs:
-        writer.append((x, origin[1]), part, font=font, fontsize=size)
+        try:
+            writer.append((x, origin[1]), part, font=font, fontsize=size)
+        except Exception:
+            font = srv.FONT_REG
+            writer.append((x, origin[1]), part, font=font, fontsize=size)
         x += font.text_length(part, size)
     writer.write_text(page, color=color)
 
