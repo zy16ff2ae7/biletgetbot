@@ -351,7 +351,11 @@ def _find_name_slots(source):
         family = payment is not None or (buyer is not None) or (srv._is_kassa24_family(lines) and not muza and not yandex)
         t_names = srv._ticketland_name_rows(page, lines)
         k_rows = srv._kassir_name_rows(lines)
-        is_af = any(srv.AFISHA_SELLER_RE.search(l["text"] or "") for l in lines)
+        is_af = (
+            any(srv.AFISHA_SELLER_RE.search(l["text"] or "") for l in lines)
+            or any("afisha" in (l.get("font") or "").lower() for l in lines)
+            or any("afisha" in (f[3] or "").lower() for f in page.get_fonts())
+        )
         afisha_names = srv._afisha_name_rows(page, lines) if is_af and hasattr(srv, "_afisha_name_rows") else set()
         org_rows = srv._organizer_rows(lines) if hasattr(srv, "_organizer_rows") else set()
         p_slots = []
@@ -415,6 +419,26 @@ def _find_name_slots(source):
             ]
             if fallback_candidates:
                 chosen = fallback_candidates[0]
+        if is_af and chosen:
+            chosen = dict(chosen)
+            if 340 <= chosen["bbox"][1] <= 420:
+                visitor_line = None
+                for idx, l in enumerate(lines):
+                    if (idx not in org_rows
+                            and chosen["bbox"][1] + 20 <= l["bbox"][1] <= chosen["bbox"][1] + 50
+                            and abs(l["bbox"][0] - chosen["bbox"][0]) < 30):
+                        visitor_line = l
+                        break
+                if visitor_line is not None:
+                    chosen.setdefault("extra_bboxes", []).append(visitor_line["bbox"])
+                    chosen["afisha_visitor_origin"] = tuple(visitor_line["origin"])
+                    if visitor_line.get("text"):
+                        chosen["visitor_text"] = visitor_line["text"]
+                else:
+                    v_orig_y = chosen["origin"][1] + 34.58
+                    chosen["afisha_visitor_origin"] = (chosen["origin"][0], v_orig_y)
+                    v_box = [chosen["bbox"][0] - 1, chosen["bbox"][1] + 25, chosen["bbox"][0] + 180, chosen["bbox"][3] + 45]
+                    chosen.setdefault("extra_bboxes", []).append(v_box)
         if is_operann:
             order_line = None
             for l in lines:
@@ -578,8 +602,11 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                 # движок его не удаляет (в _cleanup_targets он не распознаётся),
                 # поэтому имя попадает в цели проверки и вырезается перед отрисовкой.
                 for pno, slot in enumerate(name_slots):
-                    if pno < len(personal_targets) and slot and slot.get("text"):
-                        personal_targets[pno].add(_normalized(slot["text"]))
+                    if pno < len(personal_targets) and slot:
+                        if slot.get("text"):
+                            personal_targets[pno].add(_normalized(slot["text"]))
+                        if slot.get("visitor_text"):
+                            personal_targets[pno].add(_normalized(slot["visitor_text"]))
             cleaned, report = srv.autoclean_doc(source)
             validation_targets = [set(t) for t in personal_targets]
             if fio_val:
@@ -700,6 +727,9 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                             if slot.get("align_right"):
                                 origin = (slot["align_right"] - _runs_width(runs, size), origin[1])
                             _draw_runs(page, runs, origin, size, color)
+                            if slot.get("afisha_visitor_origin"):
+                                v_orig = tuple(slot["afisha_visitor_origin"])
+                                _draw_runs(page, runs, v_orig, size, color)
                             fio_applied = True
                     elif any(srv.AFISHA_SELLER_RE.search(l["text"] or "") for l in srv.extract_lines(page)):
                         writer = fitz.TextWriter(page.rect)

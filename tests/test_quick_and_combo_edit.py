@@ -343,6 +343,32 @@ class QuickAndComboEditTests(unittest.TestCase):
                             found_font = s["font"]
             self.assertEqual("AfishaDisplay-Text", found_font)
 
+    def test_afisha_buyer_and_visitor_synchronized(self):
+        pdf_path = Path("/Users/mac/.gemini/antigravity/brain/04bb05f0-3495-4832-84e3-c589f460ffcc/.user_uploaded/media_1792945831365_039e45b9.pdf")
+        if not pdf_path.exists():
+            return
+        with open(pdf_path, "rb") as f:
+            data = f.read()
+        ok, res, info = bot.clean_ticket_with_report(data, spectator_fio="Иванов Иван")
+        self.assertTrue(ok)
+        with fitz.open(stream=res, filetype="pdf") as out_doc:
+            spans = []
+            for b in out_doc[0].get_text("dict")["blocks"]:
+                if "lines" not in b: continue
+                for l in b["lines"]:
+                    for s in l["spans"]:
+                        if "Иванов Иван" in s["text"]:
+                            spans.append(s)
+            self.assertEqual(len(spans), 2)
+            # Buyer span around y=387.7
+            self.assertAlmostEqual(spans[0]["origin"][0], 214.9, places=1)
+            self.assertAlmostEqual(spans[0]["origin"][1], 387.7, places=1)
+            self.assertEqual(spans[0]["font"], "AfishaDisplay-Text")
+            # Visitor span around y=422.3
+            self.assertAlmostEqual(spans[1]["origin"][0], 214.9, places=1)
+            self.assertAlmostEqual(spans[1]["origin"][1], 422.3, delta=0.5)
+            self.assertEqual(spans[1]["font"], "AfishaDisplay-Text")
+
 
 if __name__ == "__main__":
     unittest.main()
