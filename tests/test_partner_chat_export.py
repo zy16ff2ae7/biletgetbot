@@ -55,7 +55,7 @@ class PartnerChatExportTests(unittest.TestCase):
         ok, res, info = bot.clean_ticket_with_report(data, custom_price=2500)
         self.assertTrue(ok)
         doc = fitz.open(stream=res, filetype="pdf")
-        text = "\n".join(p.get_text() for p in doc)
+        text = "\n".join(p.get_text() for p in doc).replace("\xa0", " ")
         self.assertNotIn("cheques-lk", text)
         self.assertNotIn("скачать фискальный чек", text)
         self.assertNotIn("Скидка", text)
@@ -70,7 +70,7 @@ class PartnerChatExportTests(unittest.TestCase):
         ok, res, info = bot.clean_ticket_with_report(data, custom_price=1500)
         self.assertTrue(ok)
         doc = fitz.open(stream=res, filetype="pdf")
-        text = "\n".join(p.get_text() for p in doc)
+        text = "\n".join(p.get_text() for p in doc).replace("\xa0", " ")
         self.assertNotIn("cheques-lk", text)
         self.assertIn("1 500 рублей", text)
 
