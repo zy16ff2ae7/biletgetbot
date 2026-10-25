@@ -45,7 +45,7 @@ from subscriptions import SubscriptionStore, PERIOD
 from config import CONFIG
 from texts import (BRAND_NAME, BRAND_AVATAR, WELCOME_ANIMATION, FREE_DAILY,
                    tickets_word, FREE_BATCH_TEXT, FREE_BATCH_KB,
-                   GREETING, HELP_TEXT, ADMIN_PANEL_TEXT, is_neutral)
+                   GREETING, HELP_TEXT, ADMIN_PANEL_TEXT, is_neutral, is_free_all)
 
 # Дневной бесплатный лимит (env BILET_DAILY_FREE) — чтобы копирайты не разошлись с ним.
 
@@ -191,6 +191,8 @@ def is_admin(user_id, username=None):
 
 
 def has_access(user_id):
+    if is_free_all():
+        return True
     return is_admin(user_id) or get_store().status(user_id)["active"]
 
 
@@ -1135,6 +1137,8 @@ def _send_cached_ticket(chat, cached, keys, progress, reply_markup=None):
 
 
 def subscribe(chat, user_id):
+    if is_free_all():
+        return send_text(chat, f"✨ В {BRAND_NAME} все функции полностью бесплатны и без ограничений! Оплата не требуется.")
     if is_admin(user_id):
         return send_text(chat, "У вас постоянный администраторский доступ. Оплата не нужна.")
     status = get_store().status(user_id)
@@ -1326,6 +1330,20 @@ def get_bot_username():
 
 
 def build_subscription_card(user_id):
+    if is_free_all():
+        text = (
+            f"✨ **ДОСТУП · {BRAND_NAME}**\n\n"
+            f"⚡️ **Статус: Полный доступ без ограничений**\n"
+            f"📦 Пакетная обработка: **без ограничений**\n"
+            f"🎫 Дневной лимит: **безлимитно**\n\n"
+            f"Сервис полностью бесплатный для всех пользователей."
+        )
+        kb = [
+            [{"text": "👤 В профиль", "callback_data": "welcome:profile"}],
+            [{"text": "🏠 В главное меню", "callback_data": "welcome:menu"}],
+        ]
+        return text, {"inline_keyboard": kb}
+
     if is_admin(user_id):
         text = (
             f"👑 **СТАТУС ПОДПИСКИ · {BRAND_NAME}**\n\n"
@@ -1501,14 +1519,23 @@ def show_status(chat, user_id):
 
 
 def get_main_markup(user_id=None, username=None):
-    rows = [
-        [{"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"}],
-        [{"text": "⚙️ Настройки (ФИО / цена)", "callback_data": "welcome:settings"},
-         {"text": "📂 Шаблоны", "callback_data": "tpl:menu"}],
-        [{"text": "🎟 Промокод", "callback_data": "welcome:promo"},
-         {"text": "👤 Профиль", "callback_data": "welcome:profile"}],
-        [{"text": "📖 Как пользоваться", "callback_data": "welcome:help"}],
-    ]
+    if is_free_all():
+        rows = [
+            [{"text": "⚙️ Настройки (ФИО / цена)", "callback_data": "welcome:settings"},
+             {"text": "📂 Шаблоны", "callback_data": "tpl:menu"}],
+            [{"text": "🕒 История", "callback_data": "history:menu"},
+             {"text": "👤 Профиль", "callback_data": "welcome:profile"}],
+            [{"text": "📖 Как пользоваться", "callback_data": "welcome:help"}],
+        ]
+    else:
+        rows = [
+            [{"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"}],
+            [{"text": "⚙️ Настройки (ФИО / цена)", "callback_data": "welcome:settings"},
+             {"text": "📂 Шаблоны", "callback_data": "tpl:menu"}],
+            [{"text": "🎟 Промокод", "callback_data": "welcome:promo"},
+             {"text": "👤 Профиль", "callback_data": "welcome:profile"}],
+            [{"text": "📖 Как пользоваться", "callback_data": "welcome:help"}],
+        ]
     if user_id and is_admin(user_id, username):
         rows.append([{"text": "👑 Панель владельца", "callback_data": "welcome:admin"}])
     return {"inline_keyboard": rows}
@@ -1563,7 +1590,9 @@ def _send_brand_media(chat, path, kind, caption, markup):
 def format_welcome_greeting(user_id=None, username=None):
     """Возвращает текст приветствия с динамической плашкой статуса пользователя."""
     badge = ""
-    if user_id:
+    if is_free_all():
+        badge = "✨ Полный доступ без ограничений\n\n"
+    elif user_id:
         try:
             if is_admin(user_id, username):
                 badge = "👑 Статус: Администратор (постоянный доступ)\n\n"
@@ -1621,7 +1650,9 @@ def send_profile(chat, user_id, username=None):
         settings = _user_settings(user_id)
     except Exception:
         return send_text(chat, "Профиль временно недоступен. Попробуйте позже.")
-    if status["active"]:
+    if is_free_all():
+        access = "⚡️ Доступ: полный, бесплатный без ограничений"
+    elif status["active"]:
         access = ("🎟 Доступ: активен до " + date_label(status["expires"])
                   + f" · осталось {max(0, int(status['expires'] - time.time()) // 86400)} дн.")
     elif is_admin(user_id):
@@ -1633,7 +1664,7 @@ def send_profile(chat, user_id, username=None):
     hide = bool(settings.get("hide_price", 0))
     price_disp = f"{price} ₽" if price is not None else "исходная (/price)"
     try:
-        free_line = f"🎁 Бесплатно сегодня: {get_store().daily_left(user_id)} из {FREE_DAILY} {tickets_word(FREE_DAILY)}\n"
+        free_line = "" if is_free_all() else f"🎁 Бесплатно сегодня: {get_store().daily_left(user_id)} из {FREE_DAILY} {tickets_word(FREE_DAILY)}\n"
     except Exception:
         free_line = ""
     text = (
@@ -1652,14 +1683,15 @@ def send_profile(chat, user_id, username=None):
         f"• Отображение цены: {'скрыта 🎁' if hide else 'показывается'}\n"
     )
     markup_rows = []
-    if not status["active"] and not is_admin(user_id, username):
+    if not is_free_all():
+        if not status["active"] and not is_admin(user_id, username):
+            markup_rows.append([
+                {"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
+            ])
         markup_rows.append([
-            {"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
+            {"text": "🎟 Мой абонемент", "callback_data": "welcome:status"},
+            {"text": "💬 Оплата через @FreeDemin", "url": "https://t.me/FreeDemin"},
         ])
-    markup_rows.append([
-        {"text": "🎟 Мой абонемент", "callback_data": "welcome:status"},
-        {"text": "💬 Оплата через @FreeDemin", "url": "https://t.me/FreeDemin"},
-    ])
     markup_rows.append([
         {"text": "🕒 История билетов", "callback_data": "history:menu"},
         {"text": "📂 Шаблоны настроек", "callback_data": "tpl:menu"},
@@ -1672,6 +1704,9 @@ def send_profile(chat, user_id, username=None):
         markup_rows.append([
             {"text": "👑 Панель владельца", "callback_data": "welcome:admin"},
         ])
+    markup_rows.append([
+        {"text": "🏠 В главное меню", "callback_data": "welcome:menu"},
+    ])
     markup_rows.append([
         {"text": "🏠 В главное меню", "callback_data": "welcome:menu"},
     ])
@@ -1691,12 +1726,16 @@ def send_profile(chat, user_id, username=None):
 
 
 def cmd_trial(chat, user_id):
+    if is_free_all():
+        return send_text(chat, f"✨ В {BRAND_NAME} все функции полностью бесплатны и без ограничений!")
     return send_text(chat, "Бесплатный пробный день больше недоступен.\n"
                            "Каждый день вам доступно 2 бесплатных билета.\n"
                            "Для снятия всех ограничений оформите абонемент: /subscribe.")
 
 
 def cmd_promo(chat, user_id, arg):
+    if is_free_all():
+        return send_text(chat, f"✨ В {BRAND_NAME} все функции полностью бесплатны и без ограничений! Промокоды не требуются.")
     if not arg:
         return send_text(chat, "🎟 Формат: /promo КОД\nПромокоды выдаёт администратор бота.")
     try:
@@ -1876,24 +1915,39 @@ def _run_broadcast(chat, body):
 
 
 def set_my_commands():
-    start_desc = "Запустить редактор" if is_neutral() else "Запустить деда"
-    commands = [
-        {"command": "start", "description": start_desc},
-        {"command": "help", "description": "Как пользоваться"},
-        {"command": "profile", "description": "Профиль и статус доступа"},
-        {"command": "subscribe", "description": "Оформить абонемент"},
-        {"command": "subscription", "description": "Статус доступа"},
-        {"command": "promo", "description": "Активировать промокод"},
-        {"command": "settings", "description": "Настройки билетов"},
-        {"command": "templates", "description": "Шаблоны настроек печати"},
-        {"command": "history", "description": "История недавних билетов"},
-        {"command": "fio", "description": "ФИО зрителя на билетах"},
-        {"command": "price", "description": "Цена на билете"},
-        {"command": "seat", "description": "Ряд, место, сектор"},
-        {"command": "batch", "description": "Собрать пачку PDF"},
-        {"command": "id", "description": "Мой Telegram ID"},
-        {"command": "paysupport", "description": "Оплата через админа (@FreeDemin)"},
-    ]
+    if is_free_all():
+        commands = [
+            {"command": "start", "description": "Запустить редактор"},
+            {"command": "help", "description": "Как пользоваться"},
+            {"command": "profile", "description": "Профиль настроек"},
+            {"command": "settings", "description": "Настройки билетов"},
+            {"command": "templates", "description": "Шаблоны настроек печати"},
+            {"command": "history", "description": "История недавних билетов"},
+            {"command": "fio", "description": "ФИО зрителя на билетах"},
+            {"command": "price", "description": "Цена на билете"},
+            {"command": "seat", "description": "Ряд, место, сектор"},
+            {"command": "batch", "description": "Собрать пачку PDF"},
+            {"command": "id", "description": "Мой Telegram ID"},
+        ]
+    else:
+        start_desc = "Запустить редактор" if is_neutral() else "Запустить деда"
+        commands = [
+            {"command": "start", "description": start_desc},
+            {"command": "help", "description": "Как пользоваться"},
+            {"command": "profile", "description": "Профиль и статус доступа"},
+            {"command": "subscribe", "description": "Оформить абонемент"},
+            {"command": "subscription", "description": "Статус доступа"},
+            {"command": "promo", "description": "Активировать промокод"},
+            {"command": "settings", "description": "Настройки билетов"},
+            {"command": "templates", "description": "Шаблоны настроек печати"},
+            {"command": "history", "description": "История недавних билетов"},
+            {"command": "fio", "description": "ФИО зрителя на билетах"},
+            {"command": "price", "description": "Цена на билете"},
+            {"command": "seat", "description": "Ряд, место, сектор"},
+            {"command": "batch", "description": "Собрать пачку PDF"},
+            {"command": "id", "description": "Мой Telegram ID"},
+            {"command": "paysupport", "description": "Оплата через админа (@FreeDemin)"},
+        ]
     try:
         tg("setMyCommands", commands=commands)
         log.info("command menu published")
@@ -1904,7 +1958,14 @@ def set_my_commands():
 def set_my_profile_info():
     price_stars = CONFIG.get("price_stars", 750)
     free_daily = SubscriptionStore.DAILY_LIMIT
-    if is_neutral():
+    if is_free_all():
+        description = (
+            f"{BRAND_NAME}: сервис автоматической очистки и подготовки билетов.\n\n"
+            "Удаляет чужие ФИО, промокоды, скидки и служебные строки, сохраняя QR-коды, штрихкоды, даты, места и цену.\n\n"
+            "✨ Полностью бесплатно и без ограничений: любые билеты и пачки!"
+        )
+        short_description = f"{BRAND_NAME}: бесплатный редактор билетов."
+    elif is_neutral():
         description = (
             f"{BRAND_NAME}: сервис автоматической очистки и подготовки билетов.\n\n"
             "Удаляет чужие ФИО, промокоды, скидки и служебные строки, сохраняя QR-коды, штрихкоды, даты, места и цену.\n\n"
@@ -3547,6 +3608,8 @@ def handle_callback_query(cb):
         return edit_or_send(chat, msg_id, body[:4000], markup=admin_panel_markup())
 
     if data == "cbpay:create":
+        if is_free_all():
+            return send_text(chat, f"✨ В {BRAND_NAME} все функции бесплатны! Оплата не требуется.")
         return handle_cryptobot_create(chat, uid, msg_id=msg_id)
 
     if data.startswith("cbpay:check:"):
@@ -5286,10 +5349,14 @@ def handle(msg, update_id=None, queued=False):
     if command in {"/subscribe", "/buy"}:
         return subscribe(chat, uid)
     if command in {"/cryptobot", "/crypto", "/cb"}:
+        if is_free_all():
+            return send_text(chat, f"✨ В {BRAND_NAME} все функции полностью бесплатны! Оплата не требуется.")
         return handle_cryptobot_create(chat, uid)
     if command in {"/subscription", "/balance", "/dolg", "/status"}:
         return show_status(chat, uid)
     if command == "/cancel_subscription":
+        if is_free_all():
+            return send_text(chat, f"✨ В {BRAND_NAME} нет платных подписок. Доступ всегда бесплатный.")
         invoice = get_store().status(uid)["invoice"]
         if not invoice or invoice["canceled"]:
             return send_text(chat, "У вас нет подписки с включённым автопродлением.")
@@ -5435,8 +5502,12 @@ def handle(msg, update_id=None, queued=False):
             return send_text(chat, "🛡 Не найден недавний билет. Пришлите PDF с билетом, затем используйте команду /safe.")
         return _send_avito_preview(chat, uid, recent_token)
     if command == "/terms":
+        if is_free_all():
+            return send_text(chat, f"📄 **{BRAND_NAME} · Условия сервиса**\n\nСервис полностью бесплатный и без ограничений по количеству билетов. В одной пачке до 50 PDF и 100 МБ распакованных данных. Входящий файл до 20 МБ. Исходные файлы пачки хранятся на сервере не более часа и удаляются после отправки.")
         return send_text(chat, f"Абонемент: {CONFIG['price_stars']} рублей за 30 дней без лимита билетов (скидка до планового повышения до 1500 рублей). Автопродление — каждые 30 дней; отмена /cancel_subscription. В одной пачке до 50 PDF и 100 МБ распакованных данных. Входящий файл до 20 МБ. Исходные файлы пачки хранятся на сервере не более часа и удаляются после отправки. По вопросам оплаты: /paysupport.")
     if command in {"/paysupport", "/pay", "/payadmin"}:
+        if is_free_all():
+            return send_text(chat, f"✨ В {BRAND_NAME} все функции полностью бесплатны и без ограничений! Оплата не требуется.")
         return send_text(
             chat,
             f"💳 **ОПЛАТА И СВЯЗЬ С АДМИНИСТРАТОРОМ · {BRAND_NAME}**\n\n"

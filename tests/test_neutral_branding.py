@@ -2,19 +2,25 @@ import os
 import sys
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
+sys.modules.setdefault("zxingcpp", MagicMock())
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 class NeutralBrandingTests(unittest.TestCase):
 
     def test_neutral_branding_texts(self):
-        with patch.dict(os.environ, {"BRAND_MODE": "neutral", "BRAND_NAME": "РЕДАКТОР БИЛЕТОВ"}):
+        with patch.dict(os.environ, {
+            "BRAND_MODE": "neutral",
+            "BRAND_NAME": "РЕДАКТОР БИЛЕТОВ",
+            "BILETNAYA": "/Users/mac/Билетная"
+        }):
             import importlib
             import texts
             importlib.reload(texts)
 
             self.assertTrue(texts.is_neutral())
+            self.assertTrue(texts.is_free_all())
             self.assertEqual(texts.BRAND_NAME, "РЕДАКТОР БИЛЕТОВ")
             self.assertIsNone(texts.BRAND_AVATAR)
             self.assertIsNone(texts.WELCOME_ANIMATION)
@@ -22,6 +28,9 @@ class NeutralBrandingTests(unittest.TestCase):
             for text in (texts.GREETING, texts.HELP_TEXT, texts.FREE_BATCH_TEXT):
                 self.assertNotIn("дед", text.lower())
                 self.assertNotIn("черномор", text.lower())
+                self.assertNotIn("абонемент", text.lower())
+                self.assertNotIn("руб", text.lower())
+                self.assertNotIn("₽", text.lower())
 
             import ticket_meta
             importlib.reload(ticket_meta)
@@ -41,6 +50,14 @@ class NeutralBrandingTests(unittest.TestCase):
             self.assertNotIn("дед", rendered.lower())
             self.assertNotIn("черномор", rendered.lower())
             self.assertIn("РЕДАКТОР БИЛЕТОВ", rendered)
+
+            import bot
+            importlib.reload(bot)
+            self.assertTrue(bot.has_access(999999))
+            kb = bot.get_main_markup()
+            btn_texts = [btn["text"] for row in kb["inline_keyboard"] for btn in row]
+            self.assertNotIn("✍️ Оформить абонемент", btn_texts)
+            self.assertNotIn("🎟 Промокод", btn_texts)
 
     def test_default_ded_branding_preserved(self):
         with patch.dict(os.environ, {"BRAND_MODE": "ded"}):
