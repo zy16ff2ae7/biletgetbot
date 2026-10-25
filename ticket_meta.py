@@ -769,11 +769,23 @@ def make_clean_ticket_filename(meta: dict[str, Any] | None, fallback: str, hide_
     return filename or f"{os.path.splitext(fallback)[0]}_cleaned.pdf"
 
 
+def _is_neutral() -> bool:
+    import os
+    return os.environ.get("BRAND_MODE", "ded").strip().lower() == "neutral"
+
+
 def format_single_ticket_caption(meta: dict[str, Any] | None, info: dict[str, Any] | None = None) -> str:
     """Format Telegram document caption for a single processed ticket."""
     info = info or {}
+    neutral = _is_neutral()
     if not meta or not meta.get("title"):
         verified = info.get("verification", {}) if isinstance(info, dict) else {}
+        if neutral:
+            return (
+                f"✅ Билет очищен и проверен. Проверены коды: {verified.get('readable_codes', 0)} · поля: {verified.get('fields', 0)}."
+                if (isinstance(info, dict) and info.get("changed"))
+                else "📄 Автоматических правок нет: возвращаю исходный PDF без изменений."
+            )
         return (
             f"✍️ Дед перепечатал билет начисто. Проверены коды: {verified.get('readable_codes', 0)} · поля: {verified.get('fields', 0)}."
             if (isinstance(info, dict) and info.get("changed"))
@@ -824,17 +836,17 @@ def format_single_ticket_caption(meta: dict[str, Any] | None, info: dict[str, An
 
     lines.append("")
     if isinstance(info, dict) and info.get("seat_info"):
-        lines.append("✍️ Дед пересадил зрителя на новые места 🪑")
+        lines.append("🪑 Зритель пересажен на новые места" if neutral else "✍️ Дед пересадил зрителя на новые места 🪑")
     elif isinstance(info, dict) and info.get("custom_price"):
-        lines.append("✍️ Дед перепечатал цену билета ✏️")
+        lines.append("✏️ Цена билета изменена" if neutral else "✍️ Дед перепечатал цену билета ✏️")
     elif isinstance(info, dict) and info.get("spectator_fio"):
-        lines.append(f"✍️ Дед вписал зрителя {info['spectator_fio']}")
+        lines.append(f"👤 Вписан зритель {info['spectator_fio']}" if neutral else f"✍️ Дед вписал зрителя {info['spectator_fio']}")
     elif isinstance(info, dict) and info.get("hide_price"):
-        lines.append("✍️ Дед скрыл цену билета 🎁")
+        lines.append("🎁 Цена билета скрыта" if neutral else "✍️ Дед скрыл цену билета 🎁")
     elif isinstance(info, dict) and info.get("changed"):
-        lines.append("✍️ Дед перепечатал билет начисто")
+        lines.append("✅ Билет очищен и проверен" if neutral else "✍️ Дед перепечатал билет начисто")
     else:
-        lines.append("✍️ Исходный PDF без изменений")
+        lines.append("📄 Исходный PDF без изменений" if neutral else "✍️ Исходный PDF без изменений")
 
     return "\n".join(lines)
 
@@ -932,7 +944,7 @@ def format_batch_report_table(items_meta: list[dict[str, Any]]) -> str:
 
 def format_batch_tg_caption(items_meta: list[dict[str, Any]], good: int, failed: int) -> str:
     """Format concise summary for Telegram ZIP document caption."""
-    header = f"✍️ Дед упаковал пачку: {good} готово"
+    header = (f"📦 Пакет сформирован: {good} готово" if _is_neutral() else f"✍️ Дед упаковал пачку: {good} готово")
     if failed:
         header += f", {failed} с ошибкой"
     header += "\n"

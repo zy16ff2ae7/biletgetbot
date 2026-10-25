@@ -45,7 +45,7 @@ from subscriptions import SubscriptionStore, PERIOD
 from config import CONFIG
 from texts import (BRAND_NAME, BRAND_AVATAR, WELCOME_ANIMATION, FREE_DAILY,
                    tickets_word, FREE_BATCH_TEXT, FREE_BATCH_KB,
-                   GREETING, HELP_TEXT, ADMIN_PANEL_TEXT)
+                   GREETING, HELP_TEXT, ADMIN_PANEL_TEXT, is_neutral)
 
 # Дневной бесплатный лимит (env BILET_DAILY_FREE) — чтобы копирайты не разошлись с ним.
 
@@ -118,7 +118,8 @@ def get_publisher():
     global _publisher
     with _publisher_lock:
         if _publisher is None:
-            _publisher = Publisher(base)
+            port = int(os.environ.get("BILET_DELIVERY_PORT", "4313"))
+            _publisher = Publisher(base, port=port)
             atexit.register(_publisher.close)
         return _publisher
 
@@ -1145,8 +1146,14 @@ def subscribe(chat, user_id):
     invoice = get_store().invoice(user_id, CONFIG["price_stars"])
     url = invoice["url"]
     if not url:
-        url = tg("createInvoiceLink", title="ДЕД РЕДАЧИТ: абонемент на месяц",
-                 description=f"Дед перепечатывает билеты начисто: 30 дней без лимита билетов. Специальная цена {CONFIG['price_stars']} рублей (скидка до повышения). Автопродление; отмена /cancel_subscription.",
+        inv_title = f"{BRAND_NAME}: абонемент на месяц" if is_neutral() else "ДЕД РЕДАЧИТ: абонемент на месяц"
+        inv_desc = (
+            f"{BRAND_NAME}: 30 дней без лимита билетов. Специальная цена {CONFIG['price_stars']} рублей (скидка до повышения). Автопродление; отмена /cancel_subscription."
+            if is_neutral() else
+            f"Дед перепечатывает билеты начисто: 30 дней без лимита билетов. Специальная цена {CONFIG['price_stars']} рублей (скидка до повышения). Автопродление; отмена /cancel_subscription."
+        )
+        url = tg("createInvoiceLink", title=inv_title,
+                 description=inv_desc,
                  payload=invoice["payload"], provider_token="", currency="XTR",
                  prices=[{"label": f"30 дней со скидкой ({CONFIG['price_stars']} ₽)", "amount": invoice["price"]}], subscription_period=PERIOD)
         if not url:
@@ -1187,11 +1194,12 @@ def handle_cryptobot_create(chat, user_id, msg_id=None):
     status = get_store().status(user_id)
     if status["active"]:
         return show_status(chat, user_id)
-    bot_user = get_bot_username() or "ded_bilet_bot"
+    bot_user = get_bot_username() or ("redaktorpdf_bot" if is_neutral() else "ded_bilet_bot")
+    crypto_desc = f"{BRAND_NAME}: абонемент на 30 дней ({CONFIG['price_stars']} ₽)" if is_neutral() else f"ДЕД РЕДАЧИТ: абонемент на 30 дней ({CONFIG['price_stars']} ₽)"
     inv = cryptobot.create_invoice(
         user_id,
         amount_rub=CONFIG["price_stars"],
-        description=f"ДЕД РЕДАЧИТ: абонемент на 30 дней ({CONFIG['price_stars']} ₽)",
+        description=crypto_desc,
         bot_username=bot_user,
     )
     if not inv or not (inv.get("bot_invoice_url") or inv.get("pay_url")):
@@ -1314,7 +1322,7 @@ def get_bot_username():
             return _BOT_USERNAME
     except Exception:
         pass
-    return "ded_bilet_bot"
+    return "redaktorpdf_bot" if is_neutral() else "ded_bilet_bot"
 
 
 def build_subscription_card(user_id):
@@ -1410,7 +1418,11 @@ def build_referral_card(user_id):
     bot_user = get_bot_username()
     ref_link = f"https://t.me/{bot_user}?start=ref_{user_id}"
     stats = get_store().get_referral_stats(user_id)
-    share_text = f"Перепечатывай билеты без чужих ФИО и чар Черномора: https://t.me/{bot_user}?start=ref_{user_id}"
+    share_text = (
+        f"Редактируй билеты без чужих ФИО и служебных отметок: https://t.me/{bot_user}?start=ref_{user_id}"
+        if is_neutral() else
+        f"Перепечатывай билеты без чужих ФИО и чар Черномора: https://t.me/{bot_user}?start=ref_{user_id}"
+    )
     share_url = f"https://t.me/share/url?url={urllib.parse.quote(share_text)}"
 
     text = (
@@ -1438,10 +1450,15 @@ def build_referral_card(user_id):
 def build_history_card(user_id):
     items = get_store().get_ticket_history(user_id, limit=8)
     if not items:
+        saved_msg = (
+            "Отправьте PDF-билет в чат — бот сохранит его в историю, "
+            if is_neutral() else
+            "Отправьте PDF-билет в чат — дед сохранит его в историю, "
+        )
         text = (
             f"🕒 **История обработанных билетов**\n\n"
             f"Вы пока не перепечатывали билеты через бота.\n"
-            f"Отправьте PDF-билет в чат — дед сохранит его в историю, "
+            f"{saved_msg}"
             f"чтобы вы могли вернуться к нему в любой момент!"
         )
         kb = {"inline_keyboard": [
@@ -1578,9 +1595,11 @@ def format_welcome_greeting(user_id=None, username=None):
 def send_welcome(chat, user_id=None, username=None):
     markup = get_main_markup(user_id, username)
     welcome_text = format_welcome_greeting(user_id, username)
-    if WELCOME_ANIMATION.exists() and _send_brand_media(chat, WELCOME_ANIMATION, "video", welcome_text, markup):
+    if is_neutral():
+        return send_text(chat, welcome_text, markup=markup)
+    if WELCOME_ANIMATION and WELCOME_ANIMATION.exists() and _send_brand_media(chat, WELCOME_ANIMATION, "video", welcome_text, markup):
         return True
-    photo = _photo_or_none(BRAND_AVATAR)
+    photo = _photo_or_none(BRAND_AVATAR) if BRAND_AVATAR else None
     if photo:
         payload = {"chat_id": str(chat), "caption": welcome_text[:1000], "reply_markup": json.dumps(markup)}
         try:
@@ -1657,7 +1676,7 @@ def send_profile(chat, user_id, username=None):
         {"text": "🏠 В главное меню", "callback_data": "welcome:menu"},
     ])
     markup = {"inline_keyboard": markup_rows}
-    photo = _photo_or_none(BRAND_AVATAR)
+    photo = _photo_or_none(BRAND_AVATAR) if (BRAND_AVATAR and not is_neutral()) else None
     if photo:
         payload = {"chat_id": str(chat), "caption": text[:1000], "reply_markup": json.dumps(markup)}
         try:
@@ -1857,8 +1876,9 @@ def _run_broadcast(chat, body):
 
 
 def set_my_commands():
+    start_desc = "Запустить редактор" if is_neutral() else "Запустить деда"
     commands = [
-        {"command": "start", "description": "Запустить деда"},
+        {"command": "start", "description": start_desc},
         {"command": "help", "description": "Как пользоваться"},
         {"command": "profile", "description": "Профиль и статус доступа"},
         {"command": "subscribe", "description": "Оформить абонемент"},
@@ -1884,13 +1904,22 @@ def set_my_commands():
 def set_my_profile_info():
     price_stars = CONFIG.get("price_stars", 750)
     free_daily = SubscriptionStore.DAILY_LIMIT
-    description = (
-        "Дед сел за пишущую машинку и перепечатывает билеты заново — аккуратно, быстро и без лишних строк.\n\n"
-        "Убирает чужие ФИО, служебные строки и чары Черномора, сохраняя QR-коды, штрихкоды, даты, места и цену.\n\n"
-        f"🎁 {free_daily} билета каждый день — бесплатно!\n"
-        f"📦 Пачки и полный безлимит — с абонементом ({price_stars} ₽ / 30 дней вместо 1500 ₽)."
-    )
-    short_description = "Перепечатка билетов начисто: удаление чужих ФИО и чар Черномора. 2 билета в день бесплатно!"
+    if is_neutral():
+        description = (
+            f"{BRAND_NAME}: сервис автоматической очистки и подготовки билетов.\n\n"
+            "Удаляет чужие ФИО, промокоды, скидки и служебные строки, сохраняя QR-коды, штрихкоды, даты, места и цену.\n\n"
+            f"🎁 {free_daily} билета каждый день — бесплатно!\n"
+            f"📦 Пачки и полный безлимит — с абонементом ({price_stars} ₽ / 30 дней вместо 1500 ₽)."
+        )
+        short_description = f"{BRAND_NAME}: удаление чужих ФИО, промокодов и служебных отметок."
+    else:
+        description = (
+            "Дед сел за пишущую машинку и перепечатывает билеты заново — аккуратно, быстро и без лишних строк.\n\n"
+            "Убирает чужие ФИО, служебные строки и чары Черномора, сохраняя QR-коды, штрихкоды, даты, места и цену.\n\n"
+            f"🎁 {free_daily} билета каждый день — бесплатно!\n"
+            f"📦 Пачки и полный безлимит — с абонементом ({price_stars} ₽ / 30 дней вместо 1500 ₽)."
+        )
+        short_description = "Перепечатка билетов начисто: удаление чужих ФИО и чар Черномора. 2 билета в день бесплатно!"
     for lang in ("", "ru"):
         try:
             tg("setMyDescription", description=description, language_code=lang)
@@ -2171,7 +2200,10 @@ def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None):
     else:
         price_toggle_btn = {"text": "🎁 Скрыть цену", "callback_data": f"toggleprice:{token}:1"}
     preview_btn = {"text": "🖼 Фото: До и После", "callback_data": f"compare:{token}"}
-    pushkin_btn = {"text": "🧹 Снять чары Черномора", "callback_data": f"pushkin:{token}"}
+    pushkin_btn = {
+        "text": "🧹 Снять отметку программы" if is_neutral() else "🧹 Снять чары Черномора",
+        "callback_data": f"pushkin:{token}"
+    }
 
     rows = [
         [quick_btn],
@@ -3332,7 +3364,7 @@ def process_document(msg, collection_id=None, job_id=None):
 
         def phase(stage):
             if stage == "clean":
-                progress.update(1, "Стираем чужие ФИО и чары Черномора ✍️")
+                progress.update(1, "Стираем чужие ФИО и служебные строки ✍️" if is_neutral() else "Стираем чужие ФИО и чары Черномора ✍️")
             else:
                 progress.update(2, "Сверяем QR-коды, дату, сектор, ряд и цену 🔍")
 
@@ -5022,7 +5054,12 @@ def _reissue_ticket_with_pushkin_strip(chat, uid, ref):
     hide_price = tok_hide if tok_hide is not None else bool(u_settings.get("hide_price", 0))
     custom_price = tok_price if tok_price is not None else u_settings.get("custom_price")
 
-    send_text(chat, "🧹 Снимаю чары Черномора и перевожу билет в коммерческий вид...")
+    send_text(
+        chat,
+        "🧹 Очищаю отметку программы и перевожу билет в коммерческий вид..."
+        if is_neutral() else
+        "🧹 Снимаю чары Черномора и перевожу билет в коммерческий вид..."
+    )
     ok, result, info = clean_ticket_with_report(
         data,
         spectator_fio=cur_fio,
@@ -5037,7 +5074,10 @@ def _reissue_ticket_with_pushkin_strip(chat, uid, ref):
 
     meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
     out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price)
-    caption = "🧹 Чары Черномора сняты с билета!\n\n" + ticket_meta.format_single_ticket_caption(meta, info)
+    caption = (
+        ("🧹 Отметка программы снята!\n\n" if is_neutral() else "🧹 Чары Черномора сняты с билета!\n\n")
+        + ticket_meta.format_single_ticket_caption(meta, info)
+    )
     new_token = secrets.token_hex(8)
     _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=tok_seat, del_texts=tok_del, strip_pushkin=True, uid=uid)
     pages_cnt = 1
@@ -5363,19 +5403,21 @@ def handle(msg, update_id=None, queued=False):
         if len(parts) == 1:
             if recent_token:
                 get_store().set_user_state(uid, f"waiting_del:{recent_token}")
+                example_del = "ФИО зрителя или Сервисный сбор" if is_neutral() else "чары Черномора, ФИО зрителя или Сервисный сбор"
                 return send_text(
                     chat,
                     "✂️ **Универсальный ластик**\n\n"
-                    "Напишите текст, который нужно стереть с билета (например: чары Черномора, ФИО зрителя или Сервисный сбор):\n"
+                    f"Напишите текст, который нужно стереть с билета (например: {example_del}):\n"
                     "Для сброса всех удалений напишите сброс\n"
                     "(для отмены напишите: отмена)"
                 )
             else:
+                example_cmd = "/del Сервисный сбор" if is_neutral() else "/del чары Черномора"
                 return send_text(
                     chat,
                     "✂️ **Универсальный ластик**\n\n"
                     "Сначала пришлите билет в PDF. Затем используйте команду:\n"
-                    "/del чары Черномора\n"
+                    f"{example_cmd}\n"
                     "/del <любой лишний текст>"
                 )
         arg = parts[1].strip()
@@ -5988,7 +6030,7 @@ def dispatch_update(update):
         elif data.startswith("choose_sec"):
             text = "Выбор сектора..."
         elif data.startswith("pushkin"):
-            text = "Снимаю чары Черномора..."
+            text = "Очищаю отметку программы..." if is_neutral() else "Снимаю чары Черномора..."
         elif data.startswith("avito"):
             text = "Генерирую защищённое фото..."
         elif data.startswith("quick") or data.startswith("bset:quick") or data.startswith("bmass:combo"):

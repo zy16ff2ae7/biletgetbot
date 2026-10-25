@@ -60,6 +60,33 @@ DED_DONE_LINES = (
     "Перепечатано так чисто, будто сам Александр Сергеевич правил ✍️",
 )
 
+NEUTRAL_LINES = {
+    "Получаю файл": ("Загрузка документа...", "Анализ файла..."),
+    "Получаю билеты": ("Загрузка билетов...", "Формирование очереди..."),
+    "Перепечатываю билет": ("Очистка служебных строк...", "Удаление чужих ФИО..."),
+    "Проверяю коды и данные": ("Контроль штрихкодов и QR...", "Сверка реквизитов..."),
+    "Отправляю результат": ("Формирование итогового PDF...", "Отправка в чат..."),
+    "Перепечатываю пачку": ("Обработка пакета билетов...", "Пакетная очистка..."),
+    "Собираю ZIP": ("Упаковка файлов в ZIP...", "Создание архива..."),
+    "Добавляю в пачку": ("Добавление документа в пакет...",),
+}
+NEUTRAL_DONE_LINES = (
+    "Билет готов к печати и контролю 📄",
+    "Обработка завершена успешно 📄",
+)
+
+
+def _is_neutral():
+    import os
+    return os.environ.get("BRAND_MODE", "ded").strip().lower() == "neutral"
+
+
+def _brand_name():
+    import os
+    if _is_neutral():
+        return os.environ.get("BRAND_NAME", "РЕДАКТОР БИЛЕТОВ").strip()
+    return "ДЕД РЕДАЧИТ"
+
 
 class Progress:
     """Transport receives Bot API method/kwargs and returns the JSON envelope."""
@@ -70,10 +97,13 @@ class Progress:
         self.transport = transport
         self.cleanup = cleanup
         self.steps = steps
+        neutral = _is_neutral()
+        lines_dict = NEUTRAL_LINES if neutral else DED_LINES
+        done_tpl = NEUTRAL_DONE_LINES if neutral else DED_DONE_LINES
         # Choose once per stage: a timer refresh must not flicker the wording.
-        self.jokes = tuple(choice(DED_LINES.get(label, DED_LINES["Получаю файл"]))
+        self.jokes = tuple(choice(lines_dict.get(label, lines_dict["Получаю файл"]))
                            for label in steps)
-        self.done_joke = choice(DED_DONE_LINES)
+        self.done_joke = choice(done_tpl)
         self.interval = interval
         self.started = time.monotonic()
         self.lock = threading.Lock()
@@ -81,7 +111,7 @@ class Progress:
         self.thread = None
         self.message_id = None
         self.stage = 0
-        self.detail = "Дед уже стучит по машинке. Билеты перепечатываются."
+        self.detail = "Идёт обработка билета..." if neutral else "Дед уже стучит по машинке. Билеты перепечатываются."
         self.outcome = None
         self.total = self.completed = self.failed = 0
         self.frame = 0
@@ -108,8 +138,14 @@ class Progress:
         with self.lock:
             stage, detail, outcome = self.stage, self.detail, self.outcome
             completed, total, failed, frame = self.completed, self.total, self.failed, self.frame
-        title = {None: "✍️ ДЕД РЕДАЧИТ · Перепечатываю билеты", "done": "✍️ ДЕД РЕДАЧИТ · Всё перепечатано",
-                 "error": "⚠️ ДЕД РЕДАЧИТ · Машинка заела"}[outcome]
+        bname = _brand_name()
+        if _is_neutral():
+            title = {None: f"📄 {bname} · Обработка билетов",
+                     "done": f"📄 {bname} · Всё готово",
+                     "error": f"⚠️ {bname} · Ошибка"}[outcome]
+        else:
+            title = {None: "✍️ ДЕД РЕДАЧИТ · Перепечатываю билеты", "done": "✍️ ДЕД РЕДАЧИТ · Всё перепечатано",
+                     "error": "⚠️ ДЕД РЕДАЧИТ · Машинка заела"}[outcome]
         lines = [f"<b>{title}</b>", f"<code>{escape(self.name)}</code>", ""]
         for index, label in enumerate(self.steps):
             if outcome == "done" or index < stage:
