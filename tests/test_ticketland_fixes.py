@@ -10,9 +10,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 class TicketlandFixesTests(unittest.TestCase):
 
     def test_ticketland_social_resource_and_clustered_price(self):
+        biletnaya_dir = os.environ.get("BILETNAYA", "/Users/mac/Билетная")
+        font_path = str(Path(biletnaya_dir) / "vendor" / "Arial.ttf")
         with patch.dict(os.environ, {
             "BRAND_MODE": "neutral",
-            "BILETNAYA": "/Users/mac/Билетная"
+            "BILETNAYA": biletnaya_dir
         }):
             import fitz
             import bot
@@ -20,7 +22,6 @@ class TicketlandFixesTests(unittest.TestCase):
 
             doc = fitz.open()
             page = doc.new_page(width=842, height=595)
-            font_path = "/Users/mac/Билетная/vendor/Arial.ttf"
 
             def text(x, y, value, size=8):
                 page.insert_text((x, y), value, fontname="F0", fontfile=font_path, fontsize=size)
