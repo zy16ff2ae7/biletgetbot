@@ -204,6 +204,26 @@ systemctl start bilet-bot.service
 sleep 3
 systemctl is-active --quiet bilet-bot.service
 systemctl is-enabled --quiet bilet-bot.service
+
+# Обновление второго экземпляра (нейтрального @redaktorpdf_bot), если он установлен
+if [ -d "/opt/redaktor-bot" ]; then
+    systemctl stop redaktor-bot.service 2>/dev/null || true
+    for bilet_dir in biletnaya scripts migrations; do
+        if [ -d "$bilet_stage/$bilet_dir" ]; then
+            rm -rf "/opt/redaktor-bot/$bilet_dir"
+            cp -a "$bilet_stage/$bilet_dir" "/opt/redaktor-bot/$bilet_dir"
+        fi
+    done
+    for f in bot.py texts.py ticket_meta.py progress.py batches.py seat_tools.py eraser_tools.py validation.py config.py cryptobot.py subscriptions.py delivery_cache.py telegram_file_transport.py url_delivery.py subscription.json; do
+        if [ -f "$bilet_stage/$f" ]; then
+            cp "$bilet_stage/$f" "/opt/redaktor-bot/$f"
+        fi
+    done
+    systemctl start redaktor-bot.service
+    sleep 2
+    systemctl is-active --quiet redaktor-bot.service
+    printf 'redaktor-bot.service: active\n'
+fi
 if [ "$bilet_enable_url" = 1 ]; then
     "$bilet_python" - <<'HEALTH'
 import requests
