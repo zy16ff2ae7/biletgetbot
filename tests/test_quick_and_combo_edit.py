@@ -325,6 +325,24 @@ class QuickAndComboEditTests(unittest.TestCase):
             self.assertNotIn("Толкачева Оксана", out_text)
             self.assertIn("2 500.00 руб.", out_text)
 
+    def test_afisha_native_font_price_replacement(self):
+        pdf_path = Path("/Users/mac/.gemini/antigravity/brain/04bb05f0-3495-4832-84e3-c589f460ffcc/.user_uploaded/media_1792945831365_039e45b9.pdf")
+        if not pdf_path.exists():
+            return
+        with open(pdf_path, "rb") as f:
+            data = f.read()
+        ok, res, info = bot.clean_ticket_with_report(data, custom_price=2500)
+        self.assertTrue(ok)
+        with fitz.open(stream=res, filetype="pdf") as out_doc:
+            found_font = None
+            for b in out_doc[0].get_text("dict")["blocks"]:
+                if "lines" not in b: continue
+                for l in b["lines"]:
+                    for s in l["spans"]:
+                        if "2 500" in s["text"]:
+                            found_font = s["font"]
+            self.assertEqual("AfishaDisplay-Text", found_font)
+
 
 if __name__ == "__main__":
     unittest.main()

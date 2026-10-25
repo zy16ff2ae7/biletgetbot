@@ -1518,6 +1518,114 @@ def _fallbacks(bold, serif=False, name=None):
     return out
 
 
+def _fix_ttf_font(buf, cid_to_gid_stream, postscript_name="CustomFont"):
+    """Восстанавливает отсутствующие таблицы cmap и name для сабсетов Type0 (Identity-H),
+    у которых генератор PDF срезал Unicode-отображение. Без cmap FreeType/PyMuPDF считает,
+    что в шрифте нет ни одного глифа (valid_codepoints == 0), и сваливается в фолбэк.
+    Синтезирует format 12 cmap из потока CIDToGIDMap и name-таблицу с родным именем."""
+    if not buf or len(buf) < 64 or not cid_to_gid_stream:
+        return buf
+    try:
+        cmap_map = {}
+        stream_len = len(cid_to_gid_stream)
+        for cid in range(stream_len // 2):
+            gid = struct.unpack_from(">H", cid_to_gid_stream, cid * 2)[0]
+            if gid != 0:
+                cmap_map[cid] = gid
+        if not cmap_map:
+            return buf
+
+        groups = []
+        sorted_chars = sorted(cmap_map.keys())
+        curr_start = curr_end = curr_start_gid = curr_last_gid = None
+        for c in sorted_chars:
+            g = cmap_map[c]
+            if curr_start is None:
+                curr_start = curr_end = c
+                curr_start_gid = curr_last_gid = g
+            elif c == curr_end + 1 and g == curr_last_gid + 1:
+                curr_end = c
+                curr_last_gid = g
+            else:
+                groups.append((curr_start, curr_end, curr_start_gid))
+                curr_start = curr_end = c
+                curr_start_gid = curr_last_gid = g
+        if curr_start is not None:
+            groups.append((curr_start, curr_end, curr_start_gid))
+
+        subtable_len = 16 + len(groups) * 12
+        fmt12_data = struct.pack(">HHIII", 12, 0, subtable_len, 0, len(groups))
+        for start, end, start_gid in groups:
+            fmt12_data += struct.pack(">III", start, end, start_gid)
+
+        cmap_table = struct.pack(">HH", 0, 2) + struct.pack(">HHI", 3, 10, 20) + struct.pack(">HHI", 0, 4, 20) + fmt12_data
+        if len(cmap_table) % 4 != 0:
+            cmap_table += b"\x00" * (4 - len(cmap_table) % 4)
+
+        is_bold = bool(re.search(r"bold", postscript_name, re.I))
+        subfamily = "Bold" if is_bold else "Regular"
+        names = [(1, postscript_name), (2, subfamily), (4, postscript_name), (6, postscript_name)]
+        records = []
+        str_data = bytearray()
+        for name_id, s in names:
+            b = s.encode("utf-16-be")
+            records.append((3, 1, 0x0409, name_id, len(b), len(str_data)))
+            str_data += b
+        for name_id, s in names:
+            b = s.encode("ascii", errors="replace")
+            records.append((1, 0, 0, name_id, len(b), len(str_data)))
+            str_data += b
+        hdr_len = 6 + len(records) * 12
+        name_table = struct.pack(">HHH", 0, len(records), hdr_len)
+        for p, e, l, n, length, offset in records:
+            name_table += struct.pack(">HHHHHH", p, e, l, n, length, offset)
+        name_table += str_data
+        if len(name_table) % 4 != 0:
+            name_table += b"\x00" * (4 - len(name_table) % 4)
+
+        def _calc_cs(d):
+            if len(d) % 4 != 0:
+                d += b"\x00" * (4 - len(d) % 4)
+            return sum(struct.unpack_from(">I", d, i)[0] for i in range(0, len(d), 4)) & 0xFFFFFFFF
+
+        cmap_cs = _calc_cs(cmap_table)
+        name_cs = _calc_cs(name_table)
+
+        numTables = struct.unpack_from(">H", buf, 4)[0]
+        tables = [struct.unpack_from(">4sIII", buf, 12 + i*16) for i in range(numTables)]
+        tables = [t for t in tables if t[0] not in (b"cmap", b"name")]
+
+        added_entries = 2
+        new_numTables = len(tables) + added_entries
+        shift = (new_numTables - numTables) * 16
+
+        shifted_tables = []
+        for tag, cs, off, length in tables:
+            shifted_tables.append((tag, cs, off + shift, length))
+
+        data_end = len(buf) + shift
+        new_tables_dir = []
+        for tag, cs, t_data in [(b"cmap", cmap_cs, cmap_table), (b"name", name_cs, name_table)]:
+            new_tables_dir.append((tag, cs, data_end, len(t_data)))
+            data_end += len(t_data)
+
+        all_tables = shifted_tables + new_tables_dir
+        all_tables.sort(key=lambda x: x[0])
+
+        new_dir = bytearray()
+        for tag, cs, off, length in all_tables:
+            new_dir += struct.pack(">4sIII", tag, cs, off, length)
+
+        import math
+        entrySelector = int(math.floor(math.log2(new_numTables)))
+        searchRange = (2 ** entrySelector) * 16
+        rangeShift = new_numTables * 16 - searchRange
+        new_buf = struct.pack(">HHHH", 1, 0, new_numTables, searchRange) + struct.pack(">HH", entrySelector, rangeShift) + new_dir + buf[12 + numTables*16:] + cmap_table + name_table
+        return bytes(new_buf)
+    except Exception:
+        return buf
+
+
 def doc_fonts(doc, doc_id):
     """Все встроенные шрифты документа: короткое имя (без префикса) -> [fitz.Font].
 
@@ -1547,7 +1655,29 @@ def doc_fonts(doc, doc_id):
                 _n, ext, _t, buf = doc.extract_font(xref)
                 if not buf or len(buf) < 64 or ext in ("n/a", ""):
                     continue
-                found.setdefault(short, []).append(fitz.Font(fontbuffer=buf))
+                font_obj = None
+                try:
+                    f_test = fitz.Font(fontbuffer=buf)
+                    if len(f_test.valid_codepoints()) > 0:
+                        font_obj = f_test
+                except Exception:
+                    pass
+                if font_obj is None:
+                    try:
+                        obj = doc.xref_object(xref)
+                        m_desc = re.search(r"/DescendantFonts\s*\[\s*(\d+)\s+0\s+R", obj)
+                        if m_desc:
+                            desc_obj = doc.xref_object(int(m_desc.group(1)))
+                            m_map = re.search(r"/CIDToGIDMap\s*(\d+)\s+0\s+R", desc_obj)
+                            if m_map:
+                                cid_stream = doc.xref_stream(int(m_map.group(1)))
+                                fixed_buf = _fix_ttf_font(buf, cid_stream, short)
+                                font_obj = fitz.Font(fontbuffer=fixed_buf)
+                    except Exception:
+                        pass
+                if font_obj is None:
+                    font_obj = fitz.Font(fontbuffer=buf)
+                found.setdefault(short, []).append(font_obj)
             except Exception:
                 continue
     with LOCK:
