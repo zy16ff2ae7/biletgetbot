@@ -701,6 +701,11 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                                 origin = (slot["align_right"] - _runs_width(runs, size), origin[1])
                             _draw_runs(page, runs, origin, size, color)
                             fio_applied = True
+                    elif any(srv.AFISHA_SELLER_RE.search(l["text"] or "") for l in srv.extract_lines(page)):
+                        writer = fitz.TextWriter(page.rect)
+                        writer.append((155, 222), f"Зритель: {cur_fio}", font=srv.FONT_REG, fontsize=8.0)
+                        writer.write_text(page, color=(0, 0, 0))
+                        fio_applied = True
 
             if price_replacements:
                 for pno, origin, new_text, size, color, style in price_replacements:
