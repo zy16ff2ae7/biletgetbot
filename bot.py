@@ -376,7 +376,7 @@ def _find_name_slots(source):
                 if not any(k in l["text"].lower() for k in ["заказ", "сектор", "ряд", "место"]):
                     what = "afisha"
             if i in t_names:
-                what = "ticketland"
+                what = "почта" if srv.EMAIL_RE.search(l["text"]) else "ticketland"
             if i in intickets_names:
                 what = "intickets"
             if i in k_rows:
@@ -601,6 +601,7 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
             elif price_val is not None:
                 for pno, (spage, cpage) in enumerate(zip(source, cleaned)):
                     lines = srv.field_tags(srv.extract_lines(spage))
+                    cand_lines = []
                     for l in lines:
                         t_txt = l.get("text", "").strip().lower()
                         tags = set(l.get("tags", []))
@@ -609,10 +610,48 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                         if re.search(r"\b(?:скидк[аеиу]|сбор|вернуть\s+деньги|фз\s*№?\s*193)\b", t_txt):
                             continue
                         if re.search(r"\d", l.get("text", "")) and ("price" in tags or srv.PRICE_RE.search(t_txt)):
+                            cand_lines.append(l)
+
+                    clusters = []
+                    for l in cand_lines:
+                        matched_cl = None
+                        for cl in clusters:
+                            cl_lead = cl[0]
+                            if (abs(l["bbox"][1] - cl_lead["bbox"][1]) < 25 and
+                                    abs(l["bbox"][0] - cl_lead["bbox"][0]) < 60):
+                                matched_cl = cl
+                                break
+                        if matched_cl is not None:
+                            matched_cl.append(l)
+                        else:
+                            clusters.append([l])
+
+                    for cl in clusters:
+                        for l in cl:
                             validation_targets[pno].add(_normalized(l["text"]))
                             cpage.add_redact_annot(fitz.Rect(l["bbox"]) + (-1, -1, 1, 1), fill=False)
-                            new_text = replace_price_in_text(l["text"], price_val)
-                            price_replacements.append((pno, l["origin"], new_text, l.get("size", 8.0), l.get("color", 0), _line_style(l)))
+
+                        def _pref(line_cand):
+                            txt = line_cand.get("text", "")
+                            score = 0
+                            if "рублей" in txt.lower():
+                                score += 10
+                            elif "руб" in txt.lower():
+                                score += 5
+                            if "arial" in line_cand.get("font", "").lower():
+                                score += 3
+                            return score
+
+                        best_line = max(cl, key=_pref)
+                        new_text = replace_price_in_text(best_line["text"], price_val)
+                        price_replacements.append((
+                            pno,
+                            best_line["origin"],
+                            new_text,
+                            best_line.get("size", 8.0),
+                            best_line.get("color", 0),
+                            _line_style(best_line),
+                        ))
                     cpage.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
         try:
             fio_applied = False

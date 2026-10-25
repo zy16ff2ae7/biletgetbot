@@ -1059,31 +1059,32 @@ def _ticketland_pushkin_block(page, lines):
 
 
 def _ticketland_name_rows(page, lines):
-    """ФИО внизу третьей колонки Ticketland, включая уже очищенный кэш.
-
-    У этого шаблона имя может быть целиком заглавным, со строчной буквы и без метки.
-    Проверяем продавца, положение строки и отчество (или наличие блока программы),
-    чтобы не принять правила за ФИО.
+    """ФИО и реквизиты покупателя/организации внизу второй колонки Ticketland,
+    включая уже очищенный кэш и билеты без блока программы.
     """
     if (page.rotation or page.rect.width <= page.rect.height
             or not any("ticketland.ru" in l["text"].lower() for l in lines)):
         return set()
     found = set()
-    has_pushkin = any(PUSHKIN_TEXT_RE.search(l["text"]) for l in lines)
     for i, line in enumerate(lines):
         if line.get("stale"):
             continue
         b = fitz.Rect(line["bbox"])
-        if not (0.49 * page.rect.width <= b.x0 <= 0.55 * page.rect.width
+        if not (0.48 * page.rect.width <= b.x0 <= 0.68 * page.rect.width
                 and b.x1 < 0.75 * page.rect.width
-                and 0.91 * page.rect.height <= b.y0 <= 0.96 * page.rect.height):
+                and 0.88 * page.rect.height <= b.y0 <= 0.99 * page.rect.height):
             continue
-        words = line["text"].split()
-        is_patronymic = bool(re.search(r"(?:ович|евич|ич|овна|евна|инична|оглы|кызы)$",
-                                       words[-1], re.I)) if words else False
-        if (2 <= len(words) <= 4
-                and all(re.fullmatch(r"[А-ЯЁа-яёA-Za-z'’\-]+", w) for w in words)
-                and (has_pushkin or is_patronymic)):
+        txt = line["text"].strip()
+        if not txt:
+            continue
+        if re.search(r"правил|посещени|мероприят|билет|вход|внимание|запрещ|распечат|сложить|ticketland", txt, re.I):
+            continue
+        if EMAIL_RE.search(txt):
+            found.add(i)
+            continue
+        words = txt.split()
+        if (1 <= len(words) <= 5
+                and all(re.fullmatch(r"[А-ЯЁа-яёA-Za-z0-9'’\-.]+", w) for w in words)):
             found.add(i)
     return found
 
@@ -1153,7 +1154,7 @@ def strip_pushkin_doc(doc, clear_name=True):
                     continue
                 if is_yandex_afisha and i not in yandex_names and i != yandex_header:
                     continue
-                is_tl_email = ticketland_block and bool(EMAIL_RE.search(l["text"]))
+                is_tl_email = bool(EMAIL_RE.search(l["text"])) and any("ticketland.ru" in line["text"].lower() for line in lines)
                 if (ticketland_block or ticketland_names) and i not in ticketland_names and not is_tl_email:
                     continue
                 if not (family or is_afisha or operann or muza or is_yandex_afisha) and i not in (ticketland_names | intickets_names) and not is_tl_email:
@@ -1195,7 +1196,7 @@ def strip_pushkin_doc(doc, clear_name=True):
                     what = f"фио Yandex: {l['text'][:40]}"
                 if is_yandex_afisha and i == yandex_header:
                     what = "заголовок Yandex: ПОСЕТИТЕЛЬ"
-                if ticketland_block and EMAIL_RE.search(l["text"]):
+                if is_tl_email:
                     what = f"почта: {l['text'][:40]}"
                 if not what:
                     continue
