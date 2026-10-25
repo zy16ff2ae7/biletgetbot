@@ -31,6 +31,7 @@ class NeutralBrandingTests(unittest.TestCase):
                 self.assertNotIn("абонемент", text.lower())
                 self.assertNotIn("руб", text.lower())
                 self.assertNotIn("₽", text.lower())
+                self.assertNotIn("бесплат", text.lower())
 
             import ticket_meta
             importlib.reload(ticket_meta)

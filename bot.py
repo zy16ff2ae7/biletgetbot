@@ -1138,7 +1138,7 @@ def _send_cached_ticket(chat, cached, keys, progress, reply_markup=None):
 
 def subscribe(chat, user_id):
     if is_free_all():
-        return send_text(chat, f"✨ В {BRAND_NAME} все функции полностью бесплатны и без ограничений! Оплата не требуется.")
+        return send_text(chat, f"В {BRAND_NAME} подписки не требуются. Все функции доступны сразу.")
     if is_admin(user_id):
         return send_text(chat, "У вас постоянный администраторский доступ. Оплата не нужна.")
     status = get_store().status(user_id)
@@ -1332,11 +1332,10 @@ def get_bot_username():
 def build_subscription_card(user_id):
     if is_free_all():
         text = (
-            f"✨ **ДОСТУП · {BRAND_NAME}**\n\n"
-            f"⚡️ **Статус: Полный доступ без ограничений**\n"
-            f"📦 Пакетная обработка: **без ограничений**\n"
-            f"🎫 Дневной лимит: **безлимитно**\n\n"
-            f"Сервис полностью бесплатный для всех пользователей."
+            f"⚙️ **ДОСТУП · {BRAND_NAME}**\n\n"
+            f"⚡️ **Статус: Активен**\n"
+            f"📦 Пакетная обработка: **включена**\n"
+            f"🎫 Обработка билетов: **без ограничений**"
         )
         kb = [
             [{"text": "👤 В профиль", "callback_data": "welcome:profile"}],
@@ -1591,7 +1590,7 @@ def format_welcome_greeting(user_id=None, username=None):
     """Возвращает текст приветствия с динамической плашкой статуса пользователя."""
     badge = ""
     if is_free_all():
-        badge = "✨ Полный доступ без ограничений\n\n"
+        badge = ""
     elif user_id:
         try:
             if is_admin(user_id, username):
@@ -1651,7 +1650,7 @@ def send_profile(chat, user_id, username=None):
     except Exception:
         return send_text(chat, "Профиль временно недоступен. Попробуйте позже.")
     if is_free_all():
-        access = "⚡️ Доступ: полный, бесплатный без ограничений"
+        access = "⚡️ Доступ: активен"
     elif status["active"]:
         access = ("🎟 Доступ: активен до " + date_label(status["expires"])
                   + f" · осталось {max(0, int(status['expires'] - time.time()) // 86400)} дн.")
@@ -1727,7 +1726,7 @@ def send_profile(chat, user_id, username=None):
 
 def cmd_trial(chat, user_id):
     if is_free_all():
-        return send_text(chat, f"✨ В {BRAND_NAME} все функции полностью бесплатны и без ограничений!")
+        return send_text(chat, f"В {BRAND_NAME} все функции доступны без ограничений.")
     return send_text(chat, "Бесплатный пробный день больше недоступен.\n"
                            "Каждый день вам доступно 2 бесплатных билета.\n"
                            "Для снятия всех ограничений оформите абонемент: /subscribe.")
@@ -1735,7 +1734,7 @@ def cmd_trial(chat, user_id):
 
 def cmd_promo(chat, user_id, arg):
     if is_free_all():
-        return send_text(chat, f"✨ В {BRAND_NAME} все функции полностью бесплатны и без ограничений! Промокоды не требуются.")
+        return send_text(chat, f"В {BRAND_NAME} промокоды не требуются. Все функции доступны сразу.")
     if not arg:
         return send_text(chat, "🎟 Формат: /promo КОД\nПромокоды выдаёт администратор бота.")
     try:
@@ -1962,9 +1961,9 @@ def set_my_profile_info():
         description = (
             f"{BRAND_NAME}: сервис автоматической очистки и подготовки билетов.\n\n"
             "Удаляет чужие ФИО, промокоды, скидки и служебные строки, сохраняя QR-коды, штрихкоды, даты, места и цену.\n\n"
-            "✨ Полностью бесплатно и без ограничений: любые билеты и пачки!"
+            "Поддерживает одиночные билеты и пачки файлов."
         )
-        short_description = f"{BRAND_NAME}: бесплатный редактор билетов."
+        short_description = f"{BRAND_NAME}: редактор билетов."
     elif is_neutral():
         description = (
             f"{BRAND_NAME}: сервис автоматической очистки и подготовки билетов.\n\n"
@@ -3609,7 +3608,7 @@ def handle_callback_query(cb):
 
     if data == "cbpay:create":
         if is_free_all():
-            return send_text(chat, f"✨ В {BRAND_NAME} все функции бесплатны! Оплата не требуется.")
+            return send_text(chat, f"В {BRAND_NAME} оплата не требуется.")
         return handle_cryptobot_create(chat, uid, msg_id=msg_id)
 
     if data.startswith("cbpay:check:"):
@@ -5350,13 +5349,13 @@ def handle(msg, update_id=None, queued=False):
         return subscribe(chat, uid)
     if command in {"/cryptobot", "/crypto", "/cb"}:
         if is_free_all():
-            return send_text(chat, f"✨ В {BRAND_NAME} все функции полностью бесплатны! Оплата не требуется.")
+            return send_text(chat, f"В {BRAND_NAME} оплата не требуется.")
         return handle_cryptobot_create(chat, uid)
     if command in {"/subscription", "/balance", "/dolg", "/status"}:
         return show_status(chat, uid)
     if command == "/cancel_subscription":
         if is_free_all():
-            return send_text(chat, f"✨ В {BRAND_NAME} нет платных подписок. Доступ всегда бесплатный.")
+            return send_text(chat, f"В {BRAND_NAME} нет платных подписок.")
         invoice = get_store().status(uid)["invoice"]
         if not invoice or invoice["canceled"]:
             return send_text(chat, "У вас нет подписки с включённым автопродлением.")
@@ -5503,11 +5502,11 @@ def handle(msg, update_id=None, queued=False):
         return _send_avito_preview(chat, uid, recent_token)
     if command == "/terms":
         if is_free_all():
-            return send_text(chat, f"📄 **{BRAND_NAME} · Условия сервиса**\n\nСервис полностью бесплатный и без ограничений по количеству билетов. В одной пачке до 50 PDF и 100 МБ распакованных данных. Входящий файл до 20 МБ. Исходные файлы пачки хранятся на сервере не более часа и удаляются после отправки.")
+            return send_text(chat, f"📄 **{BRAND_NAME} · Условия сервиса**\n\nВ одной пачке до 50 PDF и 100 МБ распакованных данных. Входящий файл до 20 МБ. Исходные файлы пачки хранятся на сервере не более часа и удаляются после отправки.")
         return send_text(chat, f"Абонемент: {CONFIG['price_stars']} рублей за 30 дней без лимита билетов (скидка до планового повышения до 1500 рублей). Автопродление — каждые 30 дней; отмена /cancel_subscription. В одной пачке до 50 PDF и 100 МБ распакованных данных. Входящий файл до 20 МБ. Исходные файлы пачки хранятся на сервере не более часа и удаляются после отправки. По вопросам оплаты: /paysupport.")
     if command in {"/paysupport", "/pay", "/payadmin"}:
         if is_free_all():
-            return send_text(chat, f"✨ В {BRAND_NAME} все функции полностью бесплатны и без ограничений! Оплата не требуется.")
+            return send_text(chat, f"В {BRAND_NAME} оплата не требуется. Все функции доступны сразу.")
         return send_text(
             chat,
             f"💳 **ОПЛАТА И СВЯЗЬ С АДМИНИСТРАТОРОМ · {BRAND_NAME}**\n\n"
