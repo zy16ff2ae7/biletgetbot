@@ -352,6 +352,8 @@ def _find_name_slots(source):
         t_names = srv._ticketland_name_rows(page, lines)
         k_rows = srv._kassir_name_rows(lines)
         is_af = any(srv.AFISHA_SELLER_RE.search(l["text"] or "") for l in lines)
+        afisha_names = srv._afisha_name_rows(page, lines) if is_af and hasattr(srv, "_afisha_name_rows") else set()
+        org_rows = srv._organizer_rows(lines) if hasattr(srv, "_organizer_rows") else set()
         p_slots = []
         for i, l in enumerate(lines):
             if intickets and i not in intickets_names:
@@ -372,9 +374,8 @@ def _find_name_slots(source):
             if is_operann and i in operann_names:
                 if not srv.PUSHKIN_TEXT_RE.search(l["text"]) and not re.search(r"в рамках программы", l["text"], re.I):
                     what = "operann"
-            elif not what and is_af and 208 <= l["bbox"][1] <= 235 and 150 <= l["bbox"][0] <= 450:
-                if not any(k in l["text"].lower() for k in ["заказ", "сектор", "ряд", "место"]):
-                    what = "afisha"
+            elif is_af and i in afisha_names:
+                what = "afisha"
             if i in t_names:
                 what = "почта" if srv.EMAIL_RE.search(l["text"]) else "ticketland"
             if i in intickets_names:
@@ -389,7 +390,7 @@ def _find_name_slots(source):
                 continue
             p_slots.append(l)
 
-        name_candidates = [s for s in p_slots if srv.is_name(s["text"])]
+        name_candidates = [s for s in p_slots if srv.is_name(s["text"]) and lines.index(s) not in org_rows]
         chosen = name_candidates[0] if name_candidates else (p_slots[-1] if p_slots else None)
         if yandex and yandex_names:
             first = min(yandex_names)
@@ -406,8 +407,9 @@ def _find_name_slots(source):
             chosen["max_width"] = max(60.0, min(100.0, page.rect.width * 0.12))
         if not chosen:
             fallback_candidates = [
-                l for l in lines
-                if (("name" in (l.get("tags") or [])) or srv.is_name(l["text"]))
+                l for idx, l in enumerate(lines)
+                if idx not in org_rows
+                and (("name" in (l.get("tags") or [])) or srv.is_name(l["text"]))
                 and not l.get("stale")
                 and l["bbox"][1] < page.rect.height * 0.85
             ]
@@ -699,11 +701,6 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                                 origin = (slot["align_right"] - _runs_width(runs, size), origin[1])
                             _draw_runs(page, runs, origin, size, color)
                             fio_applied = True
-                    elif any(srv.AFISHA_SELLER_RE.search(l["text"] or "") for l in srv.extract_lines(page)):
-                        writer = fitz.TextWriter(page.rect)
-                        writer.append((155, 222), f"Зритель: {cur_fio}", font=srv.FONT_REG, fontsize=8.0)
-                        writer.write_text(page, color=(0, 0, 0))
-                        fio_applied = True
 
             if price_replacements:
                 for pno, origin, new_text, size, color, style in price_replacements:
@@ -4963,6 +4960,7 @@ def apply_ticket_fio(chat, uid, token, spectator_fio, prompt_msg_id=None):
 
     clean_fio = spectator_fio.strip() if spectator_fio and spectator_fio.strip() else None
     if clean_fio:
+        clean_fio = re.sub(r"^(?:покупатель|посетитель|зритель|клиент|фио|билетодержатель|владелец)\s*[:.\-–]?\s*", "", clean_fio, flags=re.I).strip()
         get_store().record_recent_fio(uid, clean_fio)
         fio_label = clean_fio
     else:
@@ -5751,7 +5749,11 @@ def handle(msg, update_id=None, queued=False):
             get_store().set_user_fio(uid, None)
             return apply_ticket_fio(chat, uid, ref, spectator_fio=None)
         else:
-            spectator_fio = text.strip()
+            q = seat_tools.parse_quick_edit(text)
+            if q.get("custom_price") is not None or q.get("seat_info") is not None or q.get("hide_price") is not None:
+                return _reissue_ticket_with_seat(chat, uid, ref, text)
+            spectator_fio = q.get("fio") or text.strip()
+            spectator_fio = re.sub(r"^(?:покупатель|посетитель|зритель|клиент|фио|билетодержатель|владелец)\s*[:.\-–]?\s*", "", spectator_fio, flags=re.I).strip()
             get_store().set_user_fio(uid, spectator_fio)
             return apply_ticket_fio(chat, uid, ref, spectator_fio=spectator_fio)
 

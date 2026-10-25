@@ -276,5 +276,55 @@ class QuickAndComboEditTests(unittest.TestCase):
             self.assertEqual(self.store.get_user_state(12345), "waiting_quick:test_token_abc")
 
 
+    def test_parse_quick_edit_with_boilerplate_labels(self):
+        q = seat_tools.parse_quick_edit("Покупатель ГОСТЬ ГОСТЬ СТОИМОСТЬ 2500")
+        self.assertEqual(q["fio"], "ГОСТЬ ГОСТЬ")
+        self.assertEqual(q["custom_price"], 2500)
+
+        q2 = seat_tools.parse_quick_edit("Зритель: Сидоров Иван Цена 1200 руб")
+        self.assertEqual(q2["fio"], "Сидоров Иван")
+        self.assertEqual(q2["custom_price"], 1200)
+
+        q3 = seat_tools.parse_quick_edit("ГОСТЬ ГОСТЬ")
+        self.assertEqual(q3["fio"], "ГОСТЬ ГОСТЬ")
+        self.assertIsNone(q3["custom_price"])
+
+    def test_afisha_venue_and_spectator_replacement(self):
+        # Create an Afisha-style ticket with venue and organizer lines
+        doc = fitz.open()
+        page = doc.new_page(width=595, height=842)
+        font = str(Path(bot.BILETNAYA) / "vendor/Arial.ttf")
+
+        def text(x, y, val, size=9):
+            page.insert_text((x, y), val, fontname="F0", fontfile=font, fontsize=size)
+
+        text(206, 175, "28.10.2026 в 19:00")
+        text(206, 215, "На Страстном")
+        text(214, 250, "Шарипов Линар Рустемович")
+        text(214, 260, "ИП Театр на Страстном")
+        text(214, 315, "Ряд 2 Место 32")
+        text(214, 350, "Балкон")
+        text(214, 385, "Толкачева Оксана")
+        text(214, 485, "28258297")
+        text(432, 535, "Организатор: Шарипов Линар Рустемович ИП,")
+        text(214, 550, "800.00 руб.")
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        ok, res, info = bot.clean_ticket_with_report(
+            pdf_bytes,
+            spectator_fio="ГОСТЬ ГОСТЬ",
+            custom_price=2500
+        )
+        self.assertTrue(ok)
+        with fitz.open(stream=res, filetype="pdf") as out_doc:
+            out_text = out_doc[0].get_text().replace("\xa0", " ")
+            self.assertIn("На Страстном", out_text)
+            self.assertIn("Шарипов Линар Рустемович", out_text)
+            self.assertIn("ГОСТЬ ГОСТЬ", out_text)
+            self.assertNotIn("Толкачева Оксана", out_text)
+            self.assertIn("2 500.00 руб.", out_text)
+
+
 if __name__ == "__main__":
     unittest.main()

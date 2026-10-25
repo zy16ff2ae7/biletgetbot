@@ -337,10 +337,10 @@ def parse_quick_edit(raw: str) -> dict[str, Any]:
         res["hide_price"] = False
         text = re.sub(r"\b(показать\s*цену|с\s*ценой|вернуть\s*цену)\b", "", text, flags=re.I)
 
-    # 1. Price with explicit currency or keyword: 'цена 5000', '5000 руб', '5000 ₽', '0 руб'
-    m_price = re.search(r"(?:цена\s*[:=-]?\s*)?(\d{1,7})\s*(?:руб[а-я]*|р|₽)\b", text, re.I)
+    # 1. Price with explicit currency or keyword: 'цена 5000', '5000 руб', '5000 ₽', 'стоимость 2500', '0 руб'
+    m_price = re.search(r"(?:(?:цена|стоимость|тариф|сумма|итого)\s*[:=-]?\s*)?(\d{1,7})\s*(?:руб[а-я]*|р|₽)\b", text, re.I)
     if not m_price:
-        m_price = re.search(r"\bцена\s*[:=-]?\s*(\d{1,7})\b", text, re.I)
+        m_price = re.search(r"\b(?:цена|стоимость|тариф|сумма|итого)\s*[:=-]?\s*(\d{1,7})\b", text, re.I)
     if m_price:
         res["custom_price"] = int(m_price.group(1))
         text = text[:m_price.start()] + " " + text[m_price.end():]
@@ -376,7 +376,9 @@ def parse_quick_edit(raw: str) -> dict[str, Any]:
     cleaned_fio = re.sub(r"^[0-9]+[.)\s-]+", "", text)
     cleaned_fio = re.sub(r"[,|/–—:;()]+", " ", cleaned_fio)
     cleaned_fio = re.sub(r"\s+", " ", cleaned_fio).strip()
-    if cleaned_fio and not re.match(r"^(?:фио|руб|цена|место|ряд|сброс)$", cleaned_fio, re.I):
+    cleaned_fio = re.sub(r"^(?:покупатель|посетитель|зритель|клиент|фио|билетодержатель|владелец)\s*[:.\-–]?\s*", "", cleaned_fio, flags=re.I)
+    cleaned_fio = re.sub(r"\b(?:цена|стоимость|тариф|сумма|руб[а-я]*|р|₽)\b.*$", "", cleaned_fio, flags=re.I).strip()
+    if cleaned_fio and not re.match(r"^(?:фио|руб|цена|стоимость|место|ряд|сброс)$", cleaned_fio, re.I):
         if re.search(r"[a-яёa-z]", cleaned_fio, re.I):
             res["fio"] = cleaned_fio
 

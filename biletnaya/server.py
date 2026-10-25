@@ -19,9 +19,18 @@ TRANSPARENT_1X1_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
 if not hasattr(fitz.Rect, "get_area"):
     fitz.Rect.get_area = lambda self: max(0.0, self.width) * max(0.0, self.height)
 
+def _load_font_or_default(path, default_name):
+    if os.path.exists(path):
+        try:
+            return fitz.Font(fontfile=path)
+        except Exception:
+            pass
+    return fitz.Font(default_name)
+
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
-FONT_REG = fitz.Font(fontfile=os.path.join(ROOT, "vendor", "Arial.ttf"))
-FONT_BOLD = fitz.Font(fontfile=os.path.join(ROOT, "vendor", "Arial-Bold.ttf"))
+FONT_REG = _load_font_or_default(os.path.join(ROOT, "vendor", "Arial.ttf"), "helv")
+FONT_BOLD = _load_font_or_default(os.path.join(ROOT, "vendor", "Arial-Bold.ttf"), "helv")
 INK = (0.05, 0.05, 0.08)
 # Полные стиль-совместимые шрифты для символов, которых НЕТ в сабсете билета
 # (новые цифры/буквы при правке). Сабсет хранит только реально использованные
@@ -79,7 +88,7 @@ TEXT_NO_IMG = fitz.TEXTFLAGS_RAWDICT & ~fitz.TEXT_PRESERVE_IMAGES
 SERIF_RX = re.compile(r"serif|times|roman|georgia|minion|garamond|charter|palatino", re.I)
 SANS_RX = re.compile(r"sans|arial|arimo|helvet|golos|roboto|verdana|tahoma|calibri|"
                      r"segoe|myriad|inter|gothic|grotesq|bebas|nimbus|yandex|stolzl|"
-                     r"madefor|avantgarde|pfdin|heros|frutiger|golos", re.I)
+                     r"madefor|avantgarde|pfdin|heros|frutiger|golos|afisha|display", re.I)
 
 
 def _is_serif(name, flags):
@@ -1145,6 +1154,7 @@ def strip_pushkin_doc(doc, clear_name=True):
         family = payment is not None or (buyer is not None) or (_is_kassa24_family(lines) and not muza)
         ticketland_names = _ticketland_name_rows(page, lines)
         is_afisha = any(AFISHA_SELLER_RE.search(l["text"] or "") for l in lines)
+        afisha_names = _afisha_name_rows(page, lines) if is_afisha else set()
         removed = []
         personal = set()
         if clear_name and (family or ticketland_names or intickets_names or is_afisha or operann_names or muza_names or muza_header is not None or yandex_names or yandex_header is not None):
@@ -1183,9 +1193,8 @@ def strip_pushkin_doc(doc, clear_name=True):
                     what = f"фио Chelny: {l['text'][:40]}"
                 if operann and i in operann_names:
                     what = f"зритель Operann: {l['text'][:40]}"
-                elif not what and is_afisha and 208 <= l["bbox"][1] <= 235 and 150 <= l["bbox"][0] <= 450:
-                    if not any(k in l["text"].lower() for k in ["заказ", "сектор", "ряд", "место"]):
-                        what = f"зритель Afisha: {l['text'][:40]}"
+                elif not what and is_afisha and i in afisha_names:
+                    what = f"зритель Afisha: {l['text'][:40]}"
                 if i in ticketland_names:
                     what = f"фио Ticketland: {l['text'][:40]}"
                 if i in intickets_names:
@@ -2574,10 +2583,18 @@ MONTH_RE = re.compile(r"(январ|феврал|март|апрел|ма[йя]|
                       r"сентябр|октябр|ноябр|декабр)[а-яё]*\.?", re.I)
 
 
+RUSSIAN_PREPOSITIONS = {
+    "в", "во", "на", "под", "подо", "при", "за", "от", "ото", "до", "по",
+    "из", "изо", "к", "ко", "о", "об", "обо", "у", "над", "надо", "без", "безо",
+    "сквозь", "через", "около", "возле", "среди", "между", "перед", "передо",
+    "для", "ради", "про", "со", "из-за", "из-под",
+}
+
 NAME_STOP_WORDS_RE = re.compile(
     r"\b(линия|сгиб\w*|пушкинск\w*|карт\w*|билет\w*|театр\w*|партер|балкон|ложа|бельэтаж|ярус|амфитеатр|"
     r"сектор\w*|ряд\w*|мест\w*|заказ\w*|руб\w*|копейк\w*|инн|кпп|офд|чек|смен\w*|"
-    r"зал\w*|вход\w*|подъезд\w*|этаж\w*|мероприят\w*|спектакл\w*|концерт\w*)\b", re.I
+    r"зал\w*|вход\w*|подъезд\w*|этаж\w*|мероприят\w*|спектакл\w*|концерт\w*|"
+    r"страстн\w*|сцен\w*|холл\w*|арен\w*|стадион\w*|музе\w*|галере\w*|выставк\w*|дворец\w*|дворц\w*|клуб\w*|центр\w*|цирк\w*|филармони\w*|консерватори\w*)\b", re.I
 )
 
 
@@ -2585,6 +2602,8 @@ def _token_is_name_part(w):
     subparts = w.split("-")
     for sp in subparts:
         if not sp:
+            return False
+        if sp.lower() in RUSSIAN_PREPOSITIONS:
             return False
         if sp.lower() in {"оглы", "кызы", "де", "фон", "ван", "эль"}:
             continue
@@ -2608,6 +2627,8 @@ def is_name(text):
     toks = s.split()
     if not 2 <= len(toks) <= 4:
         return False
+    if any(w.lower() in RUSSIAN_PREPOSITIONS for w in toks):
+        return False
     if not any(re.match(r"[А-ЯЁA-Z]", w) for w in toks):
         return False
     return all(_token_is_name_part(w) for w in toks)
@@ -2620,7 +2641,62 @@ def name_value_ok(text):
     if re.search(r"[:@\d]", s) or NAME_STOP_WORDS_RE.search(s):
         return False
     toks = s.split()
+    if any(w.lower() in RUSSIAN_PREPOSITIONS for w in toks):
+        return False
     return 1 <= len(toks) <= 4 and all(re.match(r"[А-Яа-яЁёA-Za-z]", w) for w in toks)
+
+
+def _organizer_rows(lines):
+    """Строки, относящиеся к организатору / юридическому лицу / театру,
+    а не к покупателю / зрителю."""
+    org_rows = set()
+    all_text = " \n ".join((l.get("text") or "") for l in lines)
+    org_names = set()
+    for m in re.finditer(r"организатор\s*[:\-]?\s*([^\n,]+)", all_text, re.I):
+        c = re.sub(r"\b(?:ип|ооо|зао|пао|ао)\b", "", m.group(1), flags=re.I).strip()
+        if len(c) >= 3:
+            org_names.add(c.lower())
+
+    for i, l in enumerate(lines):
+        t = (l.get("text") or "").strip()
+        tl = t.lower()
+        if re.search(r"\b(?:ип|ооо|зао|пао|ао|инн|кпп|огрн|билетная\s+система)\b", tl):
+            org_rows.add(i)
+            continue
+        if any(org_name in tl for org_name in org_names):
+            org_rows.add(i)
+            continue
+        for j in (i - 1, i + 1):
+            if 0 <= j < len(lines):
+                neighbor = lines[j]
+                if abs(neighbor["bbox"][1] - l["bbox"][1]) <= 22:
+                    nt = (neighbor.get("text") or "").strip().lower()
+                    if re.match(r"^(?:ип|ооо|зао|пао|ао|организатор)\b", nt) or "театр" in nt:
+                        org_rows.add(i)
+                        break
+    return org_rows
+
+
+def _afisha_name_rows(page, lines):
+    """Строки с ФИО зрителя/покупателя на билетах Афиши."""
+    if not any(AFISHA_SELLER_RE.search(l.get("text") or "") for l in lines):
+        return set()
+    orgs = _organizer_rows(lines)
+    candidates = []
+    for i, l in enumerate(lines):
+        if i in orgs:
+            continue
+        t = (l.get("text") or "").strip().lower()
+        if any(lbl in t for lbl in ["посетитель", "зритель", "покупатель"]):
+            val = _buyer_fio_from_text(l.get("text") or "")
+            if val:
+                candidates.append(i)
+        elif is_name(l.get("text") or ""):
+            candidates.append(i)
+    buyer_zone = [i for i in candidates if 340 <= lines[i]["bbox"][1] <= 460]
+    if buyer_zone:
+        return set(buyer_zone)
+    return set(candidates)
 
 
 def zone_value_ok(text):
@@ -2841,8 +2917,9 @@ def field_tags(lines):
     # («Солнце Ландау» sz22 при медиане 7) и названия театров (sz11).
     sizes = sorted(l["size"] for l in lines)
     med = sizes[len(sizes) // 2] if sizes else 10.0
+    org_rows = _organizer_rows(lines)
     for i, l in enumerate(lines):
-        if not tags[i] and not l.get("stale") and l["size"] <= med * 1.5:
+        if not tags[i] and not l.get("stale") and l["size"] <= med * 1.5 and i not in org_rows:
             if is_name(l["text"]):
                 tags[i].add("name")
             else:

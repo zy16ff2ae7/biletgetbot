@@ -4,7 +4,10 @@ import re
 
 import fitz
 import numpy as np
-import zxingcpp
+try:
+    import zxingcpp
+except ImportError:
+    zxingcpp = None
 
 
 class ValidationError(ValueError):
@@ -22,6 +25,8 @@ def _inside(rect, areas):
 
 
 def _codes(page):
+    if zxingcpp is None:
+        return []
     scale = 2
     if page.rect.get_area() * scale * scale > 15_000_000:
         raise ValidationError("Слишком большой размер страницы для проверки кодов.")
