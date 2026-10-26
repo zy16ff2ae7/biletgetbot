@@ -139,8 +139,10 @@ class SubscriptionStore:
 
     def register_invite(self, username, days, admin_id):
         with self.db() as db:
-            db.execute("INSERT OR IGNORE INTO gift_invites(username,days,admin_id,expires) VALUES(?,?,?,?)",
-                       (username.lower(), days, admin_id, int(time.time()) + 7 * 86400))
+            db.execute("INSERT INTO gift_invites(username,days,admin_id,expires) VALUES(?,?,?,?) "
+                       "ON CONFLICT(username) DO UPDATE SET days=excluded.days,admin_id=excluded.admin_id,expires=excluded.expires "
+                       "WHERE claimed_user IS NULL",
+                       (username.lower(), days, admin_id, int(time.time()) + 90 * 86400))
 
     def claim_invite(self, username, user_id):
         if not username:
@@ -155,7 +157,7 @@ class SubscriptionStore:
                        "ON CONFLICT(user_id) DO UPDATE SET expires=MAX(grants.expires,excluded.expires)",
                        (user_id, expires, row["admin_id"]))
             db.execute("UPDATE gift_invites SET claimed_user=? WHERE username=?", (user_id, username.lower()))
-            return True
+            return row["days"]
 
     def revoke_grant(self, user_id):
         with self.db() as db:

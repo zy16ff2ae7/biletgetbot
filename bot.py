@@ -5373,8 +5373,10 @@ def handle(msg, update_id=None, queued=False):
     username = (msg.get("from") or {}).get("username")
     if username and username.lower() in ADMIN_USERNAMES and uid not in CONFIG["admin_ids"]:
         CONFIG["admin_ids"].append(uid)
-    if get_store().claim_invite(username, uid):
-        send_text(chat, "Вам выдан абонемент на 30 дней без оплаты. Статус: /subscription.")
+    claimed = get_store().claim_invite(username, uid)
+    if claimed:
+        days_num = claimed if (isinstance(claimed, int) and claimed is not True) else 30
+        send_text(chat, f"Вам выдан абонемент на {days_num} дн. без оплаты. Статус: /subscription.")
     try:
         get_store().touch_user(uid, username)
     except Exception:
