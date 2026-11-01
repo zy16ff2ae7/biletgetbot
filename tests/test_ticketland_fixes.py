@@ -89,6 +89,45 @@ class TicketlandFixesTests(unittest.TestCase):
 
             doc.close()
 
+    def test_ticketland_long_spectator_name_clean(self):
+        biletnaya_dir = os.environ.get("BILETNAYA", "/Users/mac/Билетная")
+        font_path = str(Path(biletnaya_dir) / "vendor" / "Arial.ttf")
+        with patch.dict(os.environ, {
+            "BRAND_MODE": "neutral",
+            "BILETNAYA": biletnaya_dir
+        }):
+            import fitz
+            import bot
+
+            doc = fitz.open()
+            page = doc.new_page(width=842, height=595)
+
+            def text(x, y, value, size=8):
+                page.insert_text((x, y), value, fontname="F0", fontfile=font_path, fontsize=size)
+
+            text(10, 580, "TICKETLAND.RU")
+            text(230, 480, "Стоимость:")
+            text(235, 501, "1 250 рублей", size=9)
+            text(425, 521, 'В рамках программы "Пушкинская карта".', size=8)
+            text(425, 529, 'Допускаются зрители строго от 14 до 22 лет.', size=8)
+            long_name = "Константинопольская Александра Александровна"
+            text(425, 552, long_name, size=10)
+            text(425, 573, "bilety.longname@mail.ru", size=10)
+
+            pdf_bytes = doc.tobytes()
+            doc.close()
+
+            ok, res, info = bot.clean_ticket_with_report(pdf_bytes)
+            self.assertTrue(ok, f"Processing failed: {res}")
+
+            out = fitz.open(stream=res, filetype="pdf")
+            out_text = out[0].get_text().replace("\xa0", " ")
+            self.assertNotIn("Константинопольская", out_text)
+            self.assertNotIn("bilety.longname", out_text)
+            self.assertNotIn("Пушкинская карта", out_text)
+            self.assertNotIn("строго от 14 до 22 лет", out_text)
+            out.close()
+
 
 if __name__ == "__main__":
     unittest.main()

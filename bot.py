@@ -292,9 +292,9 @@ def _cleanup_targets(doc):
     for page in doc:
         lines = srv.field_tags(srv.extract_lines(page))
         payment, buyer = srv._chelny_fields(page, lines)
-        muza = srv._is_muza_template(page, lines)
-        muza_header = srv._muza_buyer_header(page, lines) if muza else None
-        muza_names = srv._muza_name_rows(page, lines) if muza else set()
+        muza = srv._is_muza_template(page, lines) if hasattr(srv, "_is_muza_template") else False
+        muza_header = srv._muza_buyer_header(page, lines) if (muza and hasattr(srv, "_muza_buyer_header")) else None
+        muza_names = srv._muza_name_rows(page, lines) if (muza and hasattr(srv, "_muza_name_rows")) else set()
         yandex = srv._is_yandex_afisha_template(page, lines) if hasattr(srv, "_is_yandex_afisha_template") else False
         yandex_names = srv._yandex_afisha_name_rows(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_name_rows")) else set()
         yandex_header = srv._yandex_afisha_buyer_header(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_buyer_header")) else None
@@ -343,8 +343,8 @@ def _find_name_slots(source):
         intickets_names = srv._intickets_name_rows(page, lines)
         is_operann = hasattr(srv, "_is_operann_template") and srv._is_operann_template(page, lines)
         operann_names = srv._operann_name_rows(page, lines) if is_operann else set()
-        muza = srv._is_muza_template(page, lines)
-        muza_names = srv._muza_name_rows(page, lines) if muza else set()
+        muza = srv._is_muza_template(page, lines) if hasattr(srv, "_is_muza_template") else False
+        muza_names = srv._muza_name_rows(page, lines) if (muza and hasattr(srv, "_muza_name_rows")) else set()
         yandex = srv._is_yandex_afisha_template(page, lines) if hasattr(srv, "_is_yandex_afisha_template") else False
         yandex_names = srv._yandex_afisha_name_rows(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_name_rows")) else set()
         payment, buyer = srv._chelny_fields(page, lines)

@@ -1083,21 +1083,21 @@ def _ticketland_name_rows(page, lines):
         if line.get("stale"):
             continue
         b = fitz.Rect(line["bbox"])
-        if not (0.48 * page.rect.width <= b.x0 <= 0.68 * page.rect.width
-                and b.x1 < 0.75 * page.rect.width
+        if not (0.45 * page.rect.width <= b.x0 <= 0.68 * page.rect.width
+                and b.x1 <= 0.98 * page.rect.width
                 and 0.88 * page.rect.height <= b.y0 <= 0.99 * page.rect.height):
             continue
         txt = line["text"].strip()
         if not txt:
             continue
-        if re.search(r"правил|посещени|мероприят|билет|вход|внимание|запрещ|распечат|сложить|ticketland", txt, re.I):
+        if re.search(r"правил|посещени|мероприят|билет|вход|внимание|запрещ|распечат|сложить|ticketland|программ|пушкинск|допуска", txt, re.I):
             continue
         if EMAIL_RE.search(txt):
             found.add(i)
             continue
         words = txt.split()
-        if (1 <= len(words) <= 5
-                and all(re.fullmatch(r"[А-ЯЁа-яёA-Za-z0-9'’\-.]+", w) for w in words)):
+        if (1 <= len(words) <= 6
+                and all(re.fullmatch(r"[\w'’\-.]+", w, re.UNICODE) for w in words)):
             found.add(i)
     return found
 

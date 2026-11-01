@@ -66,6 +66,22 @@ def _kassir_name_rows(lines):
     return set()
 
 
+def _is_muza_template(page, lines):
+    return False
+
+
+def _muza_name_rows(page, lines):
+    return set()
+
+
+def _muza_buyer_header(page, lines):
+    return None
+
+
+def _muza_pushkin_hit(line):
+    return False
+
+
 def _personal_line_what(line):
     return None
 
