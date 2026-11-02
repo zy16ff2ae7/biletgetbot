@@ -82,14 +82,12 @@ def parse_seat_input(raw: str) -> dict[str, str]:
             res["row"] = m_two.group(1)
             res["seat"] = m_two.group(2)
         else:
-            # Single plain number fallback: if only 1 number was provided and user said 'ряд' or 'место', or sent just a number
+            # Single plain number fallback: if only 1 number was provided and user said 'ряд' or 'место'
             m_single = re.search(r"\b(\d{1,4}[а-яёa-z]?)\b", rest, re.I)
             if m_single:
                 if "ряд" in raw.lower() or "row" in raw.lower():
                     res["row"] = m_single.group(1)
                 elif "мест" in raw.lower() or "seat" in raw.lower():
-                    res["seat"] = m_single.group(1)
-                elif re.fullmatch(r"^\s*(\d{1,4}[а-яёa-z]?)\s*$", raw.strip(), re.I):
                     res["seat"] = m_single.group(1)
 
     return res

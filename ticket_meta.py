@@ -487,13 +487,13 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
             pass
 
     # Layout-based extraction & regex fallbacks
-    # 1. In-line or adjacent newline (e.g. "Ряд 3 Место 11" or "РЯД\n2\nМЕСТО\n12")
+    # 1. In-line on same line (e.g. "Ряд 3 Место 11")
     if not row:
-        m_r = re.search(r"(?<![а-яёa-z])(?:Ряд|ряд|РЯД)\s*[:№]?\s*([0-9]+[а-яА-Яa-zA-Z]?)", text)
+        m_r = re.search(r"(?<![а-яёa-z])(?:Ряд|ряд|РЯД)[ \t\xa0]*[:№]?[ \t\xa0]*([0-9]+[а-яА-Яa-zA-Z]?)", text)
         if m_r:
             row = m_r.group(1)
     if not seat:
-        m_s = re.search(r"(?<![а-яёa-z])(?:Место|место|МЕСТО)\s*[:№]?\s*([0-9]+[а-яА-Яa-zA-Z]?)", text)
+        m_s = re.search(r"(?<![а-яёa-z])(?:Место|место|МЕСТО)[ \t\xa0]*[:№]?[ \t\xa0]*([0-9]+[а-яА-Яa-zA-Z]?)", text)
         if m_s:
             seat = m_s.group(1)
 
@@ -528,16 +528,6 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
             if not seat:
                 seat = m_tab.group(2)
 
-    # 3c. Standalone newline: Место \n <seat> (e.g. Kazan TYUZ 'Ночной трамвай' open/rowless seating)
-    if not seat:
-        m_s_nl = re.search(r"(?:Место|место|МЕСТО)\s*\n\s*(\d{1,4}[а-яА-Яa-zA-Z]?)", text)
-        if m_s_nl:
-            seat = m_s_nl.group(1).strip()
-    if not row:
-        m_r_nl = re.search(r"(?:Ряд|ряд|РЯД)\s*\n\s*(\d{1,3}[а-яА-Яa-zA-Z]?)", text)
-        if m_r_nl:
-            row = m_r_nl.group(1).strip()
-
     # 4. Table column coordinate alignment
     if not row or not seat:
         try:
@@ -562,6 +552,16 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
                     seat = candidates[0][4]
         except Exception:
             pass
+
+    # 5. Standalone newline: Место \n <seat> (e.g. Kazan TYUZ 'Ночной трамвай' open/rowless seating)
+    if not seat:
+        m_s_nl = re.search(r"(?:Место|место|МЕСТО)\s*\n\s*(\d{1,4}[а-яА-Яa-zA-Z]?)", text)
+        if m_s_nl:
+            seat = m_s_nl.group(1).strip()
+    if not row:
+        m_r_nl = re.search(r"(?:Ряд|ряд|РЯД)\s*\n\s*(\d{1,3}[а-яА-Яa-zA-Z]?)", text)
+        if m_r_nl:
+            row = m_r_nl.group(1).strip()
 
     # 5. Letter seat fallback
     if not seat:
