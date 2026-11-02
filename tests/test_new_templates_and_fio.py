@@ -516,6 +516,86 @@ class KazanTuzTemplateTests(unittest.TestCase):
             filename,
         )
 
+    def test_night_tram_metadata_and_cleaning(self):
+        tram_path = FIXTURES / "kazan_tuz_orig_3.pdf"
+        if not tram_path.exists():
+            self.skipTest(f"missing fixture: {tram_path}")
+        tram_bytes = tram_path.read_bytes()
+
+        # 1. Metadata check without srv and with srv
+        meta_no_srv = ticket_meta.extract_ticket_metadata(tram_bytes)
+        self.assertEqual("Ночной трамвай", meta_no_srv["title"])
+        self.assertEqual("Казанский ТЮЗ", meta_no_srv["theater"])
+        self.assertEqual("13.11.2026", meta_no_srv["date"])
+        self.assertEqual("23:00", meta_no_srv["time"])
+        self.assertEqual(["18"], meta_no_srv["seats"])
+        self.assertEqual(1700, meta_no_srv["price"])
+
+        meta_with_srv = ticket_meta.extract_ticket_metadata(tram_bytes, srv=srv)
+        self.assertEqual(["18"], meta_with_srv["seats"])
+
+        fname = ticket_meta.make_clean_ticket_filename(meta_no_srv, fallback="367143.pdf")
+        self.assertEqual("Ночной трамвай (Казанский ТЮЗ, 13.11) — м18 — 1700р.pdf", fname)
+
+        # 2. Cleaning check
+        ok, result, info = bot.clean_ticket_with_report(tram_bytes)
+        self.assertTrue(ok, result)
+        with fitz.open(stream=result, filetype="pdf") as doc:
+            text = doc[0].get_text().replace("\xa0", " ")
+        self.assertIn("Банковская карта", text)
+        self.assertNotIn("Пушкинская карта", text)
+        self.assertNotIn("Кужугет", text)
+        self.assertNotIn("ОБЯЗАТЕЛЬНО НУЖЕН ДОКУМЕНТ", text)
+        self.assertIn("Ночной трамвай", text)
+        self.assertIn("18", text)
+        self.assertIn("1700 руб", text)
+        self.assertIn("0 руб", text)
+
+    def test_night_tram_price_edit_preserves_commission(self):
+        tram_path = FIXTURES / "kazan_tuz_orig_3.pdf"
+        if not tram_path.exists():
+            self.skipTest(f"missing fixture: {tram_path}")
+        tram_bytes = tram_path.read_bytes()
+
+        # Change price to 2 500
+        ok, result, info = bot.clean_ticket_with_report(tram_bytes, custom_price="2 500")
+        self.assertTrue(ok, result)
+        with fitz.open(stream=result, filetype="pdf") as doc:
+            text = doc[0].get_text().replace("\xa0", " ")
+        self.assertIn("2 500 руб", text)
+        self.assertIn("Комиссия", text)
+        self.assertIn("0 руб", text)
+        self.assertNotIn("1700 руб", text)
+
+    def test_night_tram_seat_and_fio_edit(self):
+        tram_path = FIXTURES / "kazan_tuz_orig_3.pdf"
+        if not tram_path.exists():
+            self.skipTest(f"missing fixture: {tram_path}")
+        tram_bytes = tram_path.read_bytes()
+
+        # Change seat and FIO
+        ok, result, info = bot.clean_ticket_with_report(
+            tram_bytes,
+            spectator_fio="Иванов Иван Иванович",
+            seat_info="м25",
+            custom_price=2000
+        )
+        self.assertTrue(ok, result)
+        with fitz.open(stream=result, filetype="pdf") as doc:
+            text = doc[0].get_text().replace("\xa0", " ")
+        self.assertIn("Иванов Иван Иванович", text)
+        self.assertIn("25", text)
+        self.assertIn("2 000 руб", text)
+        self.assertIn("0 руб", text)
+
+    def test_night_tram_batch_caption(self):
+        meta_3 = ticket_meta.extract_ticket_metadata((FIXTURES / "kazan_tuz_orig_3.pdf").read_bytes(), srv=srv)
+        meta_4 = ticket_meta.extract_ticket_metadata((FIXTURES / "kazan_tuz_orig_4.pdf").read_bytes(), srv=srv)
+        items = [{"meta": meta_3}, {"meta": meta_4}]
+        cap = ticket_meta.format_batch_tg_caption(items, 2, 0)
+        self.assertIn("1. Ночной трамвай · м18 · 1 700 ₽", cap)
+        self.assertIn("2. Ночной трамвай · м20 · 1 700 ₽", cap)
+
 
 class YandexAfishaTemplateTests(unittest.TestCase):
     """Яндекс Афиша: многострочное ФИО посетителя, паспортный блок и значки Пушкина."""

@@ -462,6 +462,19 @@ def _find_name_slots(source):
             chosen = dict(chosen)
             chosen["align_right"] = right_x
             chosen["size"] = 11.0
+        is_kazan_tuz = any("tickets.kazan-tuz.ru" in l["text"].lower() or "казанский тюз" in l["text"].lower() for l in lines)
+        if is_kazan_tuz and not chosen:
+            chosen = {
+                "text": "",
+                "bbox": [179.0, 105.0, 320.0, 116.0],
+                "size": 9.0,
+                "bold": False,
+                "serif": False,
+                "color": 0,
+                "origin": [179.0, 114.0],
+                "font": "ArialMT",
+                "tags": ["name"],
+            }
         slots.append(chosen)
     return slots
 
@@ -616,7 +629,11 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
             price_val = None
             if custom_price is not None:
                 try:
-                    price_val = int(custom_price)
+                    if isinstance(custom_price, str):
+                        clean_p = re.sub(r"[^\d]", "", custom_price)
+                        price_val = int(clean_p) if clean_p else None
+                    else:
+                        price_val = int(custom_price)
                 except (ValueError, TypeError):
                     price_val = None
 
@@ -627,7 +644,7 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                     for l in lines:
                         t = l.get("text", "").strip().lower()
                         if ("price" in l.get("tags", []) or srv.PRICE_RE.search(t)
-                                or t in {"цена", "цена:", "стоимость", "стоимость:", "номинал", "номинал:"}):
+                                or t in {"цена", "цена:", "стоимость", "стоимость:", "номинал", "номинал:", "полная цена", "полная цена:", "комиссия", "комиссия:"}):
                             validation_targets[pno].add(_normalized(l["text"]))
                             cpage.add_redact_annot(fitz.Rect(l["bbox"]) + (-1, -1, 1, 1), fill=False)
                     cpage.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
@@ -650,7 +667,7 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                         matched_cl = None
                         for cl in clusters:
                             cl_lead = cl[0]
-                            if (abs(l["bbox"][1] - cl_lead["bbox"][1]) < 25 and
+                            if (abs(l["bbox"][1] - cl_lead["bbox"][1]) < 18 and
                                     abs(l["bbox"][0] - cl_lead["bbox"][0]) < 60):
                                 matched_cl = cl
                                 break
@@ -3304,7 +3321,7 @@ def _finish_collection(chat, user_id, ident):
             spectator_fio = u_settings.get("fio")
             hide_price = bool(u_settings.get("hide_price", 0))
             cleaner, notify = _batch_callbacks(progress, spectator_fio=spectator_fio, hide_price=hide_price)
-            result = batches.process_items(items, cleaner, on_progress=notify)
+            result = batches.process_items(items, cleaner, on_progress=notify, srv=srv)
             if _send_batch_result(chat, result, progress, "Не удалось отправить ZIP. Повторите /done.", uid=user_id):
                 get_store().collection_state(ident, "done")
                 shutil.rmtree(_collection_dir(ident), ignore_errors=True)
@@ -3343,7 +3360,7 @@ def _process_auto_zip_batch(chat, uid, docs):
             hide_price = bool(u_settings.get("hide_price", 0))
             custom_price = u_settings.get("custom_price")
             cleaner, notify = _batch_callbacks(progress, spectator_fio=spectator_fio, hide_price=hide_price, custom_price=custom_price)
-            result = batches.process_items(items, cleaner, on_progress=notify)
+            result = batches.process_items(items, cleaner, on_progress=notify, srv=srv)
             _send_batch_result(chat, result, progress, "Не удалось отправить ZIP. Отправьте билеты ещё раз.", uid=uid)
         except batches.BatchError as error:
             _progress_error(progress, chat, str(error))
@@ -3484,7 +3501,7 @@ def process_document(msg, collection_id=None, job_id=None):
                 return _progress_error(progress, chat, FREE_BATCH_TEXT)
             try:
                 cleaner, notify = _batch_callbacks(progress, spectator_fio=user_fio, hide_price=hide_price, custom_price=custom_price)
-                result = batches.process_zip(data, cleaner, on_progress=notify)
+                result = batches.process_zip(data, cleaner, on_progress=notify, srv=srv)
                 _send_batch_result(chat, result, progress, "Не удалось отправить архив. Отправьте исходный ZIP ещё раз.", uid=uid)
             except batches.BatchError as error:
                 _progress_error(progress, chat, str(error))

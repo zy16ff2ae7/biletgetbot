@@ -97,7 +97,7 @@ def _batch_sort_key(item):
     return (date_key, time_key, title_key, theater_key, sector_key, row_key, seat_key, item.get("orig_index", 0))
 
 
-def _process_items_impl(items, cleaner, on_progress=None):
+def _process_items_impl(items, cleaner, on_progress=None, srv=None):
     if not items or len(items) > MAX_FILES or sum(len(data) for _name, data in items) > MAX_TOTAL_BYTES:
         raise BatchError("Пачка пуста или превышает лимиты.")
     buf = io.BytesIO()
@@ -118,7 +118,7 @@ def _process_items_impl(items, cleaner, on_progress=None):
                 on_progress("completed", index, len(items), good, failed)
             continue
 
-        meta = ticket_meta.extract_ticket_metadata(result)
+        meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
         good += 1
         changed += int(info["changed"])
         cleaned_entries.append({
@@ -228,12 +228,12 @@ def _process_items_impl(items, cleaner, on_progress=None):
     }
 
 
-def process_items(items, cleaner, on_progress=None):
+def process_items(items, cleaner, on_progress=None, srv=None):
     try:
-        return _process_items_impl(items, cleaner, on_progress=on_progress)
+        return _process_items_impl(items, cleaner, on_progress=on_progress, srv=srv)
     finally:
         trim_memory()
 
 
-def process_zip(data, cleaner, on_progress=None):
-    return process_items(read_zip(data), cleaner, on_progress)
+def process_zip(data, cleaner, on_progress=None, srv=None):
+    return process_items(read_zip(data), cleaner, on_progress, srv=srv)

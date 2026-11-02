@@ -82,12 +82,14 @@ def parse_seat_input(raw: str) -> dict[str, str]:
             res["row"] = m_two.group(1)
             res["seat"] = m_two.group(2)
         else:
-            # Single plain number fallback: if only 1 number was provided and user said 'ряд' or 'место'
-            m_single = re.search(r"\b(\d{1,4})\b", rest)
+            # Single plain number fallback: if only 1 number was provided and user said 'ряд' or 'место', or sent just a number
+            m_single = re.search(r"\b(\d{1,4}[а-яёa-z]?)\b", rest, re.I)
             if m_single:
                 if "ряд" in raw.lower() or "row" in raw.lower():
                     res["row"] = m_single.group(1)
                 elif "мест" in raw.lower() or "seat" in raw.lower():
+                    res["seat"] = m_single.group(1)
+                elif re.fullmatch(r"^\s*(\d{1,4}[а-яёa-z]?)\s*$", raw.strip(), re.I):
                     res["seat"] = m_single.group(1)
 
     return res
@@ -350,9 +352,9 @@ def parse_quick_edit(raw: str) -> dict[str, Any]:
     if parsed_seat and (parsed_seat.get("seat") or parsed_seat.get("row") or parsed_seat.get("sector")):
         res["seat_info"] = parsed_seat
         patterns_to_remove = [
-            r"(?:сектор|sector)\s*[:.\s-]*[a-яёa-z0-9]+",
-            r"(?:ряд|row)\s*[:.\s-]*\d+",
-            r"(?:мест[аоеум]*|seat|кресло)\s*[:.\s-]*[\d\-..]+",
+            r"(?:сектор|sector|сект|зона)\s*[:.\s-]*[a-яёa-z0-9]+",
+            r"(?<![а-яёa-z])(?:ряд|row|р)\.?\s*[:.\s-]*\d+[а-яёa-z]?",
+            r"(?<![а-яёa-z])(?:мест[аоеум]*|seat|кресло|м)\.?\s*[:.\s-]*[\d\-–,.]+",
             r"\b(?:партер|бельэтаж|балкон|амфитеатр|ложа|бенуар|трибуна|галерея)\b"
         ]
         for pat in patterns_to_remove:
@@ -378,8 +380,9 @@ def parse_quick_edit(raw: str) -> dict[str, Any]:
     cleaned_fio = re.sub(r"\s+", " ", cleaned_fio).strip()
     cleaned_fio = re.sub(r"^(?:покупатель|посетитель|зритель|клиент|фио|билетодержатель|владелец)\s*[:.\-–]?\s*", "", cleaned_fio, flags=re.I)
     cleaned_fio = re.sub(r"\b(?:цена|стоимость|тариф|сумма|руб[а-я]*|р|₽)\b.*$", "", cleaned_fio, flags=re.I).strip()
-    if cleaned_fio and not re.match(r"^(?:фио|руб|цена|стоимость|место|ряд|сброс)$", cleaned_fio, re.I):
-        if re.search(r"[a-яёa-z]", cleaned_fio, re.I):
+    if cleaned_fio and not re.match(r"^(?:фио|руб|цена|стоимость|место|ряд|сброс|[мр])$", cleaned_fio, re.I):
+        words = cleaned_fio.split()
+        if len(words) >= 2 or (len(words) == 1 and len(words[0]) >= 4 and not re.match(r"^[мр]\d*$", words[0], re.I)):
             res["fio"] = cleaned_fio
 
     return res

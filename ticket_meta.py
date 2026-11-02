@@ -487,27 +487,39 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
             pass
 
     # Layout-based extraction & regex fallbacks
-    # 1. In-line on same line (e.g. "Ряд 3 Место 11")
+    # 1. In-line or adjacent newline (e.g. "Ряд 3 Место 11" or "РЯД\n2\nМЕСТО\n12")
     if not row:
-        m_r = re.search(r"(?:Ряд|ряд|РЯД)[ \t\xa0]*[:№]?[ \t\xa0]*([0-9]+[а-яА-Яa-zA-Z]?)", text)
+        m_r = re.search(r"(?<![а-яёa-z])(?:Ряд|ряд|РЯД)\s*[:№]?\s*([0-9]+[а-яА-Яa-zA-Z]?)", text)
         if m_r:
             row = m_r.group(1)
     if not seat:
-        m_s = re.search(r"(?:Место|место|МЕСТО)[ \t\xa0]*[:№]?[ \t\xa0]*([0-9]+[а-яА-Яa-zA-Z]?|[а-яА-Яa-zA-Z])", text)
+        m_s = re.search(r"(?<![а-яёa-z])(?:Место|место|МЕСТО)\s*[:№]?\s*([0-9]+[а-яА-Яa-zA-Z]?)", text)
         if m_s:
             seat = m_s.group(1)
 
     # 2. Bilingual with newline (Row / Seat)
     if not row:
-        m_rb = re.search(r"(?:Ряд|ряд|РЯД)\s*(?:\n|\r|\s)*(?:Row|row|Line|line)\s*[:№]?\s*([0-9]+[а-яА-Яa-zA-Z]?)", text)
+        m_rb = re.search(r"(?<![а-яёa-z])(?:Ряд|ряд|РЯД)\s*(?:\n|\r|\s)*(?:Row|row|Line|line)\s*[:№]?\s*([0-9]+[а-яА-Яa-zA-Z]?)", text)
         if m_rb:
             row = m_rb.group(1)
     if not seat:
-        m_sb = re.search(r"(?:Место|место|МЕСТО)\s*(?:\n|\r|\s)*(?:Seat|seat)\s*[:№]?\s*([0-9]+[а-яА-Яa-zA-Z]?|[а-яА-Яa-zA-Z])", text)
+        m_sb = re.search(r"(?<![а-яёa-z])(?:Место|место|МЕСТО)\s*(?:\n|\r|\s)*(?:Seat|seat)\s*[:№]?\s*([0-9]+[а-яА-Яa-zA-Z]?|[а-яА-Яa-zA-Z])", text)
         if m_sb:
             seat = m_sb.group(1)
 
-    # 3. Table header format: РЯД \n МЕСТО \n <row> \n <seat>
+    # 3. Table header format:
+    # 3a. Kazan TYUZ 3-column table: Зона \n Ряд \n Место \n <sector> \n <row> \n <seat>
+    if not row or not seat or not sector:
+        m_tuz = re.search(r"Зона\s*\n\s*Ряд\s*\n\s*Место\s*\n\s*([^\n]+)\s*\n\s*(\d{1,3}[а-яА-Яa-zA-Z]?)\s*\n\s*(\d{1,3}[а-яА-Яa-zA-Z]?)", text)
+        if m_tuz:
+            if not sector:
+                sector = m_tuz.group(1).strip()
+            if not row:
+                row = m_tuz.group(2).strip()
+            if not seat:
+                seat = m_tuz.group(3).strip()
+
+    # 3b. Standard 2-column table: РЯД \n МЕСТО \n <row> \n <seat>
     if not row or not seat:
         m_tab = re.search(r"(?:РЯД|ряд|Ряд)[^\n\d]*\n\s*(?:МЕСТО|место|Место)[^\n\d]*\n\s*(\d{1,2}[а-яА-Яa-zA-Z]?)\s*\n\s*(\d{1,3}[а-яА-Яa-zA-Z]?)", text)
         if m_tab:
@@ -516,6 +528,16 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
             if not seat:
                 seat = m_tab.group(2)
 
+    # 3c. Standalone newline: Место \n <seat> (e.g. Kazan TYUZ 'Ночной трамвай' open/rowless seating)
+    if not seat:
+        m_s_nl = re.search(r"(?:Место|место|МЕСТО)\s*\n\s*(\d{1,4}[а-яА-Яa-zA-Z]?)", text)
+        if m_s_nl:
+            seat = m_s_nl.group(1).strip()
+    if not row:
+        m_r_nl = re.search(r"(?:Ряд|ряд|РЯД)\s*\n\s*(\d{1,3}[а-яА-Яa-zA-Z]?)", text)
+        if m_r_nl:
+            row = m_r_nl.group(1).strip()
+
     # 4. Table column coordinate alignment
     if not row or not seat:
         try:
@@ -523,15 +545,17 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
             row_headers = [w for w in words if w[4].lower() in ("ряд", "ряд:")]
             seat_headers = [w for w in words if w[4].lower() in ("место", "место:")]
             for rh in row_headers:
-                same_line_num = any(abs(w[1] - rh[1]) < 5 and w[0] > rh[0] and w[4].isdigit() for w in words)
-                if same_line_num:
+                same_line_num = [w for w in words if abs(w[1] - rh[1]) < 5 and w[0] > rh[0] and w[4].isdigit()]
+                if same_line_num and not row:
+                    row = same_line_num[0][4]
                     continue
                 candidates = [w for w in words if abs(w[0] - rh[0]) < 20 and 5 < (w[1] - rh[1]) < 45 and re.match(r"^\d{1,2}[а-яА-Яa-zA-Z]?$", w[4])]
                 if candidates and not row:
                     row = candidates[0][4]
             for sh in seat_headers:
-                same_line_num = any(abs(w[1] - sh[1]) < 5 and w[0] > sh[0] and (w[4].isdigit() or len(w[4]) == 1) for w in words)
-                if same_line_num:
+                same_line_num = [w for w in words if abs(w[1] - sh[1]) < 5 and w[0] > sh[0] and (w[4].isdigit() or len(w[4]) == 1)]
+                if same_line_num and not seat:
+                    seat = same_line_num[0][4]
                     continue
                 candidates = [w for w in words if abs(w[0] - sh[0]) < 20 and 5 < (w[1] - sh[1]) < 45 and re.match(r"^(?:\d{1,3}[а-яА-Яa-zA-Z]?|[а-яА-Яa-zA-Z])$", w[4])]
                 if candidates and not seat:
@@ -541,9 +565,11 @@ def extract_page_meta(page: fitz.Page, srv=None) -> dict[str, Any]:
 
     # 5. Letter seat fallback
     if not seat:
-        m_let = re.search(r"(?:Место|место|МЕСТО)\s*[:№]?\s*([а-яА-Яa-zA-Z])\b", text)
+        m_let = re.search(r"(?<![а-яёa-z])(?:Место|место|МЕСТО)[ \t\xa0]*[:№]?[ \t\xa0]*([а-яА-Яa-zA-Z])\b", text)
         if m_let:
-            seat = m_let.group(1)
+            cand_let = m_let.group(1)
+            if cand_let.lower() not in {"в", "и", "с", "к", "о", "у"}:
+                seat = cand_let
 
     # 6. Chelny ticket pattern
     if not row or not seat:
