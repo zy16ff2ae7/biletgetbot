@@ -9,8 +9,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 class TicketlandFixesTests(unittest.TestCase):
 
+    def _get_biletnaya_dir(self):
+        repo_root = Path(__file__).resolve().parent.parent
+        default_biletnaya = repo_root / "biletnaya"
+        if not default_biletnaya.exists():
+            default_biletnaya = Path("/Users/mac/Билетная")
+        return os.environ.get("BILETNAYA", str(default_biletnaya))
+
     def test_ticketland_social_resource_and_clustered_price(self):
-        biletnaya_dir = os.environ.get("BILETNAYA", "/Users/mac/Билетная")
+        biletnaya_dir = self._get_biletnaya_dir()
         font_path = str(Path(biletnaya_dir) / "vendor" / "Arial.ttf")
         with patch.dict(os.environ, {
             "BRAND_MODE": "neutral",
@@ -59,7 +66,7 @@ class TicketlandFixesTests(unittest.TestCase):
             out.close()
 
     def test_ticketland_typography_consistency(self):
-        biletnaya_dir = os.environ.get("BILETNAYA", "/Users/mac/Билетная")
+        biletnaya_dir = self._get_biletnaya_dir()
         with patch.dict(os.environ, {
             "BRAND_MODE": "neutral",
             "BILETNAYA": biletnaya_dir
@@ -90,7 +97,7 @@ class TicketlandFixesTests(unittest.TestCase):
             doc.close()
 
     def test_ticketland_long_spectator_name_clean(self):
-        biletnaya_dir = os.environ.get("BILETNAYA", "/Users/mac/Билетная")
+        biletnaya_dir = self._get_biletnaya_dir()
         font_path = str(Path(biletnaya_dir) / "vendor" / "Arial.ttf")
         with patch.dict(os.environ, {
             "BRAND_MODE": "neutral",
