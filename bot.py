@@ -323,7 +323,10 @@ def _cleanup_targets(doc):
             ages, _banners = srv._ticketland_pushkin_block(page, lines)
             if ages:
                 personal |= {i for i, line in enumerate(lines)
-                             if srv.EMAIL_RE.search(line["text"])}
+                             if srv.EMAIL_RE.search(line["text"])
+                             and "support@" not in line["text"].lower()
+                             and "info@" not in line["text"].lower()
+                             and fitz.Rect(line["bbox"]).y0 > 0.80 * page.rect.height}
         if not personal:
             personal = set()
         targets.append({_normalized(line["text"]) for i, line in enumerate(lines)

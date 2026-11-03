@@ -640,6 +640,23 @@ def _is_pushkin_image(r, pk_hits=(), page=None, xref=None):
     if (page is not None and r.width >= 0.80 * page.rect.width and r.height >= 0.80 * page.rect.height) or (r.width >= 450 and r.height >= 600):
         return False
 
+    # Театральный постер (слева на билете) — никогда не удаляем
+    if r.x0 < 25 and r.width < 260 and r.height > 150:
+        return False
+
+    # Логотип оператора / сервиса внизу слева (например MTS Live «M») — никогда не удаляем
+    if r.x0 < 150 and r.y0 > 380 and r.width < 150:
+        return False
+
+    # На билетах Ticketland баннеры программы определяются строго через _ticketland_pushkin_block
+    if page is not None:
+        try:
+            ptxt = page.get_text().lower()
+            if "ticketland" in ptxt or "мтс лайв" in ptxt or "mts live" in ptxt:
+                return False
+        except Exception:
+            pass
+
     # Фиолетовый профиль Пушкина в шапке Kassir (между номером билета и Kassir.ru)
     if pk_hits and r.y0 < 90 and 250 <= r.x0 <= 430 and 15 <= r.width <= 75 and 15 <= r.height <= 75:
         return True
@@ -665,8 +682,8 @@ def _is_pushkin_image(r, pk_hits=(), page=None, xref=None):
                    for l in pk_hits)
     if _is_barcode_rect(r):
         return False
-    # крупный водяной знак в верхних 2/3 листа
-    return r.width >= 180 and r.height >= 120 and r.y1 < 842 * 0.72
+    # крупный водяной знак в верхних 2/3 листа: только если есть текстовые совпадения с Пушкинской картой (pk_hits) и по центру
+    return bool(pk_hits) and r.width >= 320 and r.height >= 240 and r.x0 >= 30 and r.y1 < 842 * 0.72
 
 
 def _table_grid_lines(page):
@@ -1076,7 +1093,7 @@ def _ticketland_name_rows(page, lines):
     включая уже очищенный кэш и билеты без блока программы.
     """
     if (page.rotation or page.rect.width <= page.rect.height
-            or not any("ticketland.ru" in l["text"].lower() for l in lines)):
+            or not any("ticketland" in l["text"].lower() or "мтс лайв" in l["text"].lower() or "mts live" in l["text"].lower() for l in lines)):
         return set()
     found = set()
     for i, line in enumerate(lines):
@@ -1090,7 +1107,7 @@ def _ticketland_name_rows(page, lines):
         txt = line["text"].strip()
         if not txt:
             continue
-        if re.search(r"правил|посещени|мероприят|билет|вход|внимание|запрещ|распечат|сложить|ticketland|программ|пушкинск|допуска", txt, re.I):
+        if re.search(r"правил|посещени|мероприят|билет|вход|внимание|запрещ|распечат|сложить|ticketland|программ|пушкинск|допуска|возврат|support", txt, re.I):
             continue
         if EMAIL_RE.search(txt):
             found.add(i)
@@ -1136,6 +1153,7 @@ def strip_pushkin_doc(doc, clear_name=True):
         ticketland_ages, local_banners = ticketland_blocks[pno]
         ticketland_banners = local_banners & banner_xrefs
         ticketland_block = bool(ticketland_ages)
+        is_ticketland = ticketland_block or (page.rect.width > page.rect.height and any("ticketland" in l["text"].lower() or "мтс лайв" in l["text"].lower() or "mts live" in l["text"].lower() for l in lines))
         intickets = _is_intickets_template(page, lines)
         intickets_names = _intickets_name_rows(page, lines)
         operann = _is_operann_template(page, lines)
@@ -1168,7 +1186,11 @@ def strip_pushkin_doc(doc, clear_name=True):
                     continue
                 if is_yandex_afisha and i not in yandex_names and i != yandex_header:
                     continue
-                is_tl_email = bool(EMAIL_RE.search(l["text"])) and any("ticketland.ru" in line["text"].lower() for line in lines)
+                is_tl_email = (bool(EMAIL_RE.search(l["text"]))
+                               and any("ticketland" in line["text"].lower() or "мтс лайв" in line["text"].lower() for line in lines)
+                               and "support@" not in l["text"].lower()
+                               and "info@" not in l["text"].lower()
+                               and fitz.Rect(l["bbox"]).y0 > 0.80 * page.rect.height)
                 if (ticketland_block or ticketland_names) and i not in ticketland_names and not is_tl_email:
                     continue
                 if not (family or is_afisha or operann or muza or is_yandex_afisha) and i not in (ticketland_names | intickets_names) and not is_tl_email:
@@ -1347,7 +1369,7 @@ def strip_pushkin_doc(doc, clear_name=True):
         # Картинки блока «Пушкинская карта» (баннер 175×50, водяной знак 451×372):
         # delete_image, а не редакт — текст полей поверх водяного знака остаётся.
         for xref, rects in (() if intickets else uses.items()):
-            if xref in ticketland_banners or all(_is_pushkin_image(r, pk_hits, page=page, xref=xref) for r in rects):
+            if xref in ticketland_banners or (not is_ticketland and all(_is_pushkin_image(r, pk_hits, page=page, xref=xref) for r in rects)):
                 try:
                     im_info = page.parent.extract_image(xref)
                     if im_info.get("smask") or is_yandex_afisha:

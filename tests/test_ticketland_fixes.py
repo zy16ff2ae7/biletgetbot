@@ -128,6 +128,55 @@ class TicketlandFixesTests(unittest.TestCase):
             self.assertNotIn("строго от 14 до 22 лет", out_text)
             out.close()
 
+    def test_ticketland_bdt_194102030_cleanup_and_editing(self):
+        biletnaya_dir = os.environ.get("BILETNAYA", "/Users/mac/Билетная")
+        fixture_path = Path(__file__).resolve().parent / "fixtures" / "ticketland_bdt_194102030.pdf"
+        self.assertTrue(fixture_path.exists(), f"Fixture missing: {fixture_path}")
+        pdf_bytes = fixture_path.read_bytes()
+
+        with patch.dict(os.environ, {
+            "BRAND_MODE": "neutral",
+            "BILETNAYA": biletnaya_dir
+        }):
+            import fitz
+            import bot
+
+            # 1. Clean ticket without arguments
+            ok, res, info = bot.clean_ticket_with_report(pdf_bytes)
+            self.assertTrue(ok, f"Processing failed: {res}")
+            out = fitz.open(stream=res, filetype="pdf")
+            page = out[0]
+            out_text = page.get_text().replace("\xa0", " ")
+
+            # Personal / Pushkin data removed
+            self.assertNotIn("Соловьев", out_text)
+            self.assertNotIn("zzgquqa", out_text)
+            self.assertNotIn("Пушкинская карта", out_text)
+            self.assertNotIn("от 14 до 22", out_text)
+            self.assertNotIn("скачать фискальный чек", out_text)
+
+            # Ticket identity and support info preserved
+            self.assertIn("support@ticketland.ru", out_text)
+            self.assertIn("БДТ им. Г.А. Товстоногова", out_text)
+            self.assertIn("5 000 рублей", out_text)
+            self.assertIn("658962123710", out_text)
+
+            # Artwork and codes preserved (poster, MTS logo, 12+, QR code)
+            self.assertEqual(len(page.get_image_info()), 5)
+            out.close()
+
+            # 2. Clean with spectator FIO and custom price
+            ok_edit, res_edit, info_edit = bot.clean_ticket_with_report(
+                pdf_bytes, spectator_fio="Иванов Иван Иванович", custom_price=3500
+            )
+            self.assertTrue(ok_edit, f"Editing failed: {res_edit}")
+            out_edit = fitz.open(stream=res_edit, filetype="pdf")
+            edit_text = " ".join(w[4].replace("\xa0", " ") for w in out_edit[0].get_text("words"))
+            self.assertIn("Иванов Иван Иванович", edit_text)
+            self.assertIn("3 500 рублей", edit_text)
+            self.assertNotIn("5 000", edit_text)
+            out_edit.close()
+
 
 if __name__ == "__main__":
     unittest.main()

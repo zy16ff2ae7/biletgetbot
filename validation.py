@@ -67,7 +67,7 @@ def _visual_same(before, after, rect, decoded_regions=()):
                 and np.ptp(original) <= 8 and np.ptp(result) <= 8):
             return True  # A uniform light quiet zone around a readable code.
     diff = np.abs(original - result)
-    if not diff.size or diff.max() <= 8:
+    if not diff.size or diff.max() <= 8 or (diff.mean() <= 2.0 and np.percentile(diff, 98) <= 8):
         return True
     # A transparent QR can sit on a grey background that cleanup whitens.
     # Permit that specific change only with stable dark ink and unchanged
@@ -94,11 +94,9 @@ def _raster_code_regions(page):
         if min(rect.width, rect.height) < 12 or rect.get_area() > page.rect.get_area() * 0.25:
             continue
         aspect = rect.width / rect.height
-        square = 0.65 < aspect < 1.55
-        bars = aspect > 1.8 or aspect < 0.56
+        square = 0.75 < aspect < 1.33 and max(rect.width, rect.height) <= 220
+        bars = (aspect > 1.8 or aspect < 0.56) and rect.width <= 260 and rect.height <= 260
         if not square and not bars:
-            continue
-        if bars and rect.width > 260:
             continue
         scale = min(2, 512 / max(rect.width, rect.height))
         pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=rect, colorspace=fitz.csGRAY)
@@ -113,8 +111,8 @@ def _raster_code_regions(page):
         binary = pixels < 145
         horizontal = (binary[:, 1:] != binary[:, :-1]).mean()
         vertical = (binary[1:, :] != binary[:-1, :]).mean()
-        if ((square and min(horizontal, vertical) > 0.04)
-                or (bars and max(horizontal, vertical) > 0.04)):
+        if ((square and min(horizontal, vertical) > 0.035)
+                or (bars and max(horizontal, vertical) > 0.035)):
             regions.append(rect)
     return regions
 
