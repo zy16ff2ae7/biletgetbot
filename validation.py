@@ -67,7 +67,7 @@ def _visual_same(before, after, rect, decoded_regions=()):
                 and np.ptp(original) <= 8 and np.ptp(result) <= 8):
             return True  # A uniform light quiet zone around a readable code.
     diff = np.abs(original - result)
-    if not diff.size or diff.max() <= 8 or (diff.mean() <= 2.0 and np.percentile(diff, 98) <= 8):
+    if not diff.size or diff.max() <= 8 or (diff.max() <= 16 and diff.mean() <= 1.0):
         return True
     # A transparent QR can sit on a grey background that cleanup whitens.
     # Permit that specific change only with stable dark ink and unchanged
