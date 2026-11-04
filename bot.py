@@ -478,6 +478,31 @@ def _find_name_slots(source):
                 "font": "ArialMT",
                 "tags": ["name"],
             }
+        is_ticketland = bool(ticketland_ages) or (
+            page.rect.width > page.rect.height and any(
+                "ticketland" in l["text"].lower() or "мтс лайв" in l["text"].lower() or "mts live" in l["text"].lower()
+                for l in lines
+            )
+        )
+        if is_ticketland:
+            if not chosen:
+                chosen = {
+                    "text": "",
+                    "bbox": [440.8, 548.0, 620.0, 585.0],
+                    "size": 10.0,
+                    "bold": False,
+                    "serif": False,
+                    "color": 0,
+                    "origin": [440.8, 562.1],
+                    "font": "ArialMT",
+                    "tags": ["name"],
+                    "ticketland": True,
+                    "extra_bboxes": [[430.0, 548.0, 620.0, 585.0]],
+                }
+            else:
+                chosen = dict(chosen)
+                chosen["ticketland"] = True
+                chosen.setdefault("extra_bboxes", []).append([430.0, 548.0, 620.0, 585.0])
         slots.append(chosen)
     return slots
 
@@ -733,6 +758,16 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                                 w_orig = (origin[0], origin[1] + wi * line_h)
                                 runs = _replacement_runs(cleaned, doc_id, word, _line_style(slot))
                                 _draw_runs(page, runs, w_orig, size, color)
+                            fio_applied = True
+                        elif slot.get("ticketland"):
+                            label = "Зритель: " if not cur_fio.lower().startswith(("зритель", "покупатель")) else ""
+                            text_to_write = f"{label}{cur_fio}"
+                            runs = _replacement_runs(cleaned, doc_id, text_to_write, _line_style(slot))
+                            max_width = slot.get("max_width", 175.0)
+                            width = _runs_width(runs, size)
+                            if width > max_width > 0:
+                                size = max(5.0, size * max_width / width)
+                            _draw_runs(page, runs, origin, size, color)
                             fio_applied = True
                         else:
                             text_to_write = cur_fio.upper() if slot.get("text", "").isupper() else cur_fio

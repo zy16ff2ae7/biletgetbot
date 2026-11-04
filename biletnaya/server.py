@@ -1114,7 +1114,7 @@ def _ticketland_name_rows(page, lines):
             continue
         words = txt.split()
         if (1 <= len(words) <= 6
-                and all(re.fullmatch(r"[\w'’\-.]+", w, re.UNICODE) for w in words)):
+                and all(re.fullmatch(r"[\w'’\-.:]+", w, re.UNICODE) for w in words)):
             found.add(i)
     return found
 

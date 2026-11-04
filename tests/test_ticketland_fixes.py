@@ -179,10 +179,23 @@ class TicketlandFixesTests(unittest.TestCase):
             self.assertTrue(ok_edit, f"Editing failed: {res_edit}")
             out_edit = fitz.open(stream=res_edit, filetype="pdf")
             edit_text = " ".join(w[4].replace("\xa0", " ") for w in out_edit[0].get_text("words"))
-            self.assertIn("Иванов Иван Иванович", edit_text)
+            self.assertIn("Зритель:", edit_text)
+            self.assertIn("Иванов", edit_text)
+            self.assertIn("Иванович", edit_text)
             self.assertIn("3 500 рублей", edit_text)
             self.assertNotIn("5 000", edit_text)
             out_edit.close()
+
+            # 3. Clean already cleaned ticket and set a new spectator FIO
+            ok_reedit, res_reedit, info_reedit = bot.clean_ticket_with_report(
+                res, spectator_fio="Петров Петр Петрович"
+            )
+            self.assertTrue(ok_reedit, f"Re-editing failed: {res_reedit}")
+            out_reedit = fitz.open(stream=res_reedit, filetype="pdf")
+            reedit_text = " ".join(w[4].replace("\xa0", " ") for w in out_reedit[0].get_text("words"))
+            self.assertIn("Зритель:", reedit_text)
+            self.assertIn("Петров", reedit_text)
+            out_reedit.close()
 
 
 if __name__ == "__main__":
