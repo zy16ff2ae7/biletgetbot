@@ -179,7 +179,7 @@ class TicketlandFixesTests(unittest.TestCase):
             self.assertTrue(ok_edit, f"Editing failed: {res_edit}")
             out_edit = fitz.open(stream=res_edit, filetype="pdf")
             edit_text = " ".join(w[4].replace("\xa0", " ") for w in out_edit[0].get_text("words"))
-            self.assertIn("Зритель:", edit_text)
+            self.assertNotIn("Зритель", edit_text)
             self.assertIn("Иванов", edit_text)
             self.assertIn("Иванович", edit_text)
             self.assertIn("3 500 рублей", edit_text)
@@ -193,7 +193,7 @@ class TicketlandFixesTests(unittest.TestCase):
             self.assertTrue(ok_reedit, f"Re-editing failed: {res_reedit}")
             out_reedit = fitz.open(stream=res_reedit, filetype="pdf")
             reedit_text = " ".join(w[4].replace("\xa0", " ") for w in out_reedit[0].get_text("words"))
-            self.assertIn("Зритель:", reedit_text)
+            self.assertNotIn("Зритель", reedit_text)
             self.assertIn("Петров", reedit_text)
             out_reedit.close()
 

@@ -760,8 +760,9 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                                 _draw_runs(page, runs, w_orig, size, color)
                             fio_applied = True
                         elif slot.get("ticketland"):
-                            label = "Зритель: " if not cur_fio.lower().startswith(("зритель", "покупатель")) else ""
-                            text_to_write = f"{label}{cur_fio}"
+                            clean_name = re.sub(r"^(?:зритель|покупатель|посетитель|клиент|фио)\s*[:.\-–]?\s*", "", cur_fio, flags=re.I).strip()
+                            words = clean_name.split()
+                            text_to_write = "  ".join(words) if words else clean_name
                             runs = _replacement_runs(cleaned, doc_id, text_to_write, _line_style(slot))
                             max_width = slot.get("max_width", 175.0)
                             width = _runs_width(runs, size)
