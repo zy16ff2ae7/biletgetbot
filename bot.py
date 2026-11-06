@@ -503,6 +503,69 @@ def _find_name_slots(source):
                 chosen = dict(chosen)
                 chosen["ticketland"] = True
                 chosen.setdefault("extra_bboxes", []).append([430.0, 548.0, 620.0, 585.0])
+        k_rows = srv._kassir_name_rows(lines)
+        order_ru = next((l for l in lines if re.search(r"номер заказа", l["text"], re.I)), None)
+        order_en = next((l for l in lines if re.search(r"order\s*#", l["text"], re.I)), None)
+        is_kassir = bool(k_rows) or (order_ru is not None and order_en is not None) or (
+            any("kassir" in l["text"].lower() for l in lines)
+            and any(re.search(r"электронный\s+билет|e-ticket", l["text"], re.I) for l in lines)
+        )
+        if is_kassir:
+            kassir_h_ru = next((lines[r] for r in k_rows if re.fullmatch(r"имя\s*,\s*фамилия\s*[:.]?", lines[r]["text"].strip(), re.I)), None)
+            kassir_h_en = next((lines[r] for r in k_rows if lines[r]["text"].strip().lower() == "name"), None)
+            dy = 15.0
+            if order_ru and not kassir_h_ru:
+                kassir_h_ru = {
+                    "text": "Имя, фамилия",
+                    "bbox": [order_ru["bbox"][0], order_ru["bbox"][1] + dy, order_ru["bbox"][2], order_ru["bbox"][3] + dy],
+                    "origin": [order_ru["origin"][0], order_ru["origin"][1] + dy],
+                    "size": order_ru.get("size", 8.0),
+                    "font": order_ru.get("font", "ArialMT"),
+                    "color": order_ru.get("color", 0),
+                    "bold": False,
+                    "serif": False,
+                }
+            if order_en and not kassir_h_en:
+                kassir_h_en = {
+                    "text": "Name",
+                    "bbox": [order_en["bbox"][0], order_en["bbox"][1] + dy, order_en["bbox"][2], order_en["bbox"][3] + dy],
+                    "origin": [order_en["origin"][0], order_en["origin"][1] + dy],
+                    "size": order_en.get("size", 8.0),
+                    "font": order_en.get("font", "ArialMT"),
+                    "color": order_en.get("color", 0),
+                    "bold": False,
+                    "serif": False,
+                }
+            if not chosen and order_en:
+                cand = next((
+                    l for idx, l in enumerate(lines)
+                    if idx not in org_rows
+                    and abs((l["bbox"][1] + l["bbox"][3]) / 2 - (order_en["bbox"][1] + dy + order_en["bbox"][3] + dy) / 2) < 5
+                    and l["bbox"][0] > order_en["bbox"][2]
+                    and srv.is_name(l["text"])
+                ), None)
+                if cand:
+                    chosen = cand
+            if not chosen and order_ru and order_en:
+                order_num = next((l for l in lines if abs(l["bbox"][1] - order_en["bbox"][1]) < 5 and l["bbox"][0] > order_en["bbox"][2]), None)
+                name_x = order_num["origin"][0] if order_num else order_en["origin"][0] + 44.0
+                chosen = {
+                    "text": "",
+                    "bbox": [name_x, order_ru["bbox"][1] + dy, name_x + 180.0, order_ru["bbox"][3] + dy],
+                    "size": order_ru.get("size", 8.0),
+                    "bold": False,
+                    "serif": False,
+                    "color": 0,
+                    "origin": [name_x, order_ru["origin"][1] + dy],
+                    "font": order_ru.get("font", "ArialMT"),
+                    "tags": ["name"],
+                }
+            if chosen:
+                chosen = dict(chosen)
+                chosen["kassir"] = True
+                headers = [h for h in (kassir_h_ru, kassir_h_en) if h]
+                if headers:
+                    chosen["headers"] = headers
         slots.append(chosen)
     return slots
 
@@ -652,8 +715,11 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
             validation_targets = [set(t) for t in personal_targets]
             if fio_val:
                 for pno, slot in enumerate(name_slots):
-                    if pno < len(validation_targets) and slot and slot.get("header"):
-                        validation_targets[pno].discard(_normalized(slot["header"]["text"]))
+                    if pno < len(validation_targets) and slot:
+                        if slot.get("header"):
+                            validation_targets[pno].discard(_normalized(slot["header"]["text"]))
+                        for h in slot.get("headers", []):
+                            validation_targets[pno].discard(_normalized(h["text"]))
             price_val = None
             if custom_price is not None:
                 try:
@@ -745,6 +811,10 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                         origin = tuple(slot["origin"])
                         size = slot.get("size", 8.0)
                         color = srv.int_to_rgb(slot.get("color", 0))
+                        if slot.get("headers"):
+                            for h in slot["headers"]:
+                                h_runs = _replacement_runs(cleaned, doc_id, h["text"], _line_style(h))
+                                _draw_runs(page, h_runs, tuple(h["origin"]), h.get("size", size), srv.int_to_rgb(h.get("color", 0)))
                         if slot.get("yandex_afisha"):
                             if slot.get("header"):
                                 h = slot["header"]
@@ -846,8 +916,11 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
             for pno, (page, expected) in enumerate(zip(cleaned, personal_targets)):
                 cur_fio = fio_list[pno] if pno < len(fio_list) else (fio_list[-1] if fio_list else None)
                 rem_expected = expected - (({_normalized(cur_fio)} | {_normalized(w) for w in cur_fio.split()}) if cur_fio else set())
-                if cur_fio and pno < len(name_slots) and name_slots[pno] and name_slots[pno].get("header"):
-                    rem_expected.discard(_normalized(name_slots[pno]["header"]["text"]))
+                if cur_fio and pno < len(name_slots) and name_slots[pno]:
+                    if name_slots[pno].get("header"):
+                        rem_expected.discard(_normalized(name_slots[pno]["header"]["text"]))
+                    for h in name_slots[pno].get("headers", []):
+                        rem_expected.discard(_normalized(h["text"]))
                 remaining = {_normalized(line["text"]) for line in srv.extract_lines(page)}
                 if rem_expected & remaining:
                     log.warning("cleanup incomplete: recognized personal/program lines remain")
