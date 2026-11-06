@@ -1102,12 +1102,12 @@ def _ticketland_name_rows(page, lines):
         b = fitz.Rect(line["bbox"])
         if not (0.45 * page.rect.width <= b.x0 <= 0.68 * page.rect.width
                 and b.x1 <= 0.98 * page.rect.width
-                and 0.88 * page.rect.height <= b.y0 <= 0.99 * page.rect.height):
+                and 0.82 * page.rect.height <= b.y0 <= 0.99 * page.rect.height):
             continue
         txt = line["text"].strip()
         if not txt:
             continue
-        if re.search(r"правил|посещени|мероприят|билет|вход|внимание|запрещ|распечат|сложить|ticketland|программ|пушкинск|допуска|возврат|support", txt, re.I):
+        if re.search(r"правил|посещени|мероприят|билет|вход|внимание|запрещ|распечат|сложить|ticketland|программ|пушкинск|допуска|возврат|support|orangedata|cheques", txt, re.I):
             continue
         if EMAIL_RE.search(txt):
             found.add(i)

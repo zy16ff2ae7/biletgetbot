@@ -298,7 +298,14 @@ def _cleanup_targets(doc):
         yandex = srv._is_yandex_afisha_template(page, lines) if hasattr(srv, "_is_yandex_afisha_template") else False
         yandex_names = srv._yandex_afisha_name_rows(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_name_rows")) else set()
         yandex_header = srv._yandex_afisha_buyer_header(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_buyer_header")) else None
-        family = payment is not None or (buyer is not None) or (srv._is_kassa24_family(lines) and not muza and not yandex)
+        ages, _banners = srv._ticketland_pushkin_block(page, lines)
+        is_ticketland = bool(ages) or (
+            page.rect.width > page.rect.height and any(
+                "ticketland" in l["text"].lower() or "мтс лайв" in l["text"].lower() or "mts live" in l["text"].lower()
+                for l in lines
+            )
+        )
+        family = not is_ticketland and (payment is not None or (buyer is not None) or (srv._is_kassa24_family(lines) and not muza and not yandex))
         personal = srv._ticketland_name_rows(page, lines)
         if srv._is_intickets_template(page, lines):
             personal = srv._intickets_name_rows(page, lines)
@@ -312,6 +319,13 @@ def _cleanup_targets(doc):
             personal = set(yandex_names)
             if yandex_header is not None:
                 personal.add(yandex_header)
+        elif is_ticketland:
+            personal = srv._ticketland_name_rows(page, lines)
+            personal |= {i for i, line in enumerate(lines)
+                         if srv.EMAIL_RE.search(line["text"])
+                         and "support@" not in line["text"].lower()
+                         and "info@" not in line["text"].lower()
+                         and fitz.Rect(line["bbox"]).y0 > 0.80 * page.rect.height}
         elif buyer is not None:
             personal = {buyer}
         elif payment is not None:
@@ -320,7 +334,6 @@ def _cleanup_targets(doc):
             personal |= srv._kassir_name_rows(lines)
             personal |= {i for i, line in enumerate(lines)
                          if srv._personal_line_what(line)}
-            ages, _banners = srv._ticketland_pushkin_block(page, lines)
             if ages:
                 personal |= {i for i, line in enumerate(lines)
                              if srv.EMAIL_RE.search(line["text"])
@@ -331,7 +344,11 @@ def _cleanup_targets(doc):
             personal = set()
         targets.append({_normalized(line["text"]) for i, line in enumerate(lines)
                         if i in personal
-                        or (srv.PUSHKIN_TEXT_RE.search(line["text"])
+                        or (is_ticketland and ages and (
+                            srv.PUSHKIN_TEXT_RE.search(line["text"])
+                            or any(a["text"] == line["text"] for a in ages)
+                        ))
+                        or (not is_ticketland and srv.PUSHKIN_TEXT_RE.search(line["text"])
                             and (not muza or srv._muza_pushkin_hit(line)))
                         or (yandex and any(k in line["text"].lower() for k in ("не забудьте паспорт", "на входе проверят")))})
     return targets
@@ -342,6 +359,12 @@ def _find_name_slots(source):
     prepared_lines = [srv.field_tags(srv.extract_lines(p)) for p in source]
     for page, lines in zip(source, prepared_lines):
         ticketland_ages, banners = srv._ticketland_pushkin_block(page, lines)
+        is_tl = bool(ticketland_ages) or (
+            page.rect.width > page.rect.height and any(
+                "ticketland" in l["text"].lower() or "мтс лайв" in l["text"].lower() or "mts live" in l["text"].lower()
+                for l in lines
+            )
+        )
         intickets = srv._is_intickets_template(page, lines)
         intickets_names = srv._intickets_name_rows(page, lines)
         is_operann = hasattr(srv, "_is_operann_template") and srv._is_operann_template(page, lines)
@@ -351,7 +374,7 @@ def _find_name_slots(source):
         yandex = srv._is_yandex_afisha_template(page, lines) if hasattr(srv, "_is_yandex_afisha_template") else False
         yandex_names = srv._yandex_afisha_name_rows(page, lines) if (yandex and hasattr(srv, "_yandex_afisha_name_rows")) else set()
         payment, buyer = srv._chelny_fields(page, lines)
-        family = payment is not None or (buyer is not None) or (srv._is_kassa24_family(lines) and not muza and not yandex)
+        family = not is_tl and (payment is not None or (buyer is not None) or (srv._is_kassa24_family(lines) and not muza and not yandex))
         t_names = srv._ticketland_name_rows(page, lines)
         k_rows = srv._kassir_name_rows(lines)
         is_af = (
@@ -363,6 +386,8 @@ def _find_name_slots(source):
         org_rows = srv._organizer_rows(lines) if hasattr(srv, "_organizer_rows") else set()
         p_slots = []
         for i, l in enumerate(lines):
+            if is_tl and i not in t_names:
+                continue
             if intickets and i not in intickets_names:
                 continue
             if is_operann and i not in operann_names:
@@ -413,15 +438,27 @@ def _find_name_slots(source):
             chosen = dict(lines[min(muza_names)])
             chosen["max_width"] = max(60.0, min(100.0, page.rect.width * 0.12))
         if not chosen:
-            fallback_candidates = [
-                l for idx, l in enumerate(lines)
-                if idx not in org_rows
-                and (("name" in (l.get("tags") or [])) or srv.is_name(l["text"]))
-                and not l.get("stale")
-                and l["bbox"][1] < page.rect.height * 0.85
-            ]
-            if fallback_candidates:
-                chosen = fallback_candidates[0]
+            if is_tl:
+                tl_cand = [
+                    l for idx, l in enumerate(lines)
+                    if 0.45 * page.rect.width <= l["bbox"][0] <= 0.70 * page.rect.width
+                    and l["bbox"][1] >= 0.80 * page.rect.height
+                    and not l.get("stale")
+                    and not srv.EMAIL_RE.search(l["text"])
+                    and not re.search(r"правил|посещени|мероприят|билет|вход|внимание|запрещ|распечат|сложить|ticketland|программ|пушкинск|допуска|возврат|support|orangedata|cheques", l["text"], re.I)
+                ]
+                if tl_cand:
+                    chosen = tl_cand[0]
+            else:
+                fallback_candidates = [
+                    l for idx, l in enumerate(lines)
+                    if idx not in org_rows
+                    and (("name" in (l.get("tags") or [])) or srv.is_name(l["text"]))
+                    and not l.get("stale")
+                    and l["bbox"][1] < page.rect.height * 0.85
+                ]
+                if fallback_candidates:
+                    chosen = fallback_candidates[0]
         if is_af and chosen:
             chosen = dict(chosen)
             if 340 <= chosen["bbox"][1] <= 420:
@@ -923,7 +960,9 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                         rem_expected.discard(_normalized(h["text"]))
                 remaining = {_normalized(line["text"]) for line in srv.extract_lines(page)}
                 if rem_expected & remaining:
-                    log.warning("cleanup incomplete: recognized personal/program lines remain")
+                    diff = rem_expected & remaining
+                    log.warning("cleanup incomplete on page %d: %r (rem_expected=%r, remaining=%r)",
+                                pno, diff, rem_expected, remaining)
                     return False, ("Не удалось полностью удалить распознанные данные. "
                                    "Файл не отправлен."), info
             count = sum(len(item.get("removed", [])) for item in report)
@@ -2608,7 +2647,10 @@ def _batch_callbacks(progress, spectator_fio=None, hide_price=False, custom_pric
         def phase(stage):
             label = "убираю лишнее" if stage == "clean" else "проверяю коды и данные"
             progress.update(1, f"Билет {current['index']} из {current['total']} · {label}.")
-        return clean_ticket_with_report(data, on_progress=phase, spectator_fio=spectator_fio, hide_price=hide_price, custom_price=custom_price)
+        ok, res, info = clean_ticket_with_report(data, on_progress=phase, spectator_fio=spectator_fio, hide_price=hide_price, custom_price=custom_price)
+        if not ok:
+            log.warning("batch item %s failed: %s", current.get("index"), res)
+        return ok, res, info
 
     return cleaner, notify
 
@@ -3473,6 +3515,15 @@ def _process_auto_zip_batch(chat, uid, docs):
             custom_price = u_settings.get("custom_price")
             cleaner, notify = _batch_callbacks(progress, spectator_fio=spectator_fio, hide_price=hide_price, custom_price=custom_price)
             result = batches.process_items(items, cleaner, on_progress=notify, srv=srv)
+            if result.get("failed", 0) > 0:
+                try:
+                    fail_dir = STATE_DIR / "failed_batches" / f"batch_{int(time.time())}_{uid}"
+                    fail_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    for fname, fdata in items:
+                        (fail_dir / fname).write_bytes(fdata)
+                    log.warning("saved %d batch items with %d failures to %s", len(items), result["failed"], fail_dir)
+                except Exception as ex:
+                    log.warning("failed to save failed batch items: %s", ex)
             _send_batch_result(chat, result, progress, "Не удалось отправить ZIP. Отправьте билеты ещё раз.", uid=uid)
         except batches.BatchError as error:
             _progress_error(progress, chat, str(error))

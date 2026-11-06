@@ -198,5 +198,59 @@ class TicketlandFixesTests(unittest.TestCase):
             out_reedit.close()
 
 
+    def test_ticketland_organizer_name_not_treated_as_personal(self):
+        """Ticketland with theater organizer/director name should not treat organizer as personal line."""
+        biletnaya_dir = self._get_biletnaya_dir()
+        font_path = str(Path(biletnaya_dir) / "vendor" / "Arial.ttf")
+        with patch.dict(os.environ, {
+            "BRAND_MODE": "neutral",
+            "BILETNAYA": biletnaya_dir
+        }):
+            import fitz
+            import bot
+
+            doc = fitz.open()
+            page = doc.new_page(width=842, height=595)
+
+            def text(x, y, value, size=8):
+                page.insert_text((x, y), value, fontname="F0", fontfile=font_path, fontsize=size)
+
+            text(10, 580, "TICKETLAND.RU")
+            text(230, 80, "Минкультуры Чувашии", size=10)
+            text(230, 100, "Чувашский государственный театр оперы и балета", size=10)
+            text(230, 480, "Стоимость:")
+            text(235, 501, "1 000 рублей", size=9)
+            text(425, 521, 'В рамках программы "Пушкинская карта".', size=8)
+            text(425, 529, 'Допускаются зрители строго от 14 до 22 лет.', size=8)
+            text(425, 552, "Клочко Сергей Васильевич", size=10)
+            text(425, 573, "bilety.chuvash@mail.ru", size=10)
+
+            pdf_bytes = doc.tobytes()
+            doc.close()
+
+            # 1. Anonymous clean must succeed and not fail with 'cleanup incomplete'
+            ok, res, info = bot.clean_ticket_with_report(pdf_bytes)
+            self.assertTrue(ok, f"Anonymous clean failed: {res}")
+            out = fitz.open(stream=res, filetype="pdf")
+            out_text = out[0].get_text().replace("\xa0", " ")
+            self.assertIn("Минкультуры Чувашии", out_text)
+            self.assertNotIn("Клочко", out_text)
+            self.assertNotIn("bilety.chuvash", out_text)
+            self.assertNotIn("Пушкинская карта", out_text)
+            out.close()
+
+            # 2. Spectator FIO change must place new spectator at column 2 bottom, not replacing organizer
+            ok_fio, res_fio, info_fio = bot.clean_ticket_with_report(
+                pdf_bytes, spectator_fio="Сидоров Сидор Сидорович", custom_price=2000
+            )
+            self.assertTrue(ok_fio, f"FIO edit failed: {res_fio}")
+            out_fio = fitz.open(stream=res_fio, filetype="pdf")
+            out_fio_text = out_fio[0].get_text().replace("\xa0", " ")
+            self.assertIn("Минкультуры Чувашии", out_fio_text)
+            self.assertIn("Сидоров", out_fio_text)
+            self.assertIn("2 000 рублей", out_fio_text)
+            out_fio.close()
+
+
 if __name__ == "__main__":
     unittest.main()
