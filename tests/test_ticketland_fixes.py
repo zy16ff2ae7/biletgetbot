@@ -239,7 +239,8 @@ class TicketlandFixesTests(unittest.TestCase):
             self.assertNotIn("Пушкинская карта", out_text)
             out.close()
 
-            # 2. Spectator FIO change must place new spectator at column 2 bottom, not replacing organizer
+            # 2. Spectator FIO change must place new spectator at column 2 bottom, not replacing organizer,
+            # and MUST preserve the buyer email ('bilety.chuvash@mail.ru')
             ok_fio, res_fio, info_fio = bot.clean_ticket_with_report(
                 pdf_bytes, spectator_fio="Сидоров Сидор Сидорович", custom_price=2000
             )
@@ -249,7 +250,20 @@ class TicketlandFixesTests(unittest.TestCase):
             self.assertIn("Минкультуры Чувашии", out_fio_text)
             self.assertIn("Сидоров", out_fio_text)
             self.assertIn("2 000 рублей", out_fio_text)
+            self.assertIn("bilety.chuvash@mail.ru", out_fio_text)
             out_fio.close()
+
+            # 3. Short single-letter spectator name (e.g. 'А' or 'Зритель: А')
+            ok_short, res_short, info_short = bot.clean_ticket_with_report(
+                pdf_bytes, spectator_fio="Зритель: А"
+            )
+            self.assertTrue(ok_short, f"Short FIO edit failed: {res_short}")
+            out_short = fitz.open(stream=res_short, filetype="pdf")
+            out_short_text = out_short[0].get_text().replace("\xa0", " ")
+            self.assertIn("А", out_short_text)
+            self.assertIn("bilety.chuvash@mail.ru", out_short_text)
+            self.assertNotIn("Зритель:", out_short_text)
+            out_short.close()
 
 
 if __name__ == "__main__":

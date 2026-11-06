@@ -14,6 +14,15 @@ LBL = {
     "sector": re.compile(r"^(\s*(?:сектор|sector)\s*[:.№\/-]*\s*(?:sector)?\s*[:.№\/-]*\s*)(.*)$", re.I),
 }
 
+FIO_PREFIX_RE = re.compile(
+    r"^(?:(?:имя|фио)\s+(?:зрителя|покупателя|посетителя|клиента)|"
+    r"поменять\s+(?:зрителя|покупателя|посетителя|клиента|фио)|"
+    r"смени(?:ть)?\s+(?:зрителя|покупателя|посетителя|клиента|фио)|"
+    r"зрител[ьяеи]|покупател[ьяеи]|посетител[ьяеи]|клиент[ае]?|фио|билетодержател[ьяеи]|владел[еь]ц[ае]?|"
+    r"на\s+имя|имя)\s*(?:на)?\s*[:.\-–=]?\s*",
+    re.I
+)
+
 
 def label_only(text: str, key: str) -> bool:
     """Return True if the text contains only a label without any value."""
@@ -376,11 +385,14 @@ def parse_quick_edit(raw: str) -> dict[str, Any]:
     cleaned_fio = re.sub(r"^[0-9]+[.)\s-]+", "", text)
     cleaned_fio = re.sub(r"[,|/–—:;()]+", " ", cleaned_fio)
     cleaned_fio = re.sub(r"\s+", " ", cleaned_fio).strip()
-    cleaned_fio = re.sub(r"^(?:покупатель|посетитель|зритель|клиент|фио|билетодержатель|владелец)\s*[:.\-–]?\s*", "", cleaned_fio, flags=re.I)
+    had_fio_prefix = bool(FIO_PREFIX_RE.search(cleaned_fio))
+    cleaned_fio = FIO_PREFIX_RE.sub("", cleaned_fio).strip()
     cleaned_fio = re.sub(r"\b(?:цена|стоимость|тариф|сумма|руб[а-я]*|р|₽)\b.*$", "", cleaned_fio, flags=re.I).strip()
-    if cleaned_fio and not re.match(r"^(?:фио|руб|цена|стоимость|место|ряд|сброс|[мр])$", cleaned_fio, re.I):
+    if cleaned_fio and not re.match(r"^(?:фио|руб|цена|стоимость|место|ряд|сброс|отмена|сектор|партер|[мр])$", cleaned_fio, re.I):
         words = cleaned_fio.split()
-        if len(words) >= 2 or (len(words) == 1 and len(words[0]) >= 4 and not re.match(r"^[мр]\d*$", words[0], re.I)):
+        if had_fio_prefix:
+            res["fio"] = cleaned_fio
+        elif len(words) >= 2 or (len(words) == 1 and len(words[0]) >= 1 and not re.match(r"^[мр]\d*$", words[0], re.I)):
             res["fio"] = cleaned_fio
 
     return res

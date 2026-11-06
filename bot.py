@@ -522,10 +522,18 @@ def _find_name_slots(source):
             )
         )
         if is_ticketland:
+            tl_emails = [
+                dict(l) for l in lines
+                if srv.EMAIL_RE.search(l["text"])
+                and "support@" not in l["text"].lower()
+                and "info@" not in l["text"].lower()
+                and fitz.Rect(l["bbox"]).y0 > 0.80 * page.rect.height
+            ]
+            tl_email = tl_emails[0] if tl_emails else None
             if not chosen:
                 chosen = {
                     "text": "",
-                    "bbox": [440.8, 548.0, 620.0, 585.0],
+                    "bbox": [440.8, 548.0, 620.0, 566.0],
                     "size": 10.0,
                     "bold": False,
                     "serif": False,
@@ -534,12 +542,14 @@ def _find_name_slots(source):
                     "font": "ArialMT",
                     "tags": ["name"],
                     "ticketland": True,
-                    "extra_bboxes": [[430.0, 548.0, 620.0, 585.0]],
+                    "extra_bboxes": [[420.0, 548.0, 620.0, 566.0]],
                 }
             else:
                 chosen = dict(chosen)
                 chosen["ticketland"] = True
-                chosen.setdefault("extra_bboxes", []).append([430.0, 548.0, 620.0, 585.0])
+                chosen.setdefault("extra_bboxes", []).append([420.0, 548.0, 620.0, 566.0])
+            if tl_email:
+                chosen["ticketland_email"] = tl_email
         k_rows = srv._kassir_name_rows(lines)
         order_ru = next((l for l in lines if re.search(r"номер заказа", l["text"], re.I)), None)
         order_en = next((l for l in lines if re.search(r"order\s*#", l["text"], re.I)), None)
@@ -757,6 +767,8 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                             validation_targets[pno].discard(_normalized(slot["header"]["text"]))
                         for h in slot.get("headers", []):
                             validation_targets[pno].discard(_normalized(h["text"]))
+                        if slot.get("ticketland_email"):
+                            validation_targets[pno].discard(_normalized(slot["ticketland_email"]["text"]))
             price_val = None
             if custom_price is not None:
                 try:
@@ -852,6 +864,12 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                             for h in slot["headers"]:
                                 h_runs = _replacement_runs(cleaned, doc_id, h["text"], _line_style(h))
                                 _draw_runs(page, h_runs, tuple(h["origin"]), h.get("size", size), srv.int_to_rgb(h.get("color", 0)))
+                        if slot.get("ticketland_email"):
+                            em = slot["ticketland_email"]
+                            em_lines = srv.extract_lines(page)
+                            if not any(em["text"].strip().lower() in l["text"].lower() for l in em_lines):
+                                em_runs = _replacement_runs(cleaned, doc_id, em["text"], _line_style(em))
+                                _draw_runs(page, em_runs, tuple(em["origin"]), em.get("size", 10.0), srv.int_to_rgb(em.get("color", 0)))
                         if slot.get("yandex_afisha"):
                             if slot.get("header"):
                                 h = slot["header"]
@@ -867,7 +885,7 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                                 _draw_runs(page, runs, w_orig, size, color)
                             fio_applied = True
                         elif slot.get("ticketland"):
-                            clean_name = re.sub(r"^(?:зритель|покупатель|посетитель|клиент|фио)\s*[:.\-–]?\s*", "", cur_fio, flags=re.I).strip()
+                            clean_name = seat_tools.FIO_PREFIX_RE.sub("", cur_fio).strip() if hasattr(seat_tools, "FIO_PREFIX_RE") else re.sub(r"^(?:зритель|покупатель|посетитель|клиент|фио)\s*[:.\-–]?\s*", "", cur_fio, flags=re.I).strip()
                             words = clean_name.split()
                             text_to_write = "  ".join(words) if words else clean_name
                             runs = _replacement_runs(cleaned, doc_id, text_to_write, _line_style(slot))
@@ -958,6 +976,8 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                         rem_expected.discard(_normalized(name_slots[pno]["header"]["text"]))
                     for h in name_slots[pno].get("headers", []):
                         rem_expected.discard(_normalized(h["text"]))
+                    if name_slots[pno].get("ticketland_email"):
+                        rem_expected.discard(_normalized(name_slots[pno]["ticketland_email"]["text"]))
                 remaining = {_normalized(line["text"]) for line in srv.extract_lines(page)}
                 if rem_expected & remaining:
                     diff = rem_expected & remaining
@@ -5633,9 +5653,16 @@ def handle(msg, update_id=None, queued=False):
         if arg.lower() in {"сброс", "reset", "clear", "none"}:
             get_store().set_user_fio(uid, None)
             get_store().set_user_state(uid, None)
+            recent_token = get_store().get_user_last_doc_token(uid)
+            if recent_token:
+                _reissue_ticket_with_quick(chat, uid, recent_token, "сброс фио")
             return send_text(chat, "👤 ФИО зрителя сброшено. При обработке билетов поля ФИО будут очищаться.")
         get_store().set_user_fio(uid, arg)
         get_store().set_user_state(uid, None)
+        recent_token = get_store().get_user_last_doc_token(uid)
+        if recent_token:
+            _reissue_ticket_with_quick(chat, uid, recent_token, arg)
+            return None
         return send_text(chat, f"👤 ФИО зрителя сохранено: {arg}\nТеперь оно будет автоматически прописываться на билетах.")
     if command == "/price":
         parts = text.split(maxsplit=1)
@@ -6237,6 +6264,22 @@ def handle(msg, update_id=None, queued=False):
         send_text(chat, f"✅ Цена для билета №{idx+1} обновлена!")
         text_card, kb = _build_batch_item_card(batch_token, idx)
         return send_text(chat, text_card, markup=kb)
+    if text and not command.startswith("/"):
+        recent_token = get_store().get_user_last_doc_token(uid)
+        if recent_token:
+            parsed = seat_tools.parse_quick_edit(text)
+            has_field = (
+                parsed.get("fio") is not None
+                or parsed.get("custom_price") is not None
+                or parsed.get("seat_info") is not None
+                or parsed.get("hide_price") is not None
+                or parsed.get("reset_all")
+                or parsed.get("reset_fio")
+                or parsed.get("reset_price")
+                or parsed.get("reset_seat")
+            )
+            if has_field:
+                return _reissue_ticket_with_quick(chat, uid, recent_token, text)
     if msg.get("document"):
         if not has_access(uid):
             return no_access_message(uid)
