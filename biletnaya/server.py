@@ -741,7 +741,7 @@ def _is_kassa24_family(lines):
             or "kassa24" in blob)
 
 
-BUYER_LABEL_RE = re.compile(r"^покупатель[\s:.№/–—-]*(.*)$", re.I)
+BUYER_LABEL_RE = re.compile(r"^(?:покупатель|клиент)[\s:.№/–—-]*(.*)$", re.I)
 BUYER_FIO_STOP_RE = re.compile(
     r"[,;]|\b(?:фискальн\w*|фн|рн|инн|кпп|офд|чек\w*|"
     r"дата\s+выдачи|номер\s+смены|документ\w*)\b", re.I)
@@ -777,8 +777,10 @@ def _personal_line_what(l):
         return None
     if tl.startswith("покупатель"):
         return f"покупатель: {t[:40]}" if _buyer_fio_from_text(t) else None
+    if tl.startswith("клиент"):
+        return f"клиент: {t[:40]}" if _buyer_fio_from_text(t) else None
     # kassy.ru: подпись и ФИО в одной строке — «Клиент: Рязанов Максим Юрьевич»
-    if re.match(r"(клиент|фио)\s*[:.\-]", tl):
+    if re.match(r"фио\s*[:.\-]", tl):
         return f"фио: {t[:40]}"
     if re.match(r"(?:билет\s+на\s+имя|на\s+имя)\s*[:.\-]", tl):
         return f"билет на имя: {t[:40]}"
@@ -1206,7 +1208,14 @@ def strip_pushkin_doc(doc, clear_name=True):
                         hit = max(hits, key=lambda r: (r & box).get_area())
                         page.add_redact_annot(hit, fill=False)
                     else:
-                        page.add_redact_annot(box, fill=False)
+                        m_lbl = re.match(r"^(?:покупатель|клиент)[\s:.№/–—-]*(?:\s+)?", l["text"], re.I)
+                        l_hits = [r for r in page.search_for(m_lbl.group(0).strip()) if (r & box).get_area() > 0] if m_lbl else []
+                        if l_hits:
+                            l_box = max(l_hits, key=lambda r: (r & box).get_area())
+                            hit = fitz.Rect(l_box.x1, box.y0, box.x1, box.y1)
+                            page.add_redact_annot(hit, fill=False)
+                        else:
+                            page.add_redact_annot(box, fill=False)
                     personal.add(i)
                     removed.append(f"фио покупателя: {buyer_fio[:40]}")
                     continue

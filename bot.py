@@ -459,6 +459,19 @@ def _find_name_slots(source):
                 ]
                 if fallback_candidates:
                     chosen = fallback_candidates[0]
+                else:
+                    kassy_client = next((
+                        l for idx, l in enumerate(lines)
+                        if idx not in org_rows
+                        and (re.match(r"^клиент\s*[:.\-–]?", l["text"].strip(), re.I)
+                             or (srv._buyer_fio_from_text(l["text"]) and "клиент" in l["text"].lower()))
+                        and not l.get("stale")
+                    ), None)
+                    if kassy_client:
+                        chosen = dict(kassy_client)
+                        if re.match(r"^клиент\s*[:.\-]?$", kassy_client["text"].strip(), re.I):
+                            chosen["is_label_only"] = True
+                        chosen["max_width"] = 250.0
         if is_af and chosen:
             chosen = dict(chosen)
             if 340 <= chosen["bbox"][1] <= 420:
@@ -754,7 +767,7 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                 # поэтому имя попадает в цели проверки и вырезается перед отрисовкой.
                 for pno, slot in enumerate(name_slots):
                     if pno < len(personal_targets) and slot:
-                        if slot.get("text"):
+                        if slot.get("text") and not slot.get("is_label_only"):
                             personal_targets[pno].add(_normalized(slot["text"]))
                         if slot.get("visitor_text"):
                             personal_targets[pno].add(_normalized(slot["visitor_text"]))
@@ -855,7 +868,11 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                     if slot:
                         for eb in slot.get("extra_bboxes", []):
                             page.add_redact_annot(fitz.Rect(eb) + (-1, -1, 1, 1), fill=False)
-                        page.add_redact_annot(fitz.Rect(slot["bbox"]) + (-1, -1, 1, 1), fill=False)
+                        if slot.get("is_label_only"):
+                            box_to_redact = fitz.Rect(slot["bbox"][0] - 1, slot["bbox"][1] - 1, slot["bbox"][0] + slot.get("max_width", 250.0), slot["bbox"][3] + 1)
+                            page.add_redact_annot(box_to_redact, fill=False)
+                        else:
+                            page.add_redact_annot(fitz.Rect(slot["bbox"]) + (-1, -1, 1, 1), fill=False)
                         page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
                         origin = tuple(slot["origin"])
                         size = slot.get("size", 8.0)
@@ -896,9 +913,12 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                             _draw_runs(page, runs, origin, size, color)
                             fio_applied = True
                         else:
+                            clean_name = seat_tools.FIO_PREFIX_RE.sub("", cur_fio).strip() if hasattr(seat_tools, "FIO_PREFIX_RE") else re.sub(r"^(?:зритель|покупатель|посетитель|клиент|фио)\s*[:.\-–]?\s*", "", cur_fio, flags=re.I).strip()
                             text_to_write = cur_fio.upper() if slot.get("text", "").isupper() else cur_fio
                             if slot.get("text", "").upper().startswith("ПОКУПАТЕЛЬ"):
-                                text_to_write = f"ПОКУПАТЕЛЬ {cur_fio}"
+                                text_to_write = f"ПОКУПАТЕЛЬ {clean_name}"
+                            elif re.match(r"^клиент\s*[:.\-–]?", slot.get("text", ""), re.I):
+                                text_to_write = f"КЛИЕНТ: {clean_name.upper()}" if slot.get("text", "").isupper() else f"Клиент: {clean_name}"
                             runs = _replacement_runs(cleaned, doc_id, text_to_write, _line_style(slot))
                             max_width = slot.get("max_width")
                             if max_width:
