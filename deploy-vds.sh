@@ -205,8 +205,8 @@ sleep 3
 systemctl is-active --quiet bilet-bot.service
 systemctl is-enabled --quiet bilet-bot.service
 
-# Обновление второго экземпляра (нейтрального @redaktorpdf_bot), если он установлен
-if [ -d "/opt/redaktor-bot" ]; then
+# Обновление второго экземпляра (нейтрального @redaktorpdf_bot), если он установлен и включен
+if [ -d "/opt/redaktor-bot" ] && systemctl is-enabled --quiet redaktor-bot.service 2>/dev/null; then
     systemctl stop redaktor-bot.service 2>/dev/null || true
     for bilet_dir in biletnaya scripts migrations; do
         if [ -d "$bilet_stage/$bilet_dir" ]; then

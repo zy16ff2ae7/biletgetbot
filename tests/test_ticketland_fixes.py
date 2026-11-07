@@ -50,9 +50,9 @@ class TicketlandFixesTests(unittest.TestCase):
             out = fitz.open(stream=res, filetype="pdf")
             out_text = out[0].get_text().replace("\xa0", " ")
 
-            # Check that Ресурс Соц and email were removed
+            # Check that Ресурс Соц was removed and email was preserved
             self.assertNotIn("Ресурс Соц", out_text)
-            self.assertNotIn("srs.culture", out_text)
+            self.assertIn("srs.culture", out_text)
 
             # Check price replacement
             self.assertNotIn("1 250", out_text)
@@ -130,7 +130,7 @@ class TicketlandFixesTests(unittest.TestCase):
             out = fitz.open(stream=res, filetype="pdf")
             out_text = out[0].get_text().replace("\xa0", " ")
             self.assertNotIn("Константинопольская", out_text)
-            self.assertNotIn("bilety.longname", out_text)
+            self.assertIn("bilety.longname", out_text)
             self.assertNotIn("Пушкинская карта", out_text)
             self.assertNotIn("строго от 14 до 22 лет", out_text)
             out.close()
@@ -155,9 +155,9 @@ class TicketlandFixesTests(unittest.TestCase):
             page = out[0]
             out_text = page.get_text().replace("\xa0", " ")
 
-            # Personal / Pushkin data removed
+            # Personal / Pushkin data removed, buyer email preserved
             self.assertNotIn("Соловьев", out_text)
-            self.assertNotIn("zzgquqa", out_text)
+            self.assertIn("zzgquqa", out_text)
             self.assertNotIn("Пушкинская карта", out_text)
             self.assertNotIn("от 14 до 22", out_text)
             self.assertNotIn("скачать фискальный чек", out_text)
@@ -235,7 +235,7 @@ class TicketlandFixesTests(unittest.TestCase):
             out_text = out[0].get_text().replace("\xa0", " ")
             self.assertIn("Минкультуры Чувашии", out_text)
             self.assertNotIn("Клочко", out_text)
-            self.assertNotIn("bilety.chuvash", out_text)
+            self.assertIn("bilety.chuvash", out_text)
             self.assertNotIn("Пушкинская карта", out_text)
             out.close()
 

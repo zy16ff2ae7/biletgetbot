@@ -1112,7 +1112,6 @@ def _ticketland_name_rows(page, lines):
         if re.search(r"правил|посещени|мероприят|билет|вход|внимание|запрещ|распечат|сложить|ticketland|программ|пушкинск|допуска|возврат|support|orangedata|cheques", txt, re.I):
             continue
         if EMAIL_RE.search(txt):
-            found.add(i)
             continue
         words = txt.split()
         if (1 <= len(words) <= 6
@@ -1188,14 +1187,9 @@ def strip_pushkin_doc(doc, clear_name=True):
                     continue
                 if is_yandex_afisha and i not in yandex_names and i != yandex_header:
                     continue
-                is_tl_email = (bool(EMAIL_RE.search(l["text"]))
-                               and any("ticketland" in line["text"].lower() or "мтс лайв" in line["text"].lower() for line in lines)
-                               and "support@" not in l["text"].lower()
-                               and "info@" not in l["text"].lower()
-                               and fitz.Rect(l["bbox"]).y0 > 0.80 * page.rect.height)
-                if (ticketland_block or ticketland_names) and i not in ticketland_names and not is_tl_email:
+                if (ticketland_block or ticketland_names) and i not in ticketland_names:
                     continue
-                if not (family or is_afisha or operann or muza or is_yandex_afisha) and i not in (ticketland_names | intickets_names) and not is_tl_email:
+                if not (family or is_afisha or operann or muza or is_yandex_afisha) and i not in (ticketland_names | intickets_names):
                     continue
                 if (payment is not None or buyer is not None) and i != buyer:
                     continue
@@ -1240,8 +1234,6 @@ def strip_pushkin_doc(doc, clear_name=True):
                     what = f"фио Yandex: {l['text'][:40]}"
                 if is_yandex_afisha and i == yandex_header:
                     what = "заголовок Yandex: ПОСЕТИТЕЛЬ"
-                if is_tl_email:
-                    what = f"почта: {l['text'][:40]}"
                 if not what:
                     continue
                 personal.add(i)

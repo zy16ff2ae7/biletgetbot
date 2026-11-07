@@ -321,11 +321,6 @@ def _cleanup_targets(doc):
                 personal.add(yandex_header)
         elif is_ticketland:
             personal = srv._ticketland_name_rows(page, lines)
-            personal |= {i for i, line in enumerate(lines)
-                         if srv.EMAIL_RE.search(line["text"])
-                         and "support@" not in line["text"].lower()
-                         and "info@" not in line["text"].lower()
-                         and fitz.Rect(line["bbox"]).y0 > 0.80 * page.rect.height}
         elif buyer is not None:
             personal = {buyer}
         elif payment is not None:
