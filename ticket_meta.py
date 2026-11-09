@@ -775,7 +775,7 @@ def make_clean_ticket_filename(
 
     fio_token = ""
     if fio:
-        fio_clean = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", str(fio)).strip(" .")
+        fio_clean = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", str(fio)).strip()
         if fio_clean:
             fio_token = f"({fio_clean})"
 
