@@ -1057,7 +1057,8 @@ def make_event_folder_name(meta: dict[str, Any] | None) -> str:
     """
     meta = meta or {}
     title = meta.get("title") or "Билеты"
-    theater = meta.get("theater") or ""
+    raw_theater = meta.get("theater") or ""
+    theater = clean_theater_name(raw_theater) or raw_theater
     date = meta.get("short_date") or meta.get("date") or ""
 
     ctx = []
@@ -1074,7 +1075,9 @@ def make_event_folder_name(meta: dict[str, Any] | None) -> str:
     folder = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", folder)
     folder = re.sub(r"\s+", " ", folder).strip(" .")
     if len(folder) > 60:
-        folder = folder[:60].strip(" .")
+        folder = folder[:60].rstrip(" .,:;-(")
+        if folder.count("(") > folder.count(")"):
+            folder = folder.rstrip(" .,:;-(") + ")"
     return folder or "Билеты"
 
 
@@ -1089,7 +1092,7 @@ def make_batch_zip_filename(items_meta: list[dict[str, Any]], good: int) -> str:
 
     titles = {m["title"] for m in metas if m.get("title")}
     dates = {m.get("short_date") for m in metas if m.get("short_date")}
-    theaters = {m.get("theater") for m in metas if m.get("theater")}
+    theaters = {clean_theater_name(m.get("theater")) or m.get("theater") for m in metas if m.get("theater")}
 
     def _tickets_word(n: int) -> str:
         if 11 <= n % 100 <= 19:
