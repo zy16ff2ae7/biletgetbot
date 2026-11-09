@@ -17,6 +17,7 @@ import shutil
 import sqlite3
 import stat
 import zipfile
+from collections import Counter
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
 import sys
@@ -3182,18 +3183,76 @@ def _make_batch_zip(batch_token):
 
     buf = io.BytesIO()
     processed_items = []
+
+    distinct_events = {
+        ticket_meta.get_event_key(it.get("meta")): it.get("meta")
+        for it in items
+        if it.get("meta") and it["meta"].get("title")
+    }
+    use_folders = len(distinct_events) > 1
+
+    event_folders = {}
+    taken_folders = set()
+    if use_folders:
+        for ev_key, meta in distinct_events.items():
+            base_folder = ticket_meta.make_event_folder_name(meta)
+            folder = base_folder
+            suffix = 2
+            while folder.casefold() in taken_folders:
+                folder = f"{base_folder} ({suffix})"
+                suffix += 1
+            taken_folders.add(folder.casefold())
+            event_folders[ev_key] = folder
+
+        event_counts = Counter(ticket_meta.get_event_key(it.get("meta")) for it in items)
+        event_indices = Counter()
+    else:
+        num_width = max(2, len(str(len(items))))
+
+    taken = set()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
         for idx, it in enumerate(items, 1):
             clean_p = Path(it["clean_path"])
             clean_bytes = clean_p.read_bytes() if clean_p.exists() else b""
             if not clean_bytes:
                 continue
-            out_name = it.get("output_name") or f"{idx:02d}. ticket_{idx}.pdf"
+
+            meta = it.get("meta") or {}
+            orig_name = it.get("orig_name") or f"ticket_{idx}.pdf"
+            hide_price = it.get("hide_price", False)
+            fio = it.get("fio")
+
+            if use_folders:
+                ev_key = ticket_meta.get_event_key(meta)
+                folder = event_folders.get(ev_key) or "Разное"
+                event_indices[ev_key] += 1
+                group_idx = event_indices[ev_key]
+                group_total = event_counts[ev_key]
+                group_width = max(2, len(str(group_total)))
+                prefix = f"{group_idx:0{group_width}d}. "
+                clean_name = ticket_meta.make_clean_ticket_filename(
+                    meta, fallback=orig_name, hide_price=hide_price, fio=fio, omit_event=True
+                )
+                out_name = f"{folder}/{prefix}{clean_name}"
+            else:
+                prefix = f"{idx:0{num_width}d}. "
+                clean_name = ticket_meta.make_clean_ticket_filename(
+                    meta, fallback=orig_name, hide_price=hide_price, fio=fio
+                )
+                out_name = prefix + clean_name
+
+            base = out_name[:-4] if out_name.lower().endswith(".pdf") else out_name
+            suffix = 2
+            while out_name.casefold() in taken:
+                out_name = f"{base}_{suffix}.pdf"
+                suffix += 1
+            taken.add(out_name.casefold())
+
             archive.writestr(out_name, clean_bytes)
             processed_items.append({
-                "name": it.get("orig_name") or out_name,
+                "name": orig_name,
                 "output_name": out_name,
-                "meta": it.get("meta") or {},
+                "meta": meta,
                 "changed": True,
             })
         report_text = ticket_meta.format_batch_report_table(processed_items)

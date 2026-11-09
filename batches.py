@@ -166,8 +166,6 @@ def _process_items_impl(items, cleaner, on_progress=None, srv=None):
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
         for idx, entry in enumerate(sorted_entries, 1):
-            clean_name = ticket_meta.make_clean_ticket_filename(entry["meta"], fallback=entry["orig_name"])
-
             if use_folders:
                 ev_key = ticket_meta.get_event_key(entry.get("meta"))
                 folder = event_folders.get(ev_key) or "Разное"
@@ -176,8 +174,12 @@ def _process_items_impl(items, cleaner, on_progress=None, srv=None):
                 group_total = event_counts[ev_key]
                 group_width = max(2, len(str(group_total)))
                 prefix = f"{group_idx:0{group_width}d}. "
+                clean_name = ticket_meta.make_clean_ticket_filename(
+                    entry["meta"], fallback=entry["orig_name"], omit_event=True
+                )
                 output_name = f"{folder}/{prefix}{clean_name}"
             else:
+                clean_name = ticket_meta.make_clean_ticket_filename(entry["meta"], fallback=entry["orig_name"])
                 prefix = f"{idx:0{num_width}d}. "
                 output_name = prefix + clean_name
 

@@ -182,6 +182,62 @@ class TicketMetaTests(unittest.TestCase):
         self.assertEqual("Чайка (МХТ Чехова, 04.11)", folder1)
         self.assertEqual("Серёжа (МХТ Чехова, 28.12)", folder3)
 
+    def test_make_clean_ticket_filename_omit_event_compact(self):
+        meta = {
+            "title": "Снегурочка и все, все, все!",
+            "theater": "Молодежный театр РБ",
+            "short_date": "18.12",
+            "sector": "Партер",
+            "row": "8",
+            "seats": ["1"],
+            "price": 500,
+        }
+        # Regular full name
+        full_fn = ticket_meta.make_clean_ticket_filename(meta, fallback="t.pdf", omit_event=False)
+        self.assertIn("Снегурочка", full_fn)
+        self.assertIn("Партер р8 м1", full_fn)
+
+        # Compact name inside subfolder
+        compact_fn = ticket_meta.make_clean_ticket_filename(meta, fallback="t.pdf", omit_event=True)
+        self.assertNotIn("Снегурочка", compact_fn)
+        self.assertNotIn("Молодежный", compact_fn)
+        self.assertEqual("Партер р8 м1 — 500р.pdf", compact_fn)
+
+    def test_windows_max_path_safety(self):
+        long_meta = {
+            "title": "Очень длинное название детского новогоднего спектакля про Снегурочку и всех сказочных героев",
+            "theater": "Государственное бюджетное учреждение культуры Национальный молодежный театр",
+            "short_date": "18.12",
+            "sector": "Балкон бельэтажа середина",
+            "row": "15",
+            "seats": ["101", "102"],
+            "price": 2500,
+        }
+        folder = ticket_meta.make_event_folder_name(long_meta)
+        self.assertLessEqual(len(folder), 60)
+        self.assertFalse(folder.endswith("."))
+
+        compact_fn = ticket_meta.make_clean_ticket_filename(long_meta, fallback="t.pdf", omit_event=True)
+        self.assertLessEqual(len(compact_fn), 70)
+
+        total_internal_path = f"{folder}/01. {compact_fn}"
+        self.assertLessEqual(len(total_internal_path), 120)
+
+    def test_make_batch_zip_filename_length_capped(self):
+        items = [
+            {"meta": {
+                "title": "Очень длинное название спектакля, которое могло бы превысить лимит путей Windows Explorer",
+                "theater": "Очень длинное название театра со всеми регалиями и академическими званиями",
+                "short_date": "18.12",
+                "sector": "Партер",
+                "row": 1,
+                "seats": [1]
+            }}
+        ]
+        zip_name = ticket_meta.make_batch_zip_filename(items, good=30)
+        self.assertLessEqual(len(zip_name), 80)
+        self.assertTrue(zip_name.endswith(".zip"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,6 +45,8 @@ THEATER_ALIASES = [
     (re.compile(r"табаков|табакерк", re.I), "Театр Табакова"),
     (re.compile(r"нижегородский.*театр|operann", re.I), "Нижегородский театр оперы и балета"),
     (re.compile(r"пушкин", re.I), "Театр Пушкина"),
+    (re.compile(r"национальн\w*\s+молодежн\w*|нмт\s+рб", re.I), "Молодежный театр РБ"),
+    (re.compile(r"молодежный театр", re.I), "Молодежный театр"),
     (re.compile(r"казанский.*тюз|гбу.*казанский тюз", re.I), "Казанский ТЮЗ"),
     (re.compile(r"драматический театр рб|гардт рб", re.I), "Русский драмтеатр РБ"),
     (re.compile(r"русский драмтеатр|русский драматический театр", re.I), "Русский драмтеатр"),
@@ -723,11 +725,18 @@ def format_seats_string(seats: Sequence[str]) -> str:
     return ", ".join(clean_seats)
 
 
-def make_clean_ticket_filename(meta: dict[str, Any] | None, fallback: str, hide_price: bool = False, fio: str | None = None) -> str:
+def make_clean_ticket_filename(
+    meta: dict[str, Any] | None,
+    fallback: str,
+    hide_price: bool = False,
+    fio: str | None = None,
+    omit_event: bool = False,
+) -> str:
     """Build a detailed, informative, safe PDF filename.
 
     Format: <Спектакль> (<Театр>, <Дата>) — <Сектор> р<Ряд> м<Места> — <Номинал> — (<ФИО>).pdf
-    Example: Чайка (МХТ Чехова, 04.11) — Балкон середина р4 м12–14 — 3000р.pdf
+    If omit_event=True (e.g. inside an event subfolder):
+    Format: <Сектор> р<Ряд> м<Места> — <Номинал> — (<ФИО>).pdf
     """
     if not meta:
         base = os.path.splitext(fallback)[0]
@@ -764,17 +773,33 @@ def make_clean_ticket_filename(meta: dict[str, Any] | None, fallback: str, hide_
     if not hide_price and meta.get("price"):
         price_token = f"{meta['price']}р"
 
-    chunks = []
-    if head:
-        chunks.append(head)
-    if loc_str:
-        chunks.append(loc_str)
-    if price_token:
-        chunks.append(price_token)
+    fio_token = ""
     if fio:
-        fio_clean = re.sub(r'[/\\:*?"<>|]', "", str(fio)).strip()
+        fio_clean = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", str(fio)).strip(" .")
         if fio_clean:
-            chunks.append(f"({fio_clean})")
+            fio_token = f"({fio_clean})"
+
+    chunks = []
+    if omit_event:
+        if loc_str:
+            chunks.append(loc_str)
+        elif title:
+            chunks.append(title[:30].strip(" ."))
+        else:
+            chunks.append("Билет")
+        if price_token:
+            chunks.append(price_token)
+        if fio_token:
+            chunks.append(fio_token)
+    else:
+        if head:
+            chunks.append(head)
+        if loc_str:
+            chunks.append(loc_str)
+        if price_token:
+            chunks.append(price_token)
+        if fio_token:
+            chunks.append(fio_token)
 
     if not chunks:
         base = os.path.splitext(fallback)[0]
@@ -783,14 +808,15 @@ def make_clean_ticket_filename(meta: dict[str, Any] | None, fallback: str, hide_
 
     filename = " — ".join(chunks) + ".pdf"
 
-    # Sanitize forbidden filesystem characters
-    filename = re.sub(r'[/\\:*?"<>|]', "", filename)
+    # Sanitize forbidden filesystem characters (Windows + Unix + control chars)
+    filename = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", filename)
     filename = re.sub(r"\s+", " ", filename).strip(" .")
 
-    # Limit filename length safely
-    if len(filename) > 170:
+    # Limit filename length safely for Windows (MAX_PATH compatibility)
+    max_len = 70 if omit_event else 95
+    if len(filename) > max_len:
         base, ext = os.path.splitext(filename)
-        filename = base[:166] + ext
+        filename = base[:max_len - len(ext) - 1].strip(" .") + ext
 
     return filename or f"{os.path.splitext(fallback)[0]}_cleaned.pdf"
 
@@ -1045,10 +1071,10 @@ def make_event_folder_name(meta: dict[str, Any] | None) -> str:
     else:
         folder = title
 
-    folder = re.sub(r'[/\\:*?"<>|]', "", folder).strip(" .")
-    folder = re.sub(r"\s+", " ", folder)
-    if len(folder) > 80:
-        folder = folder[:80].strip()
+    folder = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", folder)
+    folder = re.sub(r"\s+", " ", folder).strip(" .")
+    if len(folder) > 60:
+        folder = folder[:60].strip(" .")
     return folder or "Билеты"
 
 
@@ -1109,10 +1135,11 @@ def make_batch_zip_filename(items_meta: list[dict[str, Any]], good: int) -> str:
             date_str = f" ({sorted_dates[0]}–{sorted_dates[-1]})"
         name = f"{theater_prefix}{date_str} — {_tickets_word(good)}.zip"
 
-    name = re.sub(r'[/\\:*?"<>|]', "", name).strip(" .")
+    name = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", name).strip(" .")
     name = re.sub(r"\s+", " ", name)
     if not name.endswith(".zip"):
         name += ".zip"
-    if len(name) > 160:
-        name = name[:156] + ".zip"
+    if len(name) > 80:
+        base = name[:-4] if name.lower().endswith(".zip") else name
+        name = base[:76].strip(" .") + ".zip"
     return name or "tickets_cleaned.zip"
