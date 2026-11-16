@@ -280,6 +280,15 @@ def validate_ticket(source, output, engine, removed_targets):
             elif has_pk and 70 <= r.width <= 130 and 15 <= r.height <= 40 and r.width >= 2.8 * r.height:
                 promos.append(r)
         result_lines = engine.extract_lines(after)
+        # Event titles are never intentional removals, even if a classifier
+        # mistakenly included a name-like title in removed_targets.
+        for index in engine._event_title_rows(lines):
+            title = lines[index]
+            box = fitz.Rect(title["bbox"])
+            if not any(_text(candidate["text"]) == _text(title["text"])
+                       and fitz.Rect(candidate["bbox"]).intersects(box + (-2, -2, 2, 2))
+                       for candidate in result_lines):
+                raise ValidationError("Не сохранилось название мероприятия.")
         captions = [fitz.Rect(line["bbox"]) for line in lines
                     if _text(line["text"]) in removed and engine.PUSHKIN_TEXT_RE.search(line["text"])
                     and not any(_text(candidate["text"]) == _text(line["text"])

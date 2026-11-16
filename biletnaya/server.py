@@ -2830,14 +2830,49 @@ def _organizer_rows(lines):
     return org_rows
 
 
+def _event_title_rows(lines):
+    """Values below an explicit event-title label, including wrapped lines.
+
+    Titles such as «Поколение Маугли» resemble personal names. Identify their
+    field by its label and relative spacing, regardless of page orientation.
+    """
+    found = set()
+    for label in lines:
+        if label.get("stale") or not re.fullmatch(
+                r"(?:наименование|название\s+(?:мероприятия|спектакля))\s*[:.]?",
+                label["text"].strip(), re.I):
+            continue
+        box = fitz.Rect(label["bbox"])
+        candidates = sorted(
+            ((i, line) for i, line in enumerate(lines)
+             if not line.get("stale")
+             and abs(line["bbox"][0] - box.x0) <= max(4, box.height)
+             and line["bbox"][1] >= box.y1 - 1),
+            key=lambda item: item[1]["bbox"][1])
+        previous = box
+        for i, line in candidates:
+            rect = fitz.Rect(line["bbox"])
+            gap = 26 if previous == box else max(4, previous.height * 0.6)
+            if rect.y0 - previous.y1 > gap:
+                break
+            if previous != box and any(
+                    re.fullmatch(pattern, line["text"].strip(), re.I)
+                    for pattern, _tag in FIELD_LABELS):
+                break
+            found.add(i)
+            previous = rect
+    return found
+
+
 def _afisha_name_rows(page, lines):
     """Строки с ФИО зрителя/покупателя на билетах Афиши."""
     if not any(AFISHA_SELLER_RE.search(l.get("text") or "") for l in lines):
         return set()
     orgs = _organizer_rows(lines)
+    titles = _event_title_rows(lines)
     candidates = []
     for i, l in enumerate(lines):
-        if i in orgs:
+        if i in orgs or i in titles:
             continue
         t = (l.get("text") or "").strip().lower()
         if any(lbl in t for lbl in ["посетитель", "зритель", "покупатель"]):
@@ -2909,6 +2944,7 @@ def field_tags(lines):
     if not lines:
         return lines
     tags = [set() for _ in lines]
+    titles = _event_title_rows(lines)
 
     def label_tag(text):
         t = text.lower().strip()
@@ -2922,7 +2958,7 @@ def field_tags(lines):
     for i, l in enumerate(lines):
         # строка, накрытая более поздним текстом на том же месте, на странице не
         # видна: метить по ней поле — значит показать в панели чужое значение
-        if l.get("stale"):
+        if l.get("stale") or i in titles:
             continue
         t = l["text"].lower().strip()
         if EMAIL_RE.search(l["text"]) and not re.search(r"@maly\.ru\b", l["text"], re.I):
@@ -2969,7 +3005,7 @@ def field_tags(lines):
         ly = (l["bbox"][1] + l["bbox"][3]) / 2
         lh = max(l["bbox"][3] - l["bbox"][1], 1.0)
         for j, v in enumerate(lines):
-            if j == i or (tags[j] and not (tag in ("discount", "service_fee") and tags[j] <= {"price"})) or v.get("stale"):
+            if j == i or j in titles or (tags[j] and not (tag in ("discount", "service_fee") and tags[j] <= {"price"})) or v.get("stale"):
                 continue
             vy0 = v["bbox"][1]
             if vy0 >= l["bbox"][3] - 1 and vy0 - l["bbox"][3] < 26:
@@ -3072,7 +3108,7 @@ def field_tags(lines):
     med = sizes[len(sizes) // 2] if sizes else 10.0
     org_rows = _organizer_rows(lines)
     for i, l in enumerate(lines):
-        if not tags[i] and not l.get("stale") and l["size"] <= med * 1.5 and i not in org_rows:
+        if not tags[i] and not l.get("stale") and l["size"] <= med * 1.5 and i not in org_rows and i not in titles:
             if is_name(l["text"]):
                 tags[i].add("name")
             else:
