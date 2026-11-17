@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import fitz
+
 import _stub_engine
 _stub_engine.ensure_engine()
 
@@ -48,13 +50,14 @@ class FreeTierFlowTests(unittest.TestCase):
         from subscriptions import SubscriptionStore
         self.store = SubscriptionStore(tmp / "s.sqlite3")
         self.sent = []
+        self.stack.enter_context(patch.object(bot, "STATE_DIR", tmp / "state"))
         self.stack.enter_context(patch.object(bot, "get_store", return_value=self.store))
         self.stack.enter_context(patch.object(bot, "send_text",
                                               side_effect=lambda chat, text, markup=None:
                                               self.sent.append(("send", text)) or True))
         self.stack.enter_context(patch.object(bot, "Progress", FakeProgress))
         self.stack.enter_context(patch.object(bot, "_photo_or_none", return_value=None))
-        self.stack.enter_context(patch.object(bot, "send_cleaned", return_value="file-id-1"))
+        self.delivery = self.stack.enter_context(patch.object(bot, "send_cleaned", return_value="file-id-1"))
         self.stack.enter_context(patch.object(bot, "download_file",
                                               side_effect=lambda fid: ticket("kassir")))
 
@@ -68,6 +71,48 @@ class FreeTierFlowTests(unittest.TestCase):
 
     def _all_texts(self):
         return [text for _, text in self.sent + FakeProgress.records]
+
+    def test_dispatch_allows_two_page_pdf_for_new_free_user(self):
+        with fitz.open(stream=ticket("plain"), filetype="pdf") as page, fitz.open() as doc:
+            doc.insert_pdf(page)
+            doc.insert_pdf(page)
+            data = doc.tobytes()
+        self.stack.enter_context(patch.object(bot, "download_file", return_value=data))
+        bot.dispatch_update({"update_id": 101, "message": self._doc_msg(name="order.pdf")})
+        job_id, payload = self.store.claim()
+        self.assertEqual("message", payload["kind"])
+        bot.handle(payload["message"], update_id=job_id)
+        self.store.finish(job_id)
+        self.delivery.assert_called_once()
+        with fitz.open(stream=self.delivery.call_args.args[1], filetype="pdf") as result:
+            self.assertEqual(2, len(result))
+        self.assertEqual(1, self.store.daily_left(501))
+
+    def test_handle_honors_two_free_files_and_blocks_third(self):
+        bot.handle(self._doc_msg("entry1"), update_id=201)
+        bot.handle(self._doc_msg("entry2"), update_id=202)
+        bot.handle(self._doc_msg("entry3"), update_id=203)
+        self.assertEqual(2, self.delivery.call_count)
+        self.assertEqual(0, self.store.daily_left(501))
+        self.assertTrue(any("уже перепечатаны" in t for t in self._all_texts()))
+
+    def test_queued_free_document_is_accepted(self):
+        bot.handle(self._doc_msg("queued1"), update_id=301, queued=True)
+        job = self.store.claim()
+        self.assertIsNotNone(job)
+        job_id, payload = job
+        self.assertEqual("document", payload["kind"])
+        self.assertEqual(2, self.store.daily_left(501))
+        bot.process_incoming_document(payload["message"], job_id=job_id)
+        self.store.finish(job_id)
+        self.delivery.assert_called_once()
+        self.assertEqual(1, self.store.daily_left(501))
+
+    def test_handle_free_zip_stays_subscription_only(self):
+        bot.handle(self._doc_msg("entry-zip", "pack.zip"), update_id=401)
+        self.delivery.assert_not_called()
+        self.assertTrue(any("Пачки — для абонемента" in t for t in self._all_texts()))
+        self.assertEqual(2, self.store.daily_left(501))
 
     def test_free_user_processing_flow(self):
         # 1-й билет: бесплатник обрабатывается без абонемента, лимит списывается.
