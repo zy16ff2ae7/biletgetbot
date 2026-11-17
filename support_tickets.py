@@ -240,6 +240,10 @@ class SupportDesk:
             raise ValueError("Некорректный номер обращения.")
         return int(value)
 
+    def _focus(self, ticket, uid):
+        state = f"support:reply:{ticket['id']}" if ticket["status"] != "closed" else None
+        self.states.set_user_state(uid, state)
+
     def menu(self, uid, chat, username=None):
         rows = [[self._button("✍️ Создать обращение", "new")],
                 [self._button("📨 Мои обращения", "list")]]
@@ -254,6 +258,7 @@ class SupportDesk:
         ticket = self.store.ticket(ident, uid, staff)
         if not ticket:
             raise ValueError("Обращение не найдено.")
+        self._focus(ticket, uid)
         messages = self.store.messages(ident, uid, staff)
         created = datetime.fromtimestamp(ticket["created"], ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y %H:%M")
         text = f"🎫 Обращение #{ident}\nСтатус: {self.STATUS[ticket['status']]}\nСоздано: {created} МСК"
@@ -314,6 +319,7 @@ class SupportDesk:
                 message = self.store.message(self._number(parts[2]), uid, staff)
                 if not message:
                     raise ValueError("Обращение не найдено.")
+                self._focus(self.store.ticket(message["ticket_id"], uid, staff), uid)
                 markup = {"inline_keyboard": [[self._button("⬅️ К обращению", f"view:{message['ticket_id']}")]]}
                 if action == "file":
                     if not message["file_id"]:
@@ -328,6 +334,7 @@ class SupportDesk:
             if not ticket:
                 raise ValueError("Обращение не найдено.")
             if action == "history":
+                self._focus(ticket, uid)
                 offset = min(self._number(parts[3], 0), 100)
                 messages = self.store.messages(ident, uid, staff)[offset:offset+10]
                 rows = [[self._button(f"Сообщение #{m['id']}", f"message:{m['id']}")] for m in messages]
