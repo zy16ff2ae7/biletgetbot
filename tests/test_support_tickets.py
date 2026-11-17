@@ -124,9 +124,9 @@ class SupportFlowTests(unittest.TestCase):
         self.desk.handle_message(self.msg(text="Не обрабатывается документ"), 10)
         return self.store.list_tickets(501)[0]
 
-    def test_new_request_clears_state_and_queues_notification(self):
+    def test_new_request_keeps_support_conversation_and_queues_notification(self):
         self.create()
-        self.assertIsNone(self.states.get_user_state(501))
+        self.assertEqual("support:reply:1", self.states.get_user_state(501))
         self.assertIn("#1", self.send.call_args.args[1])
         self.desk.flush_notifications()
         self.assertTrue(any(call.args[0] == 900 for call in self.send.call_args_list))
@@ -188,6 +188,60 @@ class SupportFlowTests(unittest.TestCase):
         bot.handle(payload["message"], update_id=ident)
         process.assert_not_called()
         self.assertEqual(1, len(self.store.list_tickets(501)))
+
+    def test_two_queued_support_pdfs_stay_in_one_conversation(self):
+        self.stack.enter_context(patch.object(bot, "get_store", return_value=self.states))
+        self.stack.enter_context(patch.object(bot, "get_support_desk", return_value=self.desk))
+        process = self.stack.enter_context(patch.object(bot, "process_incoming_document"))
+        self.cb("support:new")
+        for ident in (10, 11):
+            bot.dispatch_update({"update_id": ident, "message": self.msg(
+                document={"file_id": f"source-{ident}", "file_name": "ticket.pdf"})})
+        for _ in range(2):
+            ident, payload = self.states.claim()
+            bot.handle(payload["message"], update_id=ident)
+            self.states.finish(ident)
+        process.assert_not_called()
+        ticket = self.store.list_tickets(501)[0]
+        self.assertEqual(2, len(self.store.messages(ticket["id"], 501)))
+
+    def test_support_callback_is_a_barrier_for_auto_batch(self):
+        self.states.enqueue(10, {"kind": "callback_query", "callback": {
+            "from": {"id": 501}, "message": {"chat": {"id": 501}}, "data": "support:new"}})
+        self.states.enqueue(11, {"kind": "message", "message": self.msg(
+            document={"file_id": "support-file", "file_name": "ticket.pdf"})})
+        self.assertEqual([], self.states.claim_pending_documents(501, 501))
+
+    def test_support_command_is_a_barrier_for_auto_batch(self):
+        self.states.enqueue(10, {"kind": "message", "message": self.msg(text="/support")})
+        self.states.enqueue(11, {"kind": "message", "message": self.msg(
+            document={"file_id": "support-file", "file_name": "ticket.pdf"})})
+        self.assertEqual([], self.states.claim_pending_documents(501, 501))
+
+    def test_other_users_support_does_not_block_auto_batch(self):
+        self.states.enqueue(10, {"kind": "message", "message": self.msg(502, "/support")})
+        self.states.enqueue(11, {"kind": "message", "message": self.msg(
+            document={"file_id": "normal-file", "file_name": "ticket.pdf"})})
+        self.assertEqual(1, len(self.states.claim_pending_documents(501, 501)))
+
+    def test_main_menu_exits_support_conversation(self):
+        self.create()
+        self.stack.enter_context(patch.object(bot, "get_store", return_value=self.states))
+        self.stack.enter_context(patch.object(bot, "send_welcome"))
+        bot.handle_callback_query({"from": {"id": 501}, "message": {"chat": {"id": 501}},
+                                   "data": "welcome:menu"})
+        self.assertIsNone(self.states.get_user_state(501))
+
+    def test_exit_support_button_returns_to_document_mode(self):
+        self.create()
+        self.cb("support:exit")
+        self.assertIsNone(self.states.get_user_state(501))
+
+    def test_replay_after_commit_restores_conversation_state(self):
+        self.create()
+        self.states.set_user_state(501, "support:new")
+        self.desk.handle_message(self.msg(text="Повтор того же сообщения"), 10)
+        self.assertEqual("support:reply:1", self.states.get_user_state(501))
 
     def test_revoked_staff_does_not_receive_private_notifications(self):
         self.create()
