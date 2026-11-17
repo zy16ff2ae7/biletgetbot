@@ -124,7 +124,8 @@ class SubscriptionTests(unittest.TestCase):
         self.assertFalse(self.store.claim_invite("freedemin", 223))
         self.assertFalse(self.store.status(223)["active"])
 
-    def test_processing_requires_access_before_download(self):
+    def test_exhausted_free_quota_blocks_before_download(self):
+        self.assertTrue(self.store.daily_consume(222, count=self.store.DAILY_LIMIT))
         with patch.object(bot, "_store", self.store), patch.object(bot, "download_file") as download, \
                 patch.object(bot, "send_text"):
             bot.handle({"chat": {"id": 222}, "from": {"id": 222},
