@@ -254,11 +254,12 @@ class SupportDesk:
                          "Ответ придёт сюда, в бота. Подписка для обращения не требуется.",
                          {"inline_keyboard": rows})
 
-    def view(self, ident, uid, chat, staff=False):
+    def view(self, ident, uid, chat, staff=False, focus=True):
         ticket = self.store.ticket(ident, uid, staff)
         if not ticket:
             raise ValueError("Обращение не найдено.")
-        self._focus(ticket, uid)
+        if focus:
+            self._focus(ticket, uid)
         messages = self.store.messages(ident, uid, staff)
         created = datetime.fromtimestamp(ticket["created"], ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y %H:%M")
         text = f"🎫 Обращение #{ident}\nСтатус: {self.STATUS[ticket['status']]}\nСоздано: {created} МСК"
@@ -382,7 +383,7 @@ class SupportDesk:
             if self.states.get_user_state(uid) in {"support:new", f"support:reply:{old}"}:
                 ticket = self.store.ticket(old, uid, staff)
                 self.states.set_user_state(uid, f"support:reply:{old}" if ticket and ticket["status"] != "closed" else None)
-            self.view(old, uid, chat, staff)
+            self.view(old, uid, chat, staff, focus=False)
             return True
         if command in {"/support", "/tickets", "/support_queue"}:
             action = {"/support": "menu", "/tickets": "list", "/support_queue": "queue"}[command]
