@@ -308,3 +308,12 @@ class SupportFlowTests(unittest.TestCase):
         self.desk.handle_message(self.msg(900, "Ответ на второй вопрос"), 12)
         self.assertEqual("open", self.store.ticket(first["id"], 501)["status"])
         self.assertEqual("answered", self.store.ticket(second["id"], 502)["status"])
+
+    def test_replay_does_not_switch_another_active_conversation(self):
+        first = self.create()
+        second = self.store.create(502, 502, "Другой вопрос", 11, [900])
+        self.cb(f"support:reply:{first['id']}", 900)
+        self.desk.handle_message(self.msg(900, "Ответ в первом обращении"), 12)
+        self.cb(f"support:view:{second['id']}", 900)
+        self.desk.handle_message(self.msg(900, "Ответ в первом обращении"), 12)
+        self.assertEqual(f"support:reply:{second['id']}", self.states.get_user_state(900))
