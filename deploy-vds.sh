@@ -8,7 +8,7 @@ mkdir -p "$bilet_work"
 bilet_package=$(mktemp -d "$bilet_work/package.XXXXXX")
 trap 'rm -rf "$bilet_package"' EXIT
 mkdir -p "$bilet_package/biletnaya" "$bilet_package/tests"
-cp "$bilet_root/"{bot.py,batches.py,ticket_meta.py,seat_tools.py,eraser_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,subscription.json,requirements.txt,README.md,make_brand.py,LICENSE,config.py,texts.py,cryptobot.py} "$bilet_package/"
+cp "$bilet_root/"{bot.py,support_tickets.py,batches.py,ticket_meta.py,seat_tools.py,eraser_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,subscription.json,requirements.txt,README.md,make_brand.py,LICENSE,config.py,texts.py,cryptobot.py} "$bilet_package/"
 if [ -f "$bilet_root/.cryptobot_token" ]; then cp "$bilet_root/.cryptobot_token" "$bilet_package/"; fi
 cp -R "$bilet_root/migrations" "$bilet_package/"
 cp "$bilet_root/tests/"test_*.py "$bilet_package/tests/"
@@ -106,7 +106,7 @@ PREFLIGHT
     printf 'GATEWAY READY; candidate=%s; backup=%s\n' "$bilet_root/http-candidate" "$bilet_backup"
     exit 0
 fi
-for bilet_file in bot.py batches.py ticket_meta.py seat_tools.py eraser_tools.py validation.py progress.py delivery_cache.py url_delivery.py telegram_file_transport.py nginx-bilet-delivery.conf subscriptions.py subscription.json requirements.txt README.md make_brand.py LICENSE bilet-bot.service bilet-backup.service bilet-backup.timer config.py texts.py cryptobot.py .cryptobot_token; do
+for bilet_file in bot.py support_tickets.py batches.py ticket_meta.py seat_tools.py eraser_tools.py validation.py progress.py delivery_cache.py url_delivery.py telegram_file_transport.py nginx-bilet-delivery.conf subscriptions.py subscription.json requirements.txt README.md make_brand.py LICENSE bilet-bot.service bilet-backup.service bilet-backup.timer config.py texts.py cryptobot.py .cryptobot_token; do
     if [ -f "$bilet_root/$bilet_file" ]; then cp -a "$bilet_root/$bilet_file" "$bilet_backup/code/"; fi
 done
 for bilet_dir in biletnaya tests migrations brand scripts; do
@@ -125,7 +125,7 @@ fi
 bilet_rollback() {
     trap - ERR
     systemctl stop bilet-bot.service || true
-    for bilet_file in bot.py batches.py ticket_meta.py seat_tools.py eraser_tools.py validation.py progress.py delivery_cache.py url_delivery.py telegram_file_transport.py nginx-bilet-delivery.conf subscriptions.py subscription.json requirements.txt README.md make_brand.py LICENSE bilet-bot.service bilet-backup.service bilet-backup.timer config.py texts.py cryptobot.py .cryptobot_token; do
+    for bilet_file in bot.py support_tickets.py batches.py ticket_meta.py seat_tools.py eraser_tools.py validation.py progress.py delivery_cache.py url_delivery.py telegram_file_transport.py nginx-bilet-delivery.conf subscriptions.py subscription.json requirements.txt README.md make_brand.py LICENSE bilet-bot.service bilet-backup.service bilet-backup.timer config.py texts.py cryptobot.py .cryptobot_token; do
         rm -f "$bilet_root/$bilet_file"
     done
     for bilet_dir in biletnaya tests migrations brand scripts; do rm -rf "$bilet_root/$bilet_dir"; done
@@ -151,7 +151,7 @@ with sqlite3.connect(sys.argv[1]) as source, sqlite3.connect(sys.argv[2]) as tar
     source.backup(target)
 DB
 fi
-cp "$bilet_stage/"{bot.py,batches.py,ticket_meta.py,seat_tools.py,eraser_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,requirements.txt,README.md,make_brand.py,LICENSE,config.py,texts.py,cryptobot.py} "$bilet_root/"
+cp "$bilet_stage/"{bot.py,support_tickets.py,batches.py,ticket_meta.py,seat_tools.py,eraser_tools.py,validation.py,progress.py,delivery_cache.py,url_delivery.py,telegram_file_transport.py,nginx-bilet-delivery.conf,subscriptions.py,requirements.txt,README.md,make_brand.py,LICENSE,config.py,texts.py,cryptobot.py} "$bilet_root/"
 if [ -f "$bilet_stage/.cryptobot_token" ]; then cp "$bilet_stage/.cryptobot_token" "$bilet_root/"; fi
 if [ "$bilet_enable_url" = 1 ]; then
     "$bilet_python" - "$bilet_root/.env" <<'ENVIRONMENT'
@@ -214,7 +214,7 @@ if [ -d "/opt/redaktor-bot" ] && systemctl is-enabled --quiet redaktor-bot.servi
             cp -a "$bilet_stage/$bilet_dir" "/opt/redaktor-bot/$bilet_dir"
         fi
     done
-    for f in bot.py texts.py ticket_meta.py progress.py batches.py seat_tools.py eraser_tools.py validation.py config.py cryptobot.py subscriptions.py delivery_cache.py telegram_file_transport.py url_delivery.py subscription.json; do
+    for f in bot.py support_tickets.py texts.py ticket_meta.py progress.py batches.py seat_tools.py eraser_tools.py validation.py config.py cryptobot.py subscriptions.py delivery_cache.py telegram_file_transport.py url_delivery.py subscription.json; do
         if [ -f "$bilet_stage/$f" ]; then
             cp "$bilet_stage/$f" "/opt/redaktor-bot/$f"
         fi

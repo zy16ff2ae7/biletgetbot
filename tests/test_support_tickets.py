@@ -102,6 +102,7 @@ class SupportFlowTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        self.stack.enter_context(patch.object(bot, "STATE_DIR", root))
         self.store = self.module.SupportStore(root / "support.sqlite3")
         self.states = SubscriptionStore(root / "subscriptions.sqlite3")
         self.send = Mock(return_value=True)

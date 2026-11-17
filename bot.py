@@ -38,6 +38,7 @@ import ticket_meta
 import seat_tools
 import eraser_tools
 import cryptobot
+from support_tickets import SupportDesk, SupportStore
 from progress import Progress, PDF_STEPS, BATCH_STEPS, COLLECT_STEPS
 from delivery_cache import DeliveryCache, key_for
 from url_delivery import Publisher
@@ -1798,7 +1799,38 @@ def show_status(chat, user_id):
 
 def support_markup():
     return {"inline_keyboard": [[
-        {"text": "💬 Поддержка", "url": "https://t.me/FreeDemin"}]]}
+        {"text": "💬 Поддержка", "callback_data": "support:menu"}]]}
+
+
+def _send_support(chat, text, markup=None, attachment=None):
+    if attachment:
+        field = "photo" if attachment["kind"] == "photo" else "document"
+        return tg("sendPhoto" if field == "photo" else "sendDocument",
+                  chat_id=chat, **{field: attachment["file_id"]}, caption=text[:1000],
+                  reply_markup=markup)
+    return send_text(chat, text, markup)
+
+
+def get_support_desk():
+    return SupportDesk(SupportStore(STATE_DIR / "support.sqlite3"), get_store(),
+                       _send_support, is_admin, CONFIG["admin_ids"])
+
+
+def _is_support_update(update_id, uid):
+    return (update_id is not None and (STATE_DIR / "support.sqlite3").exists()
+            and get_support_desk().store.handled_update(update_id, uid))
+
+
+def support_delivery_loop():
+    while True:
+        try:
+            if (STATE_DIR / "support.sqlite3").exists():
+                get_support_desk().flush_notifications()
+        except Exception:
+            log.exception("support notification delivery failed")
+        finally:
+            close_http_session()
+        time.sleep(5)
 
 
 def get_main_markup(user_id=None, username=None):
@@ -2134,6 +2166,7 @@ def admin_stats_text():
 
 def admin_panel_markup():
     return {"inline_keyboard": [
+        [{"text": "🎫 Обращения в поддержку", "callback_data": "support:queue"}],
         [{"text": "📊 Статистика", "callback_data": "adm:stats"},
          {"text": "💳 Последние оплаты", "callback_data": "adm:payments"}],
         [{"text": "🎟 Промокоды", "callback_data": "adm:promos"},
@@ -3884,7 +3917,7 @@ def handle_callback_query(cb):
         "quick", "unpack", "merge", "preview", "compare", "price", "fio", "seat", "choose_sec",
         "pushkin", "avito", "set", "toggleprice", "split", "welcome", "adm",
         "bcfg", "bedit", "bset", "btog", "bprev", "bmass", "bzip", "bmerge", "bunpack", "bsend",
-        "tpl", "btpl", "ref", "hist", "history", "sub", "cbpay", "qpr", "qfio", "qseat", "bwiz", "qwfio"
+        "tpl", "btpl", "ref", "hist", "history", "sub", "cbpay", "qpr", "qfio", "qseat", "bwiz", "qwfio", "support"
     )):
         return
 
@@ -3895,6 +3928,11 @@ def handle_callback_query(cb):
     msg_id = msg.get("message_id")
     if not chat or not uid:
         return
+
+    if data.startswith("support:"):
+        if (msg.get("chat") or {}).get("type", "private") != "private":
+            return send_text(chat, "Обращения доступны в личном чате с ботом.")
+        return get_support_desk().callback(data, uid, chat, sender.get("username"))
 
     if data.startswith("welcome:"):
         action = data.split(":", 1)[1]
@@ -5671,6 +5709,12 @@ def handle(msg, update_id=None, queued=False):
         refunded = msg["refunded_payment"]
         get_store().refund(uid, refunded["telegram_payment_charge_id"])
         return send_text(chat, "Возврат оплаты учтён. Статус доступа: /subscription.")
+    support_state = get_store().get_user_state(uid)
+    if (command in {"/support", "/tickets", "/support_queue"}
+            or (isinstance(support_state, str) and support_state.startswith("support:"))
+            or _is_support_update(update_id, uid)):
+        if get_support_desk().handle_message(msg, update_id):
+            return
     if command == "/start":
         parts = text.split(maxsplit=1)
         if len(parts) > 1 and parts[1].startswith("ref_"):
@@ -6532,7 +6576,7 @@ def dispatch_update(update):
     else:
         minimal = {"chat": {"id": chat["id"], "type": chat.get("type", "private")},
                    "from": {"id": sender["id"], "username": sender.get("username")}}
-        for key in ("text", "document", "media_group_id"):
+        for key in ("text", "document", "media_group_id", "caption", "photo"):
             if key in msg:
                 minimal[key] = msg[key]
         store.enqueue(ident, {"kind": "message", "message": minimal})
@@ -6559,6 +6603,7 @@ def loop():
         workers = 2
     for _ in range(workers):
         threading.Thread(target=worker_loop, daemon=True).start()
+    threading.Thread(target=support_delivery_loop, daemon=True, name="support-delivery").start()
     set_my_commands()
     set_my_profile_info()
     start_cryptobot_poller()
