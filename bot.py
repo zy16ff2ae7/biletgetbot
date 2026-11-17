@@ -2265,6 +2265,10 @@ def set_my_commands():
             {"command": "id", "description": "Мой Telegram ID"},
             {"command": "paysupport", "description": "Оплата через админа (@FreeDemin)"},
         ]
+    commands.extend([
+        {"command": "support", "description": "Создать обращение в поддержку"},
+        {"command": "tickets", "description": "Мои обращения и ответы поддержки"},
+    ])
     try:
         tg("setMyCommands", commands=commands)
         log.info("command menu published")
@@ -3933,6 +3937,10 @@ def handle_callback_query(cb):
         if (msg.get("chat") or {}).get("type", "private") != "private":
             return send_text(chat, "Обращения доступны в личном чате с ботом.")
         return get_support_desk().callback(data, uid, chat, sender.get("username"))
+
+    current_state = get_store().get_user_state(uid)
+    if isinstance(current_state, str) and current_state.startswith("support:"):
+        get_store().set_user_state(uid, None)
 
     if data.startswith("welcome:"):
         action = data.split(":", 1)[1]

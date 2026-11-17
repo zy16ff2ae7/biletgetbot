@@ -236,7 +236,7 @@ class SupportDesk:
 
     @staticmethod
     def _number(value, minimum=1):
-        if not value.isdigit() or len(value) > 10 or int(value) < minimum:
+        if not value.isascii() or not value.isdecimal() or len(value) > 10 or int(value) < minimum:
             raise ValueError("Некорректный номер обращения.")
         return int(value)
 
@@ -269,6 +269,9 @@ class SupportDesk:
         if ticket["status"] != "closed":
             rows.append([self._button("✍️ Ответить", f"reply:{ident}"),
                          self._button("✅ Закрыть обращение", f"close:{ident}")])
+            if self.states.get_user_state(uid) == f"support:reply:{ident}":
+                text += "\n\nСледующие сообщения и файлы добавятся сюда. Для обработки билетов нажмите «Вернуться к билетам»."
+        rows.append([self._button("🎟 Вернуться к билетам", "exit")])
         rows.append([self._button("⬅️ Поддержка", "menu")])
         return self.send(chat, text, {"inline_keyboard": rows})
 
@@ -279,6 +282,10 @@ class SupportDesk:
         parts = data.split(":")
         action = parts[1] if len(parts) > 1 else "menu"
         try:
+            if action == "exit":
+                self.states.set_user_state(uid, None)
+                return self.send(chat, "Вы вышли из переписки с поддержкой. Можно отправлять PDF на обработку.",
+                                 {"inline_keyboard": [[{"text": "🏠 Главное меню", "callback_data": "welcome:menu"}]]})
             if action in {"menu", "cancel"}:
                 self.states.set_user_state(uid, None)
                 return self.menu(uid, chat, username)
@@ -295,7 +302,7 @@ class SupportDesk:
                 self.states.set_user_state(uid, None)
                 offset = min(self._number(parts[2], 0), 10000) if len(parts) > 2 else 0
                 tickets = self.store.list_tickets(None if action == "queue" else uid, offset)
-                rows = [[self._button(f"#{t['id']} · {self.STATUS[t['status']]} · {t['subject'][:35]}",
+                rows = [[self._button(f"#{t['id']} · {self.STATUS[t['status']]} · {' '.join(t['subject'].split())[:35]}",
                                       f"view:{t['id']}")] for t in tickets]
                 if offset:
                     rows.append([self._button("← Назад", f"{action}:{max(0, offset-10)}")])
@@ -356,12 +363,18 @@ class SupportDesk:
 
     def handle_message(self, msg, update_id=None):
         uid, chat = msg["from"]["id"], msg["chat"]["id"]
+        if chat != uid or msg["chat"].get("type", "private") != "private":
+            self.send(chat, "Обращения доступны в личном чате с ботом.")
+            return True
         username = msg["from"].get("username")
         text = (msg.get("text") or "").strip()
         command = text.split()[0].split("@")[0].lower() if text else ""
         staff = self.is_staff(uid, username)
         old = self.store.processed_ticket(update_id, uid)
         if old:
+            if self.states.get_user_state(uid) in {"support:new", f"support:reply:{old}"}:
+                ticket = self.store.ticket(old, uid, staff)
+                self.states.set_user_state(uid, f"support:reply:{old}" if ticket and ticket["status"] != "closed" else None)
             self.view(old, uid, chat, staff)
             return True
         if command in {"/support", "/tickets", "/support_queue"}:
@@ -388,7 +401,7 @@ class SupportDesk:
             else:
                 ident = self._number(state.split(":")[2])
                 self.store.add_message(ident, uid, body, update_id, self.staff_ids, staff, attachment)
-            self.states.set_user_state(uid, None)
+            self.states.set_user_state(uid, f"support:reply:{ident}")
             self.view(ident, uid, chat, staff)
         except (ValueError, IndexError) as error:
             self.send(chat, str(error) if isinstance(error, ValueError) else "Откройте обращение заново.")

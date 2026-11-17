@@ -256,10 +256,20 @@ class SubscriptionStore:
                 try:
                     payload = json.loads(row["payload"])
                     kind = payload.get("kind")
+                    callback = payload.get("callback") or {}
+                    if (kind == "callback_query" and str(callback.get("data", "")).startswith("support:")
+                            and callback.get("from", {}).get("id") == user_id
+                            and callback.get("message", {}).get("chat", {}).get("id") == chat_id):
+                        break
                     msg = payload.get("message", {}) if kind in {"message", "document"} else None
                     if msg:
                         target_chat = msg.get("chat", {}).get("id")
                         target_uid = msg.get("from", {}).get("id")
+                        text = (msg.get("text") or "").strip()
+                        command = text.split()[0].split("@")[0].lower() if text else ""
+                        if (target_chat == chat_id and target_uid == user_id
+                                and command in {"/support", "/tickets", "/support_queue"}):
+                            break
                         if target_chat == chat_id and target_uid == user_id and msg.get("document"):
                             doc = msg["document"]
                             name = (doc.get("file_name") or "ticket.pdf").lower()
