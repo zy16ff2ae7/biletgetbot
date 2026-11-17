@@ -249,3 +249,62 @@ class SupportFlowTests(unittest.TestCase):
         self.send.reset_mock()
         self.desk.flush_notifications()
         self.send.assert_not_called()
+
+    def test_attachment_opens_only_for_owner_or_staff(self):
+        self.cb("support:new")
+        self.desk.handle_message(self.msg(photo=[{"file_id": "screen"}]), 10)
+        message = self.store.messages(1, 501)[0]
+        self.cb(f"support:file:{message['id']}")
+        self.assertEqual({"kind": "photo", "file_id": "screen"}, self.send.call_args.kwargs["attachment"])
+        self.send.reset_mock()
+        self.cb(f"support:file:{message['id']}", 502)
+        self.assertTrue(all("attachment" not in call.kwargs for call in self.send.call_args_list))
+
+    def test_queue_pagination_history_and_message_view(self):
+        for uid in range(501, 512):
+            self.store.create(uid, uid, "Нужна помощь", uid, [900])
+        self.cb("support:queue", 900)
+        buttons = [b for row in self.send.call_args.args[2]["inline_keyboard"] for b in row]
+        self.assertTrue(any(b["callback_data"] == "support:queue:10" for b in buttons))
+        self.cb("support:queue:10", 900)
+        for ident in range(20, 26):
+            self.store.add_message(1, 501, "Дополнение", ident, [900])
+        self.cb("support:view:1")
+        self.cb("support:history:1:0")
+        mid = self.store.messages(1, 501)[0]["id"]
+        self.cb(f"support:message:{mid}")
+        self.assertIn("Нужна помощь", self.send.call_args.args[1])
+
+    def test_support_remains_available_with_exhausted_free_quota(self):
+        self.states.daily_consume(501, count=self.states.DAILY_LIMIT)
+        self.stack.enter_context(patch.object(bot, "get_store", return_value=self.states))
+        self.stack.enter_context(patch.object(bot, "get_support_desk", return_value=self.desk))
+        bot.handle(self.msg(text="/support"), update_id=10)
+        self.cb("support:new")
+        bot.handle(self.msg(text="Нужна помощь с ошибкой"), update_id=11)
+        self.assertEqual(1, len(self.store.list_tickets(501)))
+        self.assertEqual(0, self.states.daily_left(501))
+
+    def test_failed_notification_send_remains_pending(self):
+        self.create()
+        self.send.side_effect = RuntimeError("offline")
+        with self.assertRaises(RuntimeError):
+            self.desk.flush_notifications()
+        self.assertEqual(1, len(self.store.claim_notifications(now=10**10)))
+
+    def test_view_activates_the_selected_conversation(self):
+        first = self.create()
+        second = self.store.create(502, 502, "Другой вопрос", 11, [900])
+        self.cb(f"support:reply:{first['id']}", 900)
+        self.cb(f"support:view:{second['id']}", 900)
+        self.assertEqual(f"support:reply:{second['id']}", self.states.get_user_state(900))
+
+    def test_message_view_cannot_leave_staff_reply_on_another_ticket(self):
+        first = self.create()
+        second = self.store.create(502, 502, "Другой вопрос", 11, [900])
+        mid = self.store.messages(second["id"], 502)[0]["id"]
+        self.cb(f"support:reply:{first['id']}", 900)
+        self.cb(f"support:message:{mid}", 900)
+        self.desk.handle_message(self.msg(900, "Ответ на второй вопрос"), 12)
+        self.assertEqual("open", self.store.ticket(first["id"], 501)["status"])
+        self.assertEqual("answered", self.store.ticket(second["id"], 502)["status"])
