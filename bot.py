@@ -6355,7 +6355,7 @@ def handle(msg, update_id=None, queued=False):
             if has_field:
                 return _reissue_ticket_with_quick(chat, uid, recent_token, text)
     if msg.get("document"):
-        if not has_access(uid):
+        if not has_access(uid) and get_store().daily_left(uid) <= 0:
             return no_access_message(uid)
         collection = get_store().open_collection(uid, chat)
         ident = collection["id"] if collection else None
