@@ -1796,6 +1796,11 @@ def show_status(chat, user_id):
     return send_text(chat, text, markup=kb)
 
 
+def support_markup():
+    return {"inline_keyboard": [[
+        {"text": "💬 Поддержка", "url": "https://t.me/FreeDemin"}]]}
+
+
 def get_main_markup(user_id=None, username=None):
     if is_free_all():
         rows = [
@@ -1814,6 +1819,7 @@ def get_main_markup(user_id=None, username=None):
              {"text": "👤 Профиль", "callback_data": "welcome:profile"}],
             [{"text": "📖 Как пользоваться", "callback_data": "welcome:help"}],
         ]
+    rows.extend(support_markup()["inline_keyboard"])
     if user_id and is_admin(user_id, username):
         rows.append([{"text": "👑 Панель владельца", "callback_data": "welcome:admin"}])
     return {"inline_keyboard": rows}
@@ -2693,7 +2699,7 @@ def _batch_callbacks(progress, spectator_fio=None, hide_price=False, custom_pric
 
 def _progress_error(progress, chat, explanation):
     progress.finish("Файл не отправлен. Причина — в сообщении ниже.", failed=True)
-    return send_text(chat, explanation)
+    return send_text(chat, explanation, markup=support_markup())
 
 
 def _init_batch_session(uid, chat, result):
@@ -3634,13 +3640,15 @@ def no_access_message(uid):
             f"🎁 Сегодня осталось {left} из {FREE_DAILY} бесплатных билетов — просто пришли PDF.\n"
             "Без лимита — с абонементом.",
             {"inline_keyboard": [[
-                {"text": "✍️ Без лимита", "callback_data": "welcome:subscribe"}]]})
+                {"text": "✍️ Без лимита", "callback_data": "welcome:subscribe"}],
+                *support_markup()["inline_keyboard"]]})
     return send_text(uid,
         f"🎟 Бесплатные {FREE_DAILY} {tickets_word(FREE_DAILY)} на сегодня уже перепечатаны.\n"
         "Лимит обновится завтра утром. А без лимита — прямо сейчас:",
         {"inline_keyboard": [[
             {"text": "✍️ Оформить абонемент", "callback_data": "welcome:subscribe"},
-            {"text": "🎟 Промокод", "callback_data": "welcome:promo"}]]})
+            {"text": "🎟 Промокод", "callback_data": "welcome:promo"}],
+            *support_markup()["inline_keyboard"]]})
 
 
 def process_incoming_document(msg, job_id=None):
