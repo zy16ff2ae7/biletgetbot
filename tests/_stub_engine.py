@@ -33,7 +33,7 @@ def sanitize_doc_bytes(data):
     return data, []
 
 
-def autoclean_doc(doc):
+def autoclean_doc(doc, clear_name=True):
     copied = fitz.open(stream=doc.tobytes(), filetype="pdf")
     return copied, [{"removed": [], "warn": []} for _ in doc]
 

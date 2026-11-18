@@ -885,6 +885,8 @@ def format_single_ticket_caption(meta: dict[str, Any] | None, info: dict[str, An
 
     if isinstance(info, dict) and info.get("spectator_fio"):
         lines.append(f"👤 Зритель: {info['spectator_fio']}")
+    elif isinstance(info, dict) and info.get("keep_fio"):
+        lines.append("👤 ФИО зрителя: сохранено из билета 📌")
 
     lines.append("")
     if isinstance(info, dict) and info.get("seat_info"):

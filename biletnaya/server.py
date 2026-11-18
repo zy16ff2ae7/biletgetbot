@@ -1318,6 +1318,7 @@ def strip_pushkin_doc(doc, clear_name=True):
         barcode_rects = [r for rects in uses.values() for r in rects
                          if _is_barcode_rect(r)]
 
+        kept_text_rects = []
         for i, l in enumerate(lines):
             if i in personal or i == payment:
                 continue
@@ -1328,6 +1329,8 @@ def strip_pushkin_doc(doc, clear_name=True):
                     or (is_afisha and AFISHA_NOISE_RE.search(t))):
                 page.add_redact_annot(r, fill=False)
                 removed.append(t[:48])
+            elif t:
+                kept_text_rects.append(r)
 
         for d in (() if preserve_art else page.get_drawings()):
             rd = d.get("rect") and fitz.Rect(d["rect"])
@@ -1337,6 +1340,8 @@ def strip_pushkin_doc(doc, clear_name=True):
             if not rd.intersects(zone) or abs(rd) >= 0.05 * page_area:
                 continue
             if _grid_key(rd) in wm_set:
+                continue
+            if not clear_name and any(rd.intersects(kr) for kr in kept_text_rects):
                 continue
             if any(rd.intersects(b) for b in barcode_rects):
                 if not (is_afisha and any(rd.intersects(l["bbox"]) for l in pk_hits)):
@@ -3774,14 +3779,14 @@ def _reflow_reminder(page, src, pno, promo_qr):
     return True
 
 
-def autoclean_doc(doc):
+def autoclean_doc(doc, clear_name=True):
     out = fitz.open()
     out.insert_pdf(doc)                       # копия: исходный PDF в памяти не трогаем
     report = []
     # «Пушкинская карта» (текст, QR/штрихкод блока, серый водяной знак) + пустое
-    # имя зрителя — всегда, как на целевом билете Afisha/МХТ.
+    # имя зрителя (при clear_name=True) — как на целевом билете Afisha/МХТ.
     try:
-        report.extend(strip_pushkin_doc(out, clear_name=True))
+        report.extend(strip_pushkin_doc(out, clear_name=clear_name))
     except Exception as e:
         report.append({"page": 0, "warn": [f"не удалось снять Пушкинскую карту: {e}"]})
     for pno in range(len(out)):

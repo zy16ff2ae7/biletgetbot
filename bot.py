@@ -161,12 +161,12 @@ def _user_settings(uid):
     try:
         return get_store().get_user_settings(uid)
     except Exception:
-        return {"fio": None, "state": None, "hide_price": 0, "batch_mode": "zip", "auto_preview": 0}
+        return {"fio": None, "state": None, "hide_price": 0, "batch_mode": "zip", "auto_preview": 0, "custom_price": None, "keep_fio": 0}
 
 
-def _save_doc_token(token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None, del_texts=None, strip_pushkin=None, uid=None, meta=None):
+def _save_doc_token(token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None, del_texts=None, strip_pushkin=None, uid=None, meta=None, keep_fio=None):
     try:
-        get_store().save_doc_token(token, file_id, custom_price=custom_price, hide_price=hide_price, fio=fio, seat_info=seat_info, del_texts=del_texts, strip_pushkin=strip_pushkin)
+        get_store().save_doc_token(token, file_id, custom_price=custom_price, hide_price=hide_price, fio=fio, seat_info=seat_info, del_texts=del_texts, strip_pushkin=strip_pushkin, keep_fio=keep_fio)
         if uid is not None:
             get_store().set_user_last_doc_token(uid, token)
             if meta and isinstance(meta, dict):
@@ -288,7 +288,7 @@ def _normalized(text):
     return " ".join(text.split())
 
 
-def _cleanup_targets(doc):
+def _cleanup_targets(doc, clear_name=True):
     """Recognized program/name lines that must disappear, grouped by page."""
     targets = []
     for page in doc:
@@ -308,37 +308,40 @@ def _cleanup_targets(doc):
             )
         )
         family = not is_ticketland and (payment is not None or (buyer is not None) or (srv._is_kassa24_family(lines) and not muza and not yandex))
-        personal = srv._ticketland_name_rows(page, lines)
-        if srv._is_intickets_template(page, lines):
-            personal = srv._intickets_name_rows(page, lines)
-        elif hasattr(srv, "_is_operann_template") and srv._is_operann_template(page, lines):
-            personal = srv._operann_name_rows(page, lines)
-        elif muza_names or muza_header is not None:
-            personal = set(muza_names)
-            if muza_header is not None:
-                personal.add(muza_header)
-        elif yandex_names or yandex_header is not None:
-            personal = set(yandex_names)
-            if yandex_header is not None:
-                personal.add(yandex_header)
-        elif is_ticketland:
-            personal = srv._ticketland_name_rows(page, lines)
-        elif buyer is not None:
-            personal = {buyer}
-        elif payment is not None:
-            personal = {buyer} if buyer is not None else set()
-        elif family:
-            personal |= srv._kassir_name_rows(lines)
-            personal |= {i for i, line in enumerate(lines)
-                         if srv._personal_line_what(line)}
-            if ages:
-                personal |= {i for i, line in enumerate(lines)
-                             if srv.EMAIL_RE.search(line["text"])
-                             and "support@" not in line["text"].lower()
-                             and "info@" not in line["text"].lower()
-                             and fitz.Rect(line["bbox"]).y0 > 0.80 * page.rect.height}
-        if not personal:
+        if not clear_name:
             personal = set()
+        else:
+            personal = srv._ticketland_name_rows(page, lines)
+            if srv._is_intickets_template(page, lines):
+                personal = srv._intickets_name_rows(page, lines)
+            elif hasattr(srv, "_is_operann_template") and srv._is_operann_template(page, lines):
+                personal = srv._operann_name_rows(page, lines)
+            elif muza_names or muza_header is not None:
+                personal = set(muza_names)
+                if muza_header is not None:
+                    personal.add(muza_header)
+            elif yandex_names or yandex_header is not None:
+                personal = set(yandex_names)
+                if yandex_header is not None:
+                    personal.add(yandex_header)
+            elif is_ticketland:
+                personal = srv._ticketland_name_rows(page, lines)
+            elif buyer is not None:
+                personal = {buyer}
+            elif payment is not None:
+                personal = {buyer} if buyer is not None else set()
+            elif family:
+                personal |= srv._kassir_name_rows(lines)
+                personal |= {i for i, line in enumerate(lines)
+                             if srv._personal_line_what(line)}
+                if ages:
+                    personal |= {i for i, line in enumerate(lines)
+                                 if srv.EMAIL_RE.search(line["text"])
+                                 and "support@" not in line["text"].lower()
+                                 and "info@" not in line["text"].lower()
+                                 and fitz.Rect(line["bbox"]).y0 > 0.80 * page.rect.height}
+            if not personal:
+                personal = set()
         targets.append({_normalized(line["text"]) for i, line in enumerate(lines)
                         if i in personal
                         or (is_ticketland and ages and (
@@ -715,7 +718,7 @@ def _draw_runs(page, runs, origin, size, color):
     writer.write_text(page, color=color)
 
 
-def clean_ticket_with_report(data, on_progress=None, spectator_fio=None, hide_price=False, custom_price=None, seat_info=None, del_texts=None, strip_pushkin=False):
+def clean_ticket_with_report(data, on_progress=None, spectator_fio=None, hide_price=False, custom_price=None, seat_info=None, del_texts=None, strip_pushkin=False, keep_fio=False):
     """Return (ok, PDF bytes or explanation, cleanup metadata)."""
     try:
         return _clean_ticket_with_report_impl(
@@ -727,12 +730,13 @@ def clean_ticket_with_report(data, on_progress=None, spectator_fio=None, hide_pr
             seat_info=seat_info,
             del_texts=del_texts,
             strip_pushkin=strip_pushkin,
+            keep_fio=keep_fio,
         )
     finally:
         trim_memory()
 
 
-def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, hide_price=False, custom_price=None, seat_info=None, del_texts=None, strip_pushkin=False):
+def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, hide_price=False, custom_price=None, seat_info=None, del_texts=None, strip_pushkin=False, keep_fio=False):
     """Return (ok, PDF bytes or explanation, cleanup metadata)."""
     info = {"changed": False, "removed": 0}
     started = time.monotonic()
@@ -755,9 +759,10 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
             on_progress("clean")
         sanitized, ghosts = srv.sanitize_doc_bytes(data)
         with fitz.open(stream=sanitized, filetype="pdf") as source:
-            personal_targets = _cleanup_targets(source)
-            name_slots = _find_name_slots(source)
             fio_val = spectator_fio.strip() if spectator_fio and spectator_fio.strip() else None
+            eff_clear_name = bool(fio_val) or not bool(keep_fio)
+            personal_targets = _cleanup_targets(source, clear_name=eff_clear_name)
+            name_slots = _find_name_slots(source)
             if fio_val:
                 # Старое ФИО обязано исчезнуть из выходного файла: на mos.ru-шаблоне
                 # движок его не удаляет (в _cleanup_targets он не распознаётся),
@@ -768,7 +773,13 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                             personal_targets[pno].add(_normalized(slot["text"]))
                         if slot.get("visitor_text"):
                             personal_targets[pno].add(_normalized(slot["visitor_text"]))
-            cleaned, report = srv.autoclean_doc(source)
+            if eff_clear_name:
+                cleaned, report = srv.autoclean_doc(source)
+            else:
+                try:
+                    cleaned, report = srv.autoclean_doc(source, clear_name=False)
+                except TypeError:
+                    cleaned, report = srv.autoclean_doc(source)
             validation_targets = [set(t) for t in personal_targets]
             if fio_val:
                 for pno, slot in enumerate(name_slots):
@@ -1002,11 +1013,18 @@ def _clean_ticket_with_report_impl(data, on_progress=None, spectator_fio=None, h
                                 pno, diff, rem_expected, remaining)
                     return False, ("Не удалось полностью удалить распознанные данные. "
                                    "Файл не отправлен."), info
+                if not eff_clear_name and not del_applied and pno < len(name_slots) and name_slots[pno]:
+                    slot_txt = (name_slots[pno].get("text") or "").strip()
+                    if slot_txt and not name_slots[pno].get("is_label_only"):
+                        if _normalized(slot_txt) not in remaining:
+                            raise validation.ValidationError("Не сохранилось исходное ФИО зрителя.")
             count = sum(len(item.get("removed", [])) for item in report)
             info["changed"] = bool(ghosts or count or fio_applied or hide_price or (price_val is not None) or seat_applied or del_applied or pushkin_applied)
             info["removed"] = count
             if fio_applied:
                 info["spectator_fio"] = fio_val
+            elif not eff_clear_name:
+                info["keep_fio"] = True
             if hide_price:
                 info["hide_price"] = True
             elif price_val is not None:
@@ -2361,6 +2379,7 @@ BUILTIN_PRESETS = {
         "hide_price": 1,
         "auto_preview": 1,
         "fio": None,
+        "keep_fio": 0,
         "custom_price": None,
         "batch_mode": "zip",
         "desc": "Скрыть цену, авто-превью вкл, пачки в ZIP",
@@ -2370,15 +2389,27 @@ BUILTIN_PRESETS = {
         "hide_price": 0,
         "auto_preview": 0,
         "fio": None,
+        "keep_fio": 0,
         "custom_price": None,
         "batch_mode": "zip",
-        "desc": "Цена исходная, превью выкл, пачки в ZIP",
+        "desc": "Убрать Пушкинскую карту и ФИО, цена исходная, пачки в ZIP",
+    },
+    "keep_fio": {
+        "name": "📌 Оставить родное ФИО",
+        "hide_price": 0,
+        "auto_preview": 0,
+        "fio": None,
+        "keep_fio": 1,
+        "custom_price": None,
+        "batch_mode": "zip",
+        "desc": "Убрать только Пушкинскую карту, оставить родное ФИО и почту",
     },
     "print": {
         "name": "📑 Для печати",
         "hide_price": 0,
         "auto_preview": 1,
         "fio": None,
+        "keep_fio": 0,
         "custom_price": None,
         "batch_mode": "merge",
         "desc": "Цена исходная, авто-превью вкл, пачки склеены в PDF",
@@ -2388,6 +2419,7 @@ BUILTIN_PRESETS = {
         "hide_price": 0,
         "auto_preview": 0,
         "fio": None,
+        "keep_fio": 0,
         "custom_price": 2500,
         "batch_mode": "zip",
         "desc": "Цена 2500 ₽, превью выкл, пачки в ZIP",
@@ -2405,8 +2437,15 @@ def _apply_preset_to_user(uid, preset):
         store.update_user_setting(uid, "auto_preview", int(bool(preset["auto_preview"])))
     if "custom_price" in preset:
         store.update_user_setting(uid, "custom_price", preset["custom_price"])
-    if "fio" in preset and preset["fio"] is not None:
-        store.update_user_setting(uid, "fio", preset["fio"])
+    if "keep_fio" in preset and preset["keep_fio"]:
+        store.set_user_keep_fio(uid, True)
+    else:
+        if "keep_fio" in preset:
+            store.set_user_keep_fio(uid, False)
+        if "fio" in preset and preset["fio"] is not None:
+            store.update_user_setting(uid, "fio", preset["fio"])
+        elif "fio" in preset and preset["fio"] is None and "keep_fio" in preset:
+            store.update_user_setting(uid, "fio", None)
 
 
 def _apply_preset_to_batch(batch_token, preset):
@@ -2423,8 +2462,14 @@ def _apply_preset_to_batch(batch_token, preset):
             kwargs["custom_price"] = preset["custom_price"]
         elif "custom_price" in preset and preset["custom_price"] is None and not preset.get("hide_price"):
             kwargs["custom_price"] = "сброс"
-        if "fio" in preset and preset["fio"]:
+        if preset.get("keep_fio"):
+            kwargs["keep_fio"] = True
+        elif "fio" in preset and preset["fio"]:
             kwargs["fio"] = preset["fio"]
+        elif "keep_fio" in preset:
+            kwargs["keep_fio"] = False
+            if preset.get("fio") is None:
+                kwargs["fio"] = "сброс"
         ok, _ = _reprocess_batch_item(batch_token, idx, **kwargs)
         if ok:
             count += 1
@@ -2458,6 +2503,8 @@ def build_templates_card(uid, target_batch_token=None):
                 details.append(f"{p['custom_price']} ₽")
             if p.get("fio"):
                 details.append(f"ФИО: {p['fio']}")
+            elif p.get("keep_fio"):
+                details.append("родное ФИО")
             if p.get("batch_mode"):
                 details.append(f"пачки: {p['batch_mode']}")
             if p.get("auto_preview"):
@@ -2472,15 +2519,19 @@ def build_templates_card(uid, target_batch_token=None):
     kb = []
     # Built-in buttons
     builtins_row1 = [
-        {"text": BUILTIN_PRESETS["gift"]["name"], "callback_data": f"{prefix}builtin_gift"},
         {"text": BUILTIN_PRESETS["std"]["name"], "callback_data": f"{prefix}builtin_std"},
+        {"text": BUILTIN_PRESETS["keep_fio"]["name"], "callback_data": f"{prefix}builtin_keep_fio"},
     ]
     builtins_row2 = [
+        {"text": BUILTIN_PRESETS["gift"]["name"], "callback_data": f"{prefix}builtin_gift"},
         {"text": BUILTIN_PRESETS["print"]["name"], "callback_data": f"{prefix}builtin_print"},
+    ]
+    builtins_row3 = [
         {"text": BUILTIN_PRESETS["price2500"]["name"], "callback_data": f"{prefix}builtin_price2500"},
     ]
     kb.append(builtins_row1)
     kb.append(builtins_row2)
+    kb.append(builtins_row3)
 
     # Custom preset buttons (up to 2 per row)
     if custom_presets:
@@ -2513,7 +2564,17 @@ def build_templates_card(uid, target_batch_token=None):
 
 def build_settings_card(uid):
     settings = _user_settings(uid)
-    fio = settings.get("fio") or "не установлено (очищается)"
+    raw_fio = settings.get("fio")
+    keep_fio = bool(settings.get("keep_fio", 0)) and not raw_fio
+    if raw_fio:
+        fio = raw_fio
+        keep_fio_btn = "📌 Оставлять родное ФИО (сбросить своё)"
+    elif keep_fio:
+        fio = "📌 исходное из билета (не очищается)"
+        keep_fio_btn = "👤 ФИО: 📌 Родное остаётся ➔ 🧹 Очищать"
+    else:
+        fio = "не установлено (очищается)"
+        keep_fio_btn = "👤 ФИО: 🧹 Очищается ➔ 📌 Оставлять родное"
     hide_price = bool(settings.get("hide_price", 0))
     custom_price = settings.get("custom_price")
     custom_price_display = f"{custom_price} ₽" if custom_price is not None else "исходная"
@@ -2545,6 +2606,7 @@ def build_settings_card(uid):
 
     reply_markup = {
         "inline_keyboard": [
+            [{"text": keep_fio_btn, "callback_data": "set:keep_fio"}],
             [{"text": "👤 Изменить ФИО", "callback_data": "set:fio"}, {"text": "✏️ Изменить цену", "callback_data": "set:custom_price"}],
             [{"text": price_btn, "callback_data": "set:price"}],
             [{"text": batch_btn, "callback_data": "set:batch"}],
@@ -2572,7 +2634,7 @@ def _sector_keyboard(token):
     }
 
 
-def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None):
+def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None, keep_fio=False):
     quick_btn = {"text": "⚡️ Быстрая правка (всё в 1 строке)", "callback_data": f"quick:{token}"}
     seat_btn = {"text": "🪑 Изменить место/ряд", "callback_data": f"seat:{token}"}
     fio_btn = {"text": "👤 Изменить ФИО", "callback_data": f"fio:{token}"}
@@ -2581,6 +2643,10 @@ def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None):
         price_toggle_btn = {"text": "💰 Показать цену", "callback_data": f"toggleprice:{token}:0"}
     else:
         price_toggle_btn = {"text": "🎁 Скрыть цену", "callback_data": f"toggleprice:{token}:1"}
+    if keep_fio:
+        fio_toggle_btn = {"text": "🧹 Стереть ФИО", "callback_data": f"togglefio:{token}:0"}
+    else:
+        fio_toggle_btn = {"text": "📌 Оставить родное ФИО", "callback_data": f"togglefio:{token}:1"}
     preview_btn = {"text": "🖼 Фото: До и После", "callback_data": f"compare:{token}"}
     pushkin_btn = {
         "text": "🧹 Снять отметку программы" if is_neutral() else "🧹 Снять чары Черномора",
@@ -2592,7 +2658,7 @@ def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None):
         [seat_btn],
         [fio_btn, price_edit_btn],
         [price_toggle_btn, preview_btn],
-        [pushkin_btn],
+        [fio_toggle_btn, pushkin_btn],
     ]
     if pages > 1:
         rows.append([{"text": f"✂️ Нарезать на отдельные билеты ({pages} шт.)", "callback_data": f"split:{token}"}])
@@ -2635,7 +2701,7 @@ def _price_picker_markup(token, cur_price=None, hide_price=False):
     return {"inline_keyboard": rows}
 
 
-def _fio_picker_markup(token, user_id, cur_fio=None):
+def _fio_picker_markup(token, user_id, cur_fio=None, keep_fio=False):
     rows = []
     recent_fios = get_store().get_user_recent_fios(user_id, limit=3)
     for idx, rfio in enumerate(recent_fios):
@@ -2643,9 +2709,11 @@ def _fio_picker_markup(token, user_id, cur_fio=None):
         prefix = "✅ " if (cur_fio and cur_fio.strip().lower() == rfio.lower()) else "👤 "
         rows.append([{"text": f"{prefix}{display_name}", "callback_data": f"qfio:{token}:rec:{idx}"}])
 
+    empty_lbl = "✅ Без ФИО (стёрто)" if (not cur_fio and not keep_fio) else "🧹 Стереть ФИО"
+    keep_lbl = "✅ Родное из билета" if (not cur_fio and keep_fio) else "📌 Оставить родное ФИО"
     rows.append([
-        {"text": "❌ Оставить пустым (стереть)", "callback_data": f"qfio:{token}:empty"},
-        {"text": "🔄 Исходное из билета", "callback_data": f"qfio:{token}:reset"},
+        {"text": empty_lbl, "callback_data": f"qfio:{token}:empty"},
+        {"text": keep_lbl, "callback_data": f"qfio:{token}:keep"},
     ])
     rows.append([
         {"text": "✍️ Ввести ФИО вручную", "callback_data": f"qfio:{token}:manual"},
@@ -2711,7 +2779,7 @@ def _seat_picker_markup(token, cur_seat=None, meta=None):
 
 
 
-def _batch_callbacks(progress, spectator_fio=None, hide_price=False, custom_price=None):
+def _batch_callbacks(progress, spectator_fio=None, hide_price=False, custom_price=None, keep_fio=False):
     current = {"index": 0, "total": 0}
 
     def notify(stage, index, total, good, failed):
@@ -2726,7 +2794,10 @@ def _batch_callbacks(progress, spectator_fio=None, hide_price=False, custom_pric
         def phase(stage):
             label = "убираю лишнее" if stage == "clean" else "проверяю коды и данные"
             progress.update(1, f"Билет {current['index']} из {current['total']} · {label}.")
-        ok, res, info = clean_ticket_with_report(data, on_progress=phase, spectator_fio=spectator_fio, hide_price=hide_price, custom_price=custom_price)
+        ok, res, info = clean_ticket_with_report(
+            data, on_progress=phase, spectator_fio=spectator_fio,
+            hide_price=hide_price, custom_price=custom_price, keep_fio=keep_fio
+        )
         if not ok:
             log.warning("batch item %s failed: %s", current.get("index"), res)
         return ok, res, info
@@ -2769,6 +2840,7 @@ def _init_batch_session(uid, chat, result):
 
     u_settings = _user_settings(uid) if uid else {}
     fio = u_settings.get("fio")
+    keep_fio = bool(u_settings.get("keep_fio", 0)) and not fio
     custom_price = u_settings.get("custom_price")
     hide_price = bool(u_settings.get("hide_price", 0))
 
@@ -2782,7 +2854,7 @@ def _init_batch_session(uid, chat, result):
         clean_path.write_bytes(clean_data)
 
         item_doc_token = secrets.token_hex(8)
-        _save_doc_token(item_doc_token, str(orig_path), custom_price=custom_price, hide_price=hide_price, fio=fio, uid=uid)
+        _save_doc_token(item_doc_token, str(orig_path), custom_price=custom_price, hide_price=hide_price, fio=fio, keep_fio=keep_fio, uid=uid)
 
         items_list.append({
             "idx": idx,
@@ -2793,6 +2865,7 @@ def _init_batch_session(uid, chat, result):
             "doc_token": item_doc_token,
             "meta": item.get("meta") or {},
             "fio": fio,
+            "keep_fio": keep_fio,
             "seat_info": None,
             "custom_price": custom_price,
             "hide_price": hide_price,
@@ -2826,7 +2899,7 @@ def _build_batch_dashboard(batch_token, page=0):
         row = meta.get("row")
         seats = meta.get("seats") or []
         seat_str = f"Ряд {row}, Место {seats[0]}" if row and seats else (f"Ряд {row}" if row else (f"Место {seats[0]}" if seats else "места не указаны"))
-        fio_str = it.get("fio") or "Без ФИО"
+        fio_str = it.get("fio") or ("📌 Родное ФИО" if it.get("keep_fio") else "Без ФИО")
         if it.get("hide_price"):
             price_str = "Цена скрыта"
         elif it.get("custom_price") is not None:
@@ -2860,6 +2933,13 @@ def _build_batch_dashboard(batch_token, page=0):
             nav.append({"text": "Вперёд ➡️", "callback_data": f"bcfg:{batch_token}:{page+1}"})
         kb.append(nav)
 
+    all_keep = bool(items) and all(it.get("keep_fio") and not it.get("fio") for it in items)
+    fio_mode_btn = (
+        {"text": "🧹 Стереть ФИО на всех", "callback_data": f"bmass:clearfio:{batch_token}"}
+        if all_keep else
+        {"text": "📌 Оставить родное ФИО всем", "callback_data": f"bmass:keepfio:{batch_token}"}
+    )
+    kb.append([fio_mode_btn])
     kb.append([
         {"text": "👥 Список ФИО", "callback_data": f"bmass:fio:{batch_token}"},
         {"text": "⏩ По очереди (Мастер)", "callback_data": f"bwiz:fio:{batch_token}:0"},
@@ -2906,7 +2986,7 @@ def _build_batch_item_card(batch_token, idx):
     if sector:
         seat_str = f"{sector}, {seat_str}"
 
-    fio = item.get("fio") or "не указано (очищено)"
+    fio = item.get("fio") or ("📌 исходное из билета (не очищается)" if item.get("keep_fio") else "не указано (очищено)")
     if item.get("hide_price"):
         price_display = "🎁 Скрыта (подарочный режим)"
     elif item.get("custom_price") is not None:
@@ -2927,6 +3007,7 @@ def _build_batch_item_card(batch_token, idx):
     )
 
     price_toggle_label = "💰 Показать цену" if item.get("hide_price") else "🎁 Скрыть цену"
+    fio_toggle_label = "🧹 Стереть ФИО" if (item.get("keep_fio") and not item.get("fio")) else "📌 Оставить родное ФИО"
 
     kb = {
         "inline_keyboard": [
@@ -2935,6 +3016,9 @@ def _build_batch_item_card(batch_token, idx):
             ],
             [
                 {"text": "👤 Изменить ФИО", "callback_data": f"bset:fio:{batch_token}:{idx}"},
+                {"text": fio_toggle_label, "callback_data": f"btog:fio:{batch_token}:{idx}"},
+            ],
+            [
                 {"text": "🪑 Изменить место/ряд", "callback_data": f"bset:seat:{batch_token}:{idx}"},
             ],
             [
@@ -2953,7 +3037,7 @@ def _build_batch_item_card(batch_token, idx):
     return text, kb
 
 
-def _reprocess_batch_item(batch_token, idx, fio=None, seat_info=None, custom_price=None, hide_price=None, del_texts=None):
+def _reprocess_batch_item(batch_token, idx, fio=None, seat_info=None, custom_price=None, hide_price=None, del_texts=None, keep_fio=None):
     session = get_store().get_batch_session(batch_token)
     if not session or idx >= len(session.get("items", [])):
         return False, "Сессия не найдена"
@@ -2965,8 +3049,22 @@ def _reprocess_batch_item(batch_token, idx, fio=None, seat_info=None, custom_pri
         return False, "Исходный файл билета недоступен"
     orig_bytes = orig_p.read_bytes()
 
+    if keep_fio is not None:
+        item["keep_fio"] = bool(keep_fio)
+        if keep_fio:
+            item["fio"] = None
     if fio is not None:
-        item["fio"] = None if fio in {"сброс", "reset", "clear"} else fio.strip()
+        low_fio = fio.strip().lower()
+        if low_fio in {"родное", "оставить", "оставить фио", "родное фио", "исходное", "не стирать", "keep", "original"}:
+            item["fio"] = None
+            item["keep_fio"] = True
+        elif low_fio in {"сброс", "reset", "clear", "стереть", "пусто", "очистить"}:
+            item["fio"] = None
+            if keep_fio is None:
+                item["keep_fio"] = False
+        else:
+            item["fio"] = fio.strip()
+            item["keep_fio"] = False
     if seat_info is not None:
         item["seat_info"] = None if seat_info in {"сброс", "reset", "clear"} else seat_info.strip()
     if custom_price is not None:
@@ -2983,6 +3081,7 @@ def _reprocess_batch_item(batch_token, idx, fio=None, seat_info=None, custom_pri
         custom_price=item.get("custom_price"),
         seat_info=item.get("seat_info"),
         del_texts=item.get("del_texts"),
+        keep_fio=bool(item.get("keep_fio", False)),
     )
     if not ok:
         return False, result
@@ -3084,7 +3183,7 @@ def _apply_mass_combo_to_batch(batch_token, raw_text):
 
     if len(lines) == 1 and lines[0].lower() in {"сброс", "reset", "clear"}:
         for i in range(total):
-            _reprocess_batch_item(batch_token, i, fio="сброс", seat_info="сброс", custom_price="сброс", hide_price=False)
+            _reprocess_batch_item(batch_token, i, fio="сброс", seat_info="сброс", custom_price="сброс", hide_price=False, keep_fio=False)
         return total, ["Исходные данные восстановлены на всех билетах."]
 
     reports = []
@@ -3105,12 +3204,16 @@ def _apply_mass_combo_to_batch(batch_token, raw_text):
             q = seat_tools.parse_quick_edit(line)
             kwargs = {}
             if q["reset_all"]:
-                kwargs = {"fio": "сброс", "seat_info": "сброс", "custom_price": "сброс", "hide_price": False}
+                kwargs = {"fio": "сброс", "seat_info": "сброс", "custom_price": "сброс", "hide_price": False, "keep_fio": False}
             else:
-                if q["reset_fio"]:
+                if q.get("keep_fio") is True:
+                    kwargs["keep_fio"] = True
+                elif q.get("keep_fio") is False or q["reset_fio"]:
                     kwargs["fio"] = "сброс"
+                    kwargs["keep_fio"] = False
                 elif q["fio"] is not None:
                     kwargs["fio"] = q["fio"]
+                    kwargs["keep_fio"] = False
 
                 if q["reset_price"]:
                     kwargs["custom_price"] = "сброс"
@@ -3133,6 +3236,8 @@ def _apply_mass_combo_to_batch(batch_token, raw_text):
                     parts = []
                     if res_item.get("fio"):
                         parts.append(res_item["fio"])
+                    elif res_item.get("keep_fio"):
+                        parts.append("родное ФИО")
                     if res_item.get("seat_info"):
                         parts.append(res_item["seat_info"])
                     elif res_item.get("meta") and (res_item["meta"].get("row") or res_item["meta"].get("seats")):
@@ -3151,6 +3256,7 @@ def _apply_mass_combo_to_batch(batch_token, raw_text):
         single_line = lines[0]
         q = seat_tools.parse_quick_edit(single_line)
         if (not q["reset_all"] and not q["reset_fio"] and not q["reset_price"] and not q["reset_seat"]
+                and q.get("keep_fio") is None
                 and q["fio"] is None and q["custom_price"] is None and q["hide_price"] is None and q["seat_info"] is None):
             return 0, ["Не удалось распознать параметры в строке."]
 
@@ -3163,12 +3269,16 @@ def _apply_mass_combo_to_batch(batch_token, raw_text):
         for idx in range(total):
             kwargs = {}
             if q["reset_all"]:
-                kwargs = {"fio": "сброс", "seat_info": "сброс", "custom_price": "сброс", "hide_price": False}
+                kwargs = {"fio": "сброс", "seat_info": "сброс", "custom_price": "сброс", "hide_price": False, "keep_fio": False}
             else:
-                if q["reset_fio"]:
+                if q.get("keep_fio") is True:
+                    kwargs["keep_fio"] = True
+                elif q.get("keep_fio") is False or q["reset_fio"]:
                     kwargs["fio"] = "сброс"
+                    kwargs["keep_fio"] = False
                 elif q["fio"] is not None:
                     kwargs["fio"] = q["fio"]
+                    kwargs["keep_fio"] = False
 
                 if q["reset_price"]:
                     kwargs["custom_price"] = "сброс"
@@ -3209,7 +3319,11 @@ def _apply_mass_combo_to_batch(batch_token, raw_text):
             summary_parts.append("цена скрыта")
         elif q["custom_price"] is not None:
             summary_parts.append(f"цена {q['custom_price']} ₽")
-        if q["fio"]:
+        if q.get("keep_fio") is True:
+            summary_parts.append("ФИО: сохранено из билета 📌")
+        elif q.get("keep_fio") is False or q["reset_fio"]:
+            summary_parts.append("ФИО: очищено")
+        elif q["fio"]:
             summary_parts.append(f"ФИО: {q['fio']}")
         reports.append(" · ".join(summary_parts) or "параметры обновлены")
 
@@ -3365,10 +3479,12 @@ def _unpack_batch_to_chat(chat, uid, batch_token):
             "changed": True,
             "hide_price": it.get("hide_price", False),
             "spectator_fio": it.get("fio"),
+            "keep_fio": bool(it.get("keep_fio", False)) and not it.get("fio"),
             "custom_price": it.get("custom_price"),
         })
 
         token = secrets.token_hex(8)
+        item_keep_fio = bool(it.get("keep_fio", False)) and not it.get("fio")
         _save_doc_token(
             token,
             str(orig_p),
@@ -3378,8 +3494,9 @@ def _unpack_batch_to_chat(chat, uid, batch_token):
             seat_info=it.get("seat_info"),
             del_texts=it.get("del_texts"),
             uid=uid,
+            keep_fio=item_keep_fio,
         )
-        markup = _single_ticket_markup(token, hide_price=it.get("hide_price", False), pages=1)
+        markup = _single_ticket_markup(token, hide_price=it.get("hide_price", False), pages=1, keep_fio=item_keep_fio)
         sent = send_cleaned(chat, clean_bytes, out_name, caption, reply_markup=markup)
         if sent:
             sent_count += 1
@@ -3402,7 +3519,7 @@ def _build_batch_fio_wizard(batch_token, idx, uid):
     row = meta.get("row")
     seats = meta.get("seats") or []
     seat_str = f"Ряд {row}, Место {seats[0]}" if row and seats else (f"Ряд {row}" if row else (f"Место {seats[0]}" if seats else "места не указаны"))
-    cur_fio = item.get("fio") or "Без зрителя (очищено)"
+    cur_fio = item.get("fio") or ("📌 Родное из билета" if item.get("keep_fio") else "Без зрителя (очищено)")
 
     text = (
         f"👤 **Настройка ФИО: Билет №{idx+1} из {total}**\n\n"
@@ -3420,7 +3537,10 @@ def _build_batch_fio_wizard(batch_token, idx, uid):
         rows.append([{"text": f"{prefix}{display_name}", "callback_data": f"qwfio:{batch_token}:{idx}:rec:{r_idx}"}])
 
     rows.append([
-        {"text": "❌ Оставить пустым (стереть)", "callback_data": f"qwfio:{batch_token}:{idx}:empty"},
+        {"text": "🧹 Стереть ФИО", "callback_data": f"qwfio:{batch_token}:{idx}:empty"},
+        {"text": "📌 Родное ФИО", "callback_data": f"qwfio:{batch_token}:{idx}:keep"},
+    ])
+    rows.append([
         {"text": "➡️ Пропустить (как есть)", "callback_data": f"qwfio:{batch_token}:{idx}:skip"},
     ])
 
@@ -3445,6 +3565,12 @@ def _deliver_updated_batch_result(chat, uid, batch_token, summary_text=None):
 
     u_settings = _user_settings(uid)
     batch_mode = u_settings.get("batch_mode", "zip")
+    all_keep = bool(items) and all(it.get("keep_fio") and not it.get("fio") for it in items)
+    fio_mode_btn = (
+        {"text": "🧹 Стереть ФИО на всех", "callback_data": f"bmass:clearfio:{batch_token}"}
+        if all_keep else
+        {"text": "📌 Оставить родное ФИО всем", "callback_data": f"bmass:keepfio:{batch_token}"}
+    )
 
     prefer_merge = (batch_mode == "merge") or (count > 1 and any("orig_0.pdf" in it.get("orig_path", "") for it in items[:1]))
     if prefer_merge:
@@ -3454,6 +3580,7 @@ def _deliver_updated_batch_result(chat, uid, batch_token, summary_text=None):
                 m_caption = f"{summary_text}\n\n{m_caption}"
             reply_markup = {
                 "inline_keyboard": [
+                    [fio_mode_btn],
                     [{"text": "👥 Задать разные ФИО на все билеты", "callback_data": f"bmass:fio:{batch_token}"}],
                     [{"text": "⚙️ Настроить билеты пачки", "callback_data": f"bcfg:{batch_token}"}],
                     [
@@ -3481,6 +3608,7 @@ def _deliver_updated_batch_result(chat, uid, batch_token, summary_text=None):
         cap = f"{summary_text}\n\n📦 Обновлённый архив ({count} {tickets_word(count)})." if summary_text else f"📦 Обновлённый архив ({count} {tickets_word(count)})."
         reply_markup = {
             "inline_keyboard": [
+                [fio_mode_btn],
                 [{"text": "👥 Задать разные ФИО на все билеты", "callback_data": f"bmass:fio:{batch_token}"}],
                 [{"text": "⚙️ Настроить билеты пачки", "callback_data": f"bcfg:{batch_token}"}],
                 [
@@ -3516,6 +3644,7 @@ def _send_batch_result(chat, result, progress, retry_message, uid=None):
     settings = _user_settings(uid) if uid else {}
     batch_mode = settings.get("batch_mode") or "zip"
     auto_preview = bool(settings.get("auto_preview", 0))
+    init_keep_fio = bool(settings.get("keep_fio", 0)) and not settings.get("fio")
 
     batch_token = None
     if result.get("ok", 0) > 0:
@@ -3523,8 +3652,14 @@ def _send_batch_result(chat, result, progress, retry_message, uid=None):
 
     reply_markup = None
     if batch_token:
+        fio_mode_btn = (
+            {"text": "🧹 Стереть ФИО на всех", "callback_data": f"bmass:clearfio:{batch_token}"}
+            if init_keep_fio else
+            {"text": "📌 Оставить родное ФИО всем", "callback_data": f"bmass:keepfio:{batch_token}"}
+        )
         reply_markup = {
             "inline_keyboard": [
+                [fio_mode_btn],
                 [{"text": "👥 Задать разные ФИО на все билеты", "callback_data": f"bmass:fio:{batch_token}"}],
                 [{"text": "⚙️ Настроить билеты (ФИО / места)", "callback_data": f"bcfg:{batch_token}"}],
                 [
@@ -3610,8 +3745,10 @@ def _finish_collection(chat, user_id, ident):
         try:
             u_settings = _user_settings(user_id)
             spectator_fio = u_settings.get("fio")
+            keep_fio = bool(u_settings.get("keep_fio", 0)) and not spectator_fio
             hide_price = bool(u_settings.get("hide_price", 0))
-            cleaner, notify = _batch_callbacks(progress, spectator_fio=spectator_fio, hide_price=hide_price)
+            custom_price = u_settings.get("custom_price")
+            cleaner, notify = _batch_callbacks(progress, spectator_fio=spectator_fio, hide_price=hide_price, custom_price=custom_price, keep_fio=keep_fio)
             result = batches.process_items(items, cleaner, on_progress=notify, srv=srv)
             if _send_batch_result(chat, result, progress, "Не удалось отправить ZIP. Повторите /done.", uid=user_id):
                 get_store().collection_state(ident, "done")
@@ -3648,9 +3785,10 @@ def _process_auto_zip_batch(chat, uid, docs):
         try:
             u_settings = _user_settings(uid)
             spectator_fio = u_settings.get("fio")
+            keep_fio = bool(u_settings.get("keep_fio", 0)) and not spectator_fio
             hide_price = bool(u_settings.get("hide_price", 0))
             custom_price = u_settings.get("custom_price")
-            cleaner, notify = _batch_callbacks(progress, spectator_fio=spectator_fio, hide_price=hide_price, custom_price=custom_price)
+            cleaner, notify = _batch_callbacks(progress, spectator_fio=spectator_fio, hide_price=hide_price, custom_price=custom_price, keep_fio=keep_fio)
             result = batches.process_items(items, cleaner, on_progress=notify, srv=srv)
             if result.get("failed", 0) > 0:
                 try:
@@ -3755,13 +3893,17 @@ def process_document(msg, collection_id=None, job_id=None):
     steps = COLLECT_STEPS if collection_id else BATCH_STEPS if name.lower().endswith(".zip") else PDF_STEPS
     u_settings = _user_settings(uid)
     user_fio = u_settings.get("fio")
+    keep_fio = bool(u_settings.get("keep_fio", 0)) and not user_fio
     hide_price = bool(u_settings.get("hide_price", 0))
     custom_price = u_settings.get("custom_price")
     auto_preview = bool(u_settings.get("auto_preview", 0))
-    cache_suffix = f":{user_fio or ''}:hp{1 if hide_price else 0}:cp{custom_price or ''}" if (user_fio or hide_price or custom_price is not None) else ""
+    cache_suffix = (
+        f":{user_fio or ''}:hp{1 if hide_price else 0}:cp{custom_price or ''}:kf{1 if keep_fio else 0}"
+        if (user_fio or hide_price or custom_price is not None or keep_fio) else ""
+    )
     token = secrets.token_hex(8)
-    _save_doc_token(token, document["file_id"], custom_price=custom_price, hide_price=hide_price, fio=user_fio, uid=uid)
-    markup = _single_ticket_markup(token, hide_price=hide_price, pages=1)
+    _save_doc_token(token, document["file_id"], custom_price=custom_price, hide_price=hide_price, fio=user_fio, uid=uid, keep_fio=keep_fio)
+    markup = _single_ticket_markup(token, hide_price=hide_price, pages=1, keep_fio=keep_fio)
     with Progress(chat, name, progress_request, steps, cleanup=close_http_session) as progress:
         cache_keys = []
         if not collection_id and name.lower().endswith(".pdf"):
@@ -3802,7 +3944,7 @@ def process_document(msg, collection_id=None, job_id=None):
                 # пакеты билетов, не расходуя дневной лимит.
                 return _progress_error(progress, chat, FREE_BATCH_TEXT)
             try:
-                cleaner, notify = _batch_callbacks(progress, spectator_fio=user_fio, hide_price=hide_price, custom_price=custom_price)
+                cleaner, notify = _batch_callbacks(progress, spectator_fio=user_fio, hide_price=hide_price, custom_price=custom_price, keep_fio=keep_fio)
                 result = batches.process_zip(data, cleaner, on_progress=notify, srv=srv)
                 _send_batch_result(chat, result, progress, "Не удалось отправить архив. Отправьте исходный ZIP ещё раз.", uid=uid)
             except batches.BatchError as error:
@@ -3818,11 +3960,17 @@ def process_document(msg, collection_id=None, job_id=None):
 
         def phase(stage):
             if stage == "clean":
-                progress.update(1, "Очищаем служебные строки ✍️" if is_neutral() else "Стираем чужие ФИО и чары Черномора ✍️")
+                if keep_fio:
+                    progress.update(1, "Очищаем отметки программы, сохраняем ФИО ✍️" if is_neutral() else "Снимаем чары Черномора, сохраняем родное ФИО ✍️")
+                else:
+                    progress.update(1, "Очищаем служебные строки ✍️" if is_neutral() else "Стираем чужие ФИО и чары Черномора ✍️")
             else:
                 progress.update(2, "Сверяем QR-коды, дату, сектор, ряд и цену 🔍")
 
-        ok, result, info = clean_ticket_with_report(data, on_progress=phase, spectator_fio=user_fio, hide_price=hide_price, custom_price=custom_price)
+        ok, result, info = clean_ticket_with_report(
+            data, on_progress=phase, spectator_fio=user_fio,
+            hide_price=hide_price, custom_price=custom_price, keep_fio=keep_fio
+        )
         if not ok:
             notify_admins_ticket_error(uid, (msg.get("from") or {}).get("username"), result, name)
             return _progress_error(progress, chat, result)
@@ -3830,7 +3978,7 @@ def process_document(msg, collection_id=None, job_id=None):
         out_name = ticket_meta.make_clean_ticket_filename(meta, fallback=batches.safe_name(name), hide_price=hide_price)
         caption = ticket_meta.format_single_ticket_caption(meta, info)
         progress.update(3, "Печать завершена. Чистый билет летит в чат 🎟")
-        reuse_id = document["file_id"] if (not info["changed"] and not user_fio and not hide_price and custom_price is None) else None
+        reuse_id = document["file_id"] if (not info["changed"] and not user_fio and not hide_price and custom_price is None and not keep_fio) else None
         pages_cnt = 1
         batch_token = None
         try:
@@ -3857,7 +4005,7 @@ def process_document(msg, collection_id=None, job_id=None):
                         orig_path.write_bytes(p_orig_bytes)
                         clean_path.write_bytes(p_clean_bytes)
                         item_doc_token = secrets.token_hex(8)
-                        _save_doc_token(item_doc_token, str(orig_path), custom_price=custom_price, hide_price=hide_price, fio=page_fio, uid=uid)
+                        _save_doc_token(item_doc_token, str(orig_path), custom_price=custom_price, hide_price=hide_price, fio=page_fio, uid=uid, keep_fio=(keep_fio and not page_fio))
                         session_items.append({
                             "idx": idx,
                             "orig_name": p_name,
@@ -3867,6 +4015,7 @@ def process_document(msg, collection_id=None, job_id=None):
                             "doc_token": item_doc_token,
                             "meta": p_clean_meta,
                             "fio": page_fio,
+                            "keep_fio": bool(keep_fio and not page_fio),
                             "seat_info": None,
                             "custom_price": custom_price,
                             "hide_price": hide_price,
@@ -3876,7 +4025,7 @@ def process_document(msg, collection_id=None, job_id=None):
                     batch_token = b_token
             except Exception as e:
                 log.warning("multi-page batch init error: %s", e)
-        markup = _single_ticket_markup(token, hide_price=hide_price, pages=pages_cnt, batch_token=batch_token)
+        markup = _single_ticket_markup(token, hide_price=hide_price, pages=pages_cnt, batch_token=batch_token, keep_fio=keep_fio)
         sent = send_cleaned(chat, result, out_name, caption, cache_keys=cache_keys, reuse_id=reuse_id, reply_markup=markup)
         if sent is None and reuse_id:
             sent = send_cleaned(chat, result, out_name, caption, cache_keys=cache_keys, reply_markup=markup)
@@ -3919,7 +4068,7 @@ def handle_callback_query(cb):
     data = cb.get("data") or ""
     if not any(data == x or data.startswith(f"{x}:") for x in (
         "quick", "unpack", "merge", "preview", "compare", "price", "fio", "seat", "choose_sec",
-        "pushkin", "avito", "set", "toggleprice", "split", "welcome", "adm",
+        "pushkin", "avito", "set", "toggleprice", "togglefio", "split", "welcome", "adm",
         "bcfg", "bedit", "bset", "btog", "bprev", "bmass", "bzip", "bmerge", "bunpack", "bsend",
         "tpl", "btpl", "ref", "hist", "history", "sub", "cbpay", "qpr", "qfio", "qseat", "bwiz", "qwfio", "support"
     )):
@@ -4137,7 +4286,47 @@ def handle_callback_query(cb):
         action = data.split(":", 1)[1]
         if action == "fio":
             get_store().set_user_state(uid, "waiting_fio_settings")
-            return send_text(chat, "👤 Введите ФИО зрителя для билетов (например, Иванов Иван Иванович) или отправьте сброс для очистки:\n(для отмены напишите: отмена)")
+            fio_set_kb = {
+                "inline_keyboard": [
+                    [{"text": "🧹 Очищать ФИО (убирать Пушку и ФИО)", "callback_data": "set:fio_clear"}],
+                    [{"text": "📌 Оставлять родное ФИО (убирать только Пушку)", "callback_data": "set:fio_keep"}],
+                    [{"text": "🔙 Назад в настройки", "callback_data": "set:fio_cancel"}],
+                ]
+            }
+            return send_text(
+                chat,
+                "👤 **Настройка ФИО зрителя для билетов**\n\n"
+                "Выберите готовый режим кнопкой ниже или отправьте в чат своё ФИО "
+                "(например, `Иванов Иван Иванович`):\n"
+                "• **Очищать ФИО** — снимает Пушкинскую карту и стирает чужое ФИО.\n"
+                "• **Оставлять родное ФИО** — снимает только Пушкинскую карту, родное ФИО и почта остаются.\n"
+                "(для отмены напишите: отмена)",
+                markup=fio_set_kb,
+            )
+        if action == "fio_cancel":
+            get_store().set_user_state(uid, None)
+            text_card, markup = build_settings_card(uid)
+            return edit_or_send(chat, msg_id, text_card, markup=markup)
+        if action == "fio_clear":
+            get_store().set_user_state(uid, None)
+            get_store().set_user_fio(uid, None)
+            get_store().set_user_keep_fio(uid, False)
+            text_card, markup = build_settings_card(uid)
+            return edit_or_send(chat, msg_id, text_card, markup=markup)
+        if action == "fio_keep":
+            get_store().set_user_state(uid, None)
+            get_store().set_user_keep_fio(uid, True)
+            text_card, markup = build_settings_card(uid)
+            return edit_or_send(chat, msg_id, text_card, markup=markup)
+        if action == "keep_fio":
+            cur_set = _user_settings(uid)
+            if cur_set.get("keep_fio") and not cur_set.get("fio"):
+                get_store().set_user_keep_fio(uid, False)
+            else:
+                get_store().set_user_keep_fio(uid, True)
+            get_store().set_user_state(uid, None)
+            text_card, markup = build_settings_card(uid)
+            return edit_or_send(chat, msg_id, text_card, markup=markup)
         if action == "custom_price":
             get_store().set_user_state(uid, "waiting_price_settings")
             return send_text(chat, "💰 Введите цену билета по умолчанию в рублях (например, 2500) или отправьте сброс для очистки:\n(для отмены напишите: отмена)")
@@ -4154,6 +4343,7 @@ def handle_callback_query(cb):
             get_store().update_user_setting(uid, "batch_mode", modes[idx])
         elif action == "reset":
             get_store().update_user_setting(uid, "fio", None)
+            get_store().update_user_setting(uid, "keep_fio", 0)
             get_store().update_user_setting(uid, "custom_price", None)
             get_store().update_user_setting(uid, "hide_price", 0)
             get_store().update_user_setting(uid, "batch_mode", "zip")
@@ -4172,26 +4362,37 @@ def handle_callback_query(cb):
         token = parts[1]
         hide_flag = (parts[2] == "1") if len(parts) > 2 else True
         doc_info = get_store().get_doc_token_info(token)
+        u_settings = _user_settings(uid)
         if doc_info:
             target_file_id = doc_info["file_id"]
             custom_price = doc_info["custom_price"]
             cur_fio = doc_info["fio"] if doc_info["fio"] is not None else get_store().get_user_fio(uid)
+            keep_fio = doc_info["keep_fio"] if doc_info.get("keep_fio") is not None else (bool(u_settings.get("keep_fio", 0)) and not cur_fio)
             seat_info = doc_info.get("seat_info")
+            tok_del = doc_info.get("del_texts")
+            tok_pushkin = doc_info.get("strip_pushkin")
         else:
             target_file_id = get_store().get_doc_by_token(token) or token
             custom_price = get_store().get_user_custom_price(uid)
             cur_fio = get_store().get_user_fio(uid)
+            keep_fio = bool(u_settings.get("keep_fio", 0)) and not cur_fio
             seat_info = None
+            tok_del = None
+            tok_pushkin = False
         if not target_file_id:
             return send_text(chat, "Не удалось определить файл билета.")
         data_bytes = download_file(target_file_id)
         if not data_bytes:
             return send_text(chat, "Не удалось скачать файл билета.")
-        ok, result, info = clean_ticket_with_report(data_bytes, spectator_fio=cur_fio, hide_price=hide_flag, custom_price=custom_price, seat_info=seat_info)
+        ok, result, info = clean_ticket_with_report(
+            data_bytes, spectator_fio=cur_fio, hide_price=hide_flag,
+            custom_price=custom_price, seat_info=seat_info, del_texts=tok_del,
+            strip_pushkin=tok_pushkin, keep_fio=keep_fio
+        )
         if not ok:
             return send_text(chat, f"Не удалось обновить билет: {result}")
         meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
-        out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_flag)
+        out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_flag, fio=cur_fio)
         caption = ticket_meta.format_single_ticket_caption(meta, info)
         pages_cnt = 1
         try:
@@ -4200,14 +4401,20 @@ def handle_callback_query(cb):
         except Exception:
             pass
         new_token = secrets.token_hex(8)
-        _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_flag, fio=cur_fio, seat_info=seat_info, uid=uid)
-        markup = _single_ticket_markup(new_token, hide_price=hide_flag, pages=pages_cnt)
+        _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_flag, fio=cur_fio, seat_info=seat_info, del_texts=tok_del, strip_pushkin=tok_pushkin, uid=uid, keep_fio=keep_fio)
+        markup = _single_ticket_markup(new_token, hide_price=hide_flag, pages=pages_cnt, keep_fio=keep_fio)
         sent = send_cleaned(chat, result, out_name, caption, reply_markup=markup)
         if not sent:
             return send_text(chat, "Не удалось отправить обновлённый билет.")
         if msg_id:
             tg("editMessageReplyMarkup", chat_id=chat, message_id=msg_id, reply_markup={"inline_keyboard": []})
         return
+
+    if data.startswith("togglefio:"):
+        parts = data.split(":")
+        token = parts[1] if len(parts) > 1 else ""
+        keep_flag = (parts[2] == "1") if len(parts) > 2 else True
+        return apply_ticket_fio(chat, uid, token, spectator_fio=None, keep_fio=keep_flag)
 
     if data.startswith("qpr:"):
         parts = data.split(":")
@@ -4259,14 +4466,16 @@ def handle_callback_query(cb):
                     "(для отмены нажмите кнопку ниже)"
                 )
                 return edit_or_send(chat, msg_id, prompt, markup=edit_kb)
-            if act == "empty" or act == "reset":
-                return apply_ticket_fio(chat, uid, token, spectator_fio=None, prompt_msg_id=msg_id)
+            if act == "empty":
+                return apply_ticket_fio(chat, uid, token, spectator_fio=None, keep_fio=False, prompt_msg_id=msg_id)
+            if act in {"reset", "keep"}:
+                return apply_ticket_fio(chat, uid, token, spectator_fio=None, keep_fio=True, prompt_msg_id=msg_id)
             if act == "rec" and len(parts) >= 4 and parts[3].isdigit():
                 idx = int(parts[3])
                 recent_fios = get_store().get_user_recent_fios(uid, limit=5)
                 if 0 <= idx < len(recent_fios):
                     chosen_fio = recent_fios[idx]
-                    return apply_ticket_fio(chat, uid, token, spectator_fio=chosen_fio, prompt_msg_id=msg_id)
+                    return apply_ticket_fio(chat, uid, token, spectator_fio=chosen_fio, keep_fio=False, prompt_msg_id=msg_id)
         return
 
     if data.startswith("qseat:"):
@@ -4382,7 +4591,24 @@ def handle_callback_query(cb):
                     return
 
             if act == "empty":
-                _reprocess_batch_item(batch_token, idx, fio="clear")
+                _reprocess_batch_item(batch_token, idx, fio="clear", keep_fio=False)
+                next_idx = idx + 1
+                if next_idx < total:
+                    text, kb = _build_batch_fio_wizard(batch_token, next_idx, uid)
+                    get_store().set_user_state(uid, f"waiting_batch_wizard_fio:{batch_token}:{next_idx}:{msg_id}")
+                    return edit_or_send(chat, msg_id, text, markup=kb)
+                else:
+                    get_store().set_user_state(uid, None)
+                    edit_or_send(chat, msg_id, "⏳ Настройка завершена! Выпускаю обновлённый файл...")
+                    _deliver_updated_batch_result(chat, uid, batch_token, summary_text=f"✅ Все {total} {tickets_word(total)} обновлены!")
+                    try:
+                        tg("deleteMessage", chat_id=chat, message_id=msg_id)
+                    except Exception:
+                        pass
+                    return
+
+            if act == "keep":
+                _reprocess_batch_item(batch_token, idx, keep_fio=True)
                 next_idx = idx + 1
                 if next_idx < total:
                     text, kb = _build_batch_fio_wizard(batch_token, next_idx, uid)
@@ -4403,7 +4629,7 @@ def handle_callback_query(cb):
                 recent_fios = get_store().get_user_recent_fios(uid, limit=3)
                 if 0 <= r_idx < len(recent_fios):
                     sel_fio = recent_fios[r_idx]
-                    _reprocess_batch_item(batch_token, idx, fio=sel_fio)
+                    _reprocess_batch_item(batch_token, idx, fio=sel_fio, keep_fio=False)
                 next_idx = idx + 1
                 if next_idx < total:
                     text, kb = _build_batch_fio_wizard(batch_token, next_idx, uid)
@@ -4432,6 +4658,7 @@ def handle_callback_query(cb):
         doc_info = get_store().get_doc_token_info(token) or {}
         settings = _user_settings(uid)
         cur_fio = doc_info.get("fio") if doc_info.get("fio") is not None else settings.get("fio")
+        keep_fio = doc_info.get("keep_fio") if doc_info.get("keep_fio") is not None else (bool(settings.get("keep_fio", 0)) and not cur_fio)
         hide_price = doc_info.get("hide_price") if doc_info.get("hide_price") is not None else bool(settings.get("hide_price", 0))
         custom_price = doc_info.get("custom_price") if doc_info.get("custom_price") is not None else settings.get("custom_price")
         seat_info = doc_info.get("seat_info")
@@ -4454,6 +4681,7 @@ def handle_callback_query(cb):
             orig_path.write_bytes(p_orig_bytes)
 
             page_fio = fio_list[idx] if idx < len(fio_list) else (fio_list[-1] if fio_list else None)
+            page_keep_fio = bool(keep_fio and not page_fio)
 
             ok, p_clean_bytes, p_info = clean_ticket_with_report(
                 p_orig_bytes,
@@ -4462,6 +4690,7 @@ def handle_callback_query(cb):
                 custom_price=custom_price,
                 seat_info=seat_info,
                 del_texts=del_texts,
+                keep_fio=page_keep_fio,
             )
             if not ok:
                 p_clean_bytes = p_orig_bytes
@@ -4469,7 +4698,7 @@ def handle_callback_query(cb):
 
             p_clean_meta = ticket_meta.extract_ticket_metadata(p_clean_bytes, srv=srv)
             item_doc_token = secrets.token_hex(8)
-            _save_doc_token(item_doc_token, str(orig_path), custom_price=custom_price, hide_price=hide_price, fio=page_fio, seat_info=seat_info, del_texts=del_texts, uid=uid)
+            _save_doc_token(item_doc_token, str(orig_path), custom_price=custom_price, hide_price=hide_price, fio=page_fio, seat_info=seat_info, del_texts=del_texts, uid=uid, keep_fio=page_keep_fio)
             output_name = ticket_meta.make_clean_ticket_filename(p_clean_meta, fallback=p_name, hide_price=hide_price, fio=page_fio)
             session_items.append({
                 "idx": idx,
@@ -4480,6 +4709,7 @@ def handle_callback_query(cb):
                 "doc_token": item_doc_token,
                 "meta": p_clean_meta,
                 "fio": page_fio,
+                "keep_fio": page_keep_fio,
                 "seat_info": seat_info,
                 "custom_price": custom_price,
                 "hide_price": hide_price,
@@ -4541,18 +4771,19 @@ def handle_callback_query(cb):
         sent_count = 0
         u_settings = _user_settings(uid)
         hide_price = bool(u_settings.get("hide_price", 0))
+        keep_fio = bool(u_settings.get("keep_fio", 0)) and not u_settings.get("fio")
         for zip_path, file_name, pdf_data in entries:
             meta = ticket_meta.extract_ticket_metadata(pdf_data, srv=srv)
             clean_name = ticket_meta.make_clean_ticket_filename(meta, fallback=batches.safe_name(file_name), hide_price=hide_price)
-            caption = ticket_meta.format_single_ticket_caption(meta, {"changed": True, "hide_price": hide_price})
+            caption = ticket_meta.format_single_ticket_caption(meta, {"changed": True, "hide_price": hide_price, "keep_fio": keep_fio})
             token = secrets.token_hex(8)
-            get_store().save_doc_token(token, file_id)
-            markup = _single_ticket_markup(token, hide_price=hide_price, pages=1)
+            get_store().save_doc_token(token, file_id, keep_fio=keep_fio)
+            markup = _single_ticket_markup(token, hide_price=hide_price, pages=1, keep_fio=keep_fio)
             sent = send_cleaned(chat, pdf_data, clean_name, caption, reply_markup=markup)
             if sent:
                 sent_count += 1
                 if isinstance(sent, str):
-                    get_store().save_doc_token(token, sent)
+                    get_store().save_doc_token(token, sent, keep_fio=keep_fio)
             time.sleep(0.3)
 
         if msg_id:
@@ -4616,12 +4847,14 @@ def handle_callback_query(cb):
             tok_price = doc_info["custom_price"]
             tok_hide = doc_info["hide_price"]
             tok_fio = doc_info["fio"]
+            tok_keep_fio = doc_info.get("keep_fio")
             tok_seat = doc_info.get("seat_info")
         else:
             target_file_id = get_store().get_doc_by_token(token) if token else None
             tok_price = None
             tok_hide = None
             tok_fio = None
+            tok_keep_fio = None
             tok_seat = None
         if not target_file_id:
             doc = msg.get("document") or {}
@@ -4634,6 +4867,7 @@ def handle_callback_query(cb):
 
         u_settings = _user_settings(uid)
         eff_fio = tok_fio if tok_fio is not None else u_settings.get("fio")
+        eff_keep_fio = tok_keep_fio if tok_keep_fio is not None else (bool(u_settings.get("keep_fio", 0)) and not eff_fio)
         eff_hide = tok_hide if tok_hide is not None else bool(u_settings.get("hide_price", 0))
         eff_price = tok_price if tok_price is not None else u_settings.get("custom_price")
 
@@ -4662,7 +4896,7 @@ def handle_callback_query(cb):
 
         # Render AFTER preview
         ok, cleaned_bytes, _ = clean_ticket_with_report(
-            pdf_bytes, spectator_fio=eff_fio, hide_price=eff_hide, custom_price=eff_price, seat_info=tok_seat
+            pdf_bytes, spectator_fio=eff_fio, hide_price=eff_hide, custom_price=eff_price, seat_info=tok_seat, keep_fio=eff_keep_fio
         )
         after_bytes = cleaned_bytes if ok else pdf_bytes
         img_after = render_pdf_preview(after_bytes)
@@ -4716,6 +4950,7 @@ def handle_callback_query(cb):
                 f"💡 Примеры:\n"
                 f"• `Иванов И.И. 2500 ряд 3 место 12`\n"
                 f"• `Петров 3500`\n"
+                f"• `оставить фио 2500`\n"
                 f"• `3 12 скрыть цену`\n"
                 f"• `сброс` — вернуть исходные данные билета\n\n"
                 f"(для отмены напишите: отмена)"
@@ -4723,10 +4958,10 @@ def handle_callback_query(cb):
             return send_text(chat, prompt)
         elif action == "fio":
             get_store().set_user_state(uid, f"waiting_batch_item_fio:{batch_token}:{idx}")
-            cur_fio = item.get("fio") or "не установлено"
+            cur_fio = item.get("fio") or ("📌 исходное из билета" if item.get("keep_fio") else "не установлено (стёрто)")
             prompt = (
                 f"👤 Билет №{idx+1}: сейчас ФИО — {cur_fio}.\n\n"
-                f"Введите новое ФИО зрителя (например: Иванов Иван Иванович) или напишите сброс:\n"
+                f"Введите новое ФИО зрителя (например: Иванов Иван Иванович), напишите `родное` (чтобы оставить исходное ФИО) или `сброс` (чтобы стереть):\n"
                 f"(для отмены напишите: отмена)"
             )
             return send_text(chat, prompt)
@@ -4764,6 +4999,21 @@ def handle_callback_query(cb):
         text, markup = _build_batch_item_card(batch_token, idx)
         return edit_or_send(chat, msg_id, text, markup)
 
+    if data.startswith("btog:fio:"):
+        parts = data.split(":")
+        batch_token = parts[2]
+        idx = int(parts[3])
+        session = get_store().get_batch_session(batch_token)
+        if not session or idx >= len(session.get("items", [])):
+            return send_text(chat, "⚠️ Билет не найден.")
+        cur_item = session["items"][idx]
+        cur_keep = bool(cur_item.get("keep_fio", False)) and not cur_item.get("fio")
+        ok, res = _reprocess_batch_item(batch_token, idx, fio="clear" if cur_keep else None, keep_fio=(not cur_keep))
+        if not ok:
+            return send_text(chat, f"Не удалось обновить ФИО: {res}")
+        text, markup = _build_batch_item_card(batch_token, idx)
+        return edit_or_send(chat, msg_id, text, markup)
+
     if data.startswith("bprev:"):
         parts = data.split(":")
         batch_token = parts[1]
@@ -4793,6 +5043,7 @@ def handle_callback_query(cb):
         if not clean_p.exists():
             return send_text(chat, "Файл билета не найден.")
         token = secrets.token_hex(8)
+        item_keep_fio = bool(item.get("keep_fio", False)) and not item.get("fio")
         _save_doc_token(
             token,
             str(orig_p),
@@ -4802,9 +5053,10 @@ def handle_callback_query(cb):
             seat_info=item.get("seat_info"),
             del_texts=item.get("del_texts"),
             uid=uid,
+            keep_fio=item_keep_fio,
         )
-        markup = _single_ticket_markup(token, hide_price=item.get("hide_price", False), pages=1)
-        caption = ticket_meta.format_single_ticket_caption(item.get("meta") or {}, {"changed": True, "hide_price": item.get("hide_price", False)})
+        markup = _single_ticket_markup(token, hide_price=item.get("hide_price", False), pages=1, keep_fio=item_keep_fio)
+        caption = ticket_meta.format_single_ticket_caption(item.get("meta") or {}, {"changed": True, "hide_price": item.get("hide_price", False), "spectator_fio": item.get("fio"), "keep_fio": item_keep_fio})
         sent = send_cleaned(chat, clean_p.read_bytes(), item.get("output_name") or f"ticket_{idx+1}.pdf", caption, reply_markup=markup)
         if sent:
             get_store().bump_processed(uid)
@@ -4819,7 +5071,23 @@ def handle_callback_query(cb):
             return send_text(chat, "⚠️ Сессия пачки не найдена или истекла.")
         total = len(session.get("items", []))
 
-        if action == "combo":
+        if action == "keepfio":
+            send_text(chat, f"📌 Оставляю родное ФИО из билетов и убираю только Пушкинскую карту ({total} шт.)...")
+            updated = 0
+            for i in range(total):
+                ok_i, _ = _reprocess_batch_item(batch_token, i, keep_fio=True)
+                if ok_i:
+                    updated += 1
+            return _deliver_updated_batch_result(chat, uid, batch_token, summary_text=f"📌 Готово! На {updated} {tickets_word(updated)} сохранено родное ФИО, отметки программы убраны.")
+        elif action == "clearfio":
+            send_text(chat, f"🧹 Стираю ФИО на всех билетах пачки ({total} шт.)...")
+            updated = 0
+            for i in range(total):
+                ok_i, _ = _reprocess_batch_item(batch_token, i, fio="clear", keep_fio=False)
+                if ok_i:
+                    updated += 1
+            return _deliver_updated_batch_result(chat, uid, batch_token, summary_text=f"🧹 Готово! ФИО очищено на {updated} {tickets_word(updated)}.")
+        elif action == "combo":
             get_store().set_user_state(uid, f"waiting_batch_combo:{batch_token}")
             prompt = (
                 f"⚡️ **Супер-редактор пачки билетов** (всего {total} шт.):\n\n"
@@ -4832,6 +5100,7 @@ def handle_callback_query(cb):
                 f"⚡️ **Вариант 2: Одной строкой для всей пачки:**\n"
                 f"• `Ряд 5 место 10, 4500 руб` — рассадит места подряд (10, 11, 12...) и поставит цену 4500 ₽ на все {total} билетов\n"
                 f"• `3500 руб` — задаст цену 3500 ₽ всем билетам\n"
+                f"• `оставить фио` — сохранит родное ФИО на всех билетах\n"
                 f"• `скрыть цену` — скроет цены на всех билетах\n"
                 f"• `сброс` — вернёт все билеты к исходному виду\n\n"
                 f"(для отмены напишите: отмена)"
@@ -4853,6 +5122,7 @@ def handle_callback_query(cb):
             markup = {
                 "inline_keyboard": [
                     [{"text": "⏩ Заполнить по очереди в 1 клик (Мастер)", "callback_data": f"bwiz:fio:{batch_token}:0"}],
+                    [{"text": "📌 Оставить родное ФИО всем", "callback_data": f"bmass:keepfio:{batch_token}"}],
                     [{"text": "🔙 Отмена", "callback_data": f"bcfg:{batch_token}"}],
                 ]
             }
@@ -5008,14 +5278,25 @@ def handle_callback_query(cb):
             return send_text(chat, "Не удалось определить файл билета.")
         state_key = token or target_file_id
         get_store().set_user_state(uid, f"waiting_fio:{state_key}")
+        u_settings = _user_settings(uid)
         cur_fio = doc_info["fio"] if doc_info and doc_info["fio"] is not None else get_store().get_user_fio(uid)
-        fio_str = cur_fio if cur_fio else "пусто (без зрителя)"
+        cur_keep_fio = (
+            doc_info["keep_fio"]
+            if (doc_info and doc_info.get("keep_fio") is not None)
+            else (bool(u_settings.get("keep_fio", 0)) and not cur_fio)
+        )
+        if cur_fio:
+            fio_str = cur_fio
+        elif cur_keep_fio:
+            fio_str = "📌 родное из билета (сохранено)"
+        else:
+            fio_str = "пусто (стёрто)"
 
-        kb = _fio_picker_markup(state_key, uid, cur_fio=cur_fio)
+        kb = _fio_picker_markup(state_key, uid, cur_fio=cur_fio, keep_fio=cur_keep_fio)
         prompt = (
             f"👤 **Введите новое ФИО зрителя** (например: Иванов Иван Иванович)\n"
             f"Текущее ФИО: **{fio_str}**\n\n"
-            f"Или выберите из сохранённых / действий ниже:\n"
+            f"Или выберите действие в 1 клик ниже:\n"
             f"💡 Для многостраничных билетов можно указать несколько ФИО через запятую.\n"
             f"(для отмены напишите: отмена)"
         )
@@ -5092,6 +5373,7 @@ def _reissue_ticket_with_quick(chat, uid, ref, text_input):
         tok_price = doc_info["custom_price"]
         tok_hide = doc_info["hide_price"]
         tok_fio = doc_info["fio"]
+        tok_keep_fio = doc_info.get("keep_fio")
         tok_seat = doc_info.get("seat_info")
         tok_del = doc_info.get("del_texts")
         tok_pushkin = doc_info.get("strip_pushkin")
@@ -5100,12 +5382,14 @@ def _reissue_ticket_with_quick(chat, uid, ref, text_input):
         tok_price = None
         tok_hide = None
         tok_fio = None
+        tok_keep_fio = None
         tok_seat = None
         tok_del = None
         tok_pushkin = False
 
     q = seat_tools.parse_quick_edit(cleaned_cmd)
     if (not q["reset_all"] and not q["reset_fio"] and not q["reset_price"] and not q["reset_seat"]
+            and q.get("keep_fio") is None
             and q["fio"] is None and q["custom_price"] is None and q["hide_price"] is None and q["seat_info"] is None):
         return send_text(
             chat,
@@ -5113,6 +5397,7 @@ def _reissue_ticket_with_quick(chat, uid, ref, text_input):
             "Вы можете указать любые данные вместе или по отдельности:\n"
             "• `Иванов И.И. 2500 ряд 3 место 12`\n"
             "• `Петров 3500`\n"
+            "• `оставить фио` — сохранить родное ФИО из билета\n"
             "• `3 12 4000 руб`\n"
             "• `скрыть цену`\n"
             "• `сброс` — вернуть исходные данные\n\n"
@@ -5121,16 +5406,23 @@ def _reissue_ticket_with_quick(chat, uid, ref, text_input):
 
     if q["reset_all"]:
         new_fio = None
+        new_keep_fio = False
         new_price = None
         new_hide = False
         new_seat = None
     else:
-        if q["reset_fio"]:
+        if q.get("keep_fio") is True:
             new_fio = None
+            new_keep_fio = True
+        elif q["reset_fio"] or q.get("keep_fio") is False:
+            new_fio = None
+            new_keep_fio = False
         elif q["fio"] is not None:
             new_fio = q["fio"]
+            new_keep_fio = False
         else:
             new_fio = tok_fio
+            new_keep_fio = tok_keep_fio
 
         if q["reset_price"]:
             new_price = None
@@ -5164,14 +5456,18 @@ def _reissue_ticket_with_quick(chat, uid, ref, text_input):
         hide_price = new_hide if new_hide is not None else bool(u_settings.get("hide_price", 0))
         custom_price = new_price if new_price is not None else u_settings.get("custom_price")
 
-    if q["reset_all"] or q["reset_fio"]:
+    if q["reset_all"] or q["reset_fio"] or q.get("keep_fio") is not None:
         cur_fio = None
+        eff_keep_fio = bool(new_keep_fio)
     else:
         cur_fio = new_fio if new_fio is not None else get_store().get_user_fio(uid)
+        eff_keep_fio = bool(new_keep_fio) if new_keep_fio is not None else (bool(u_settings.get("keep_fio", 0)) and not cur_fio)
 
     summary_items = []
     if cur_fio:
         summary_items.append(f"👤 {cur_fio}")
+    elif eff_keep_fio:
+        summary_items.append("📌 родное ФИО")
     if new_seat:
         summary_items.append(f"🪑 {new_seat}")
     if hide_price:
@@ -5188,23 +5484,24 @@ def _reissue_ticket_with_quick(chat, uid, ref, text_input):
         custom_price=custom_price,
         seat_info=new_seat,
         del_texts=tok_del,
-        strip_pushkin=tok_pushkin
+        strip_pushkin=tok_pushkin,
+        keep_fio=eff_keep_fio,
     )
     if not ok:
         return send_text(chat, f"Не удалось обновить билет: {result}")
 
     meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
-    out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price)
+    out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price, fio=cur_fio)
     caption = ticket_meta.format_single_ticket_caption(meta, info)
     new_token = secrets.token_hex(8)
-    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=new_seat, del_texts=tok_del, strip_pushkin=tok_pushkin, uid=uid)
+    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=new_seat, del_texts=tok_del, strip_pushkin=tok_pushkin, uid=uid, keep_fio=eff_keep_fio)
     pages_cnt = 1
     try:
         with fitz.open(stream=result, filetype="pdf") as _d:
             pages_cnt = len(_d)
     except Exception:
         pass
-    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt)
+    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt, keep_fio=eff_keep_fio)
     sent = send_cleaned(chat, result, out_name, caption, reply_markup=markup)
     if not sent:
         return send_text(chat, "Не удалось отправить обновлённый билет.")
@@ -5226,12 +5523,14 @@ def apply_ticket_price(chat, uid, token, new_price, hide_price=False, prompt_msg
     if doc_info:
         target_file_id = doc_info["file_id"]
         tok_fio = doc_info["fio"]
+        tok_keep_fio = doc_info.get("keep_fio")
         tok_seat = doc_info.get("seat_info")
         tok_del = doc_info.get("del_texts")
         tok_pushkin = doc_info.get("strip_pushkin")
     else:
         target_file_id = get_store().get_doc_by_token(token) or token
         tok_fio = None
+        tok_keep_fio = None
         tok_seat = None
         tok_del = None
         tok_pushkin = False
@@ -5240,7 +5539,9 @@ def apply_ticket_price(chat, uid, token, new_price, hide_price=False, prompt_msg
     if not data:
         return send_text(chat, "Не удалось скачать исходный файл. Пожалуйста, отправьте билет заново.")
 
+    u_settings = _user_settings(uid)
     cur_fio = tok_fio if tok_fio is not None else get_store().get_user_fio(uid)
+    eff_keep_fio = tok_keep_fio if tok_keep_fio is not None else (bool(u_settings.get("keep_fio", 0)) and not cur_fio)
 
     price_label = "скрыта 🎁" if hide_price else (f"{new_price} ₽" if new_price is not None else "исходная")
     if prompt_msg_id:
@@ -5257,7 +5558,8 @@ def apply_ticket_price(chat, uid, token, new_price, hide_price=False, prompt_msg
         custom_price=new_price,
         seat_info=tok_seat,
         del_texts=tok_del,
-        strip_pushkin=tok_pushkin
+        strip_pushkin=tok_pushkin,
+        keep_fio=eff_keep_fio,
     )
     if not ok:
         return send_text(chat, f"Не удалось обновить билет: {result}")
@@ -5270,7 +5572,7 @@ def apply_ticket_price(chat, uid, token, new_price, hide_price=False, prompt_msg
         new_token, target_file_id,
         custom_price=new_price, hide_price=hide_price, fio=cur_fio,
         seat_info=tok_seat, del_texts=tok_del, strip_pushkin=tok_pushkin,
-        uid=uid, meta=meta
+        uid=uid, meta=meta, keep_fio=eff_keep_fio
     )
     pages_cnt = 1
     try:
@@ -5278,12 +5580,12 @@ def apply_ticket_price(chat, uid, token, new_price, hide_price=False, prompt_msg
             pages_cnt = len(_d)
     except Exception:
         pass
-    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt)
+    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt, keep_fio=eff_keep_fio)
     sent = send_cleaned(chat, result, out_name, caption, reply_markup=markup)
     if not sent:
         return send_text(chat, "Не удалось отправить обновлённый билет.")
 
-    auto_preview = bool(_user_settings(uid).get("auto_preview", 0))
+    auto_preview = bool(u_settings.get("auto_preview", 0))
     if auto_preview:
         img_bytes = render_pdf_preview(result)
         if img_bytes:
@@ -5291,7 +5593,7 @@ def apply_ticket_price(chat, uid, token, new_price, hide_price=False, prompt_msg
     return True
 
 
-def apply_ticket_fio(chat, uid, token, spectator_fio, prompt_msg_id=None):
+def apply_ticket_fio(chat, uid, token, spectator_fio, prompt_msg_id=None, keep_fio=False):
     if not cooldown_ok(uid):
         if not prompt_msg_id:
             return send_text(chat, "Слишком часто. Подождите пару секунд и повторите.")
@@ -5322,10 +5624,14 @@ def apply_ticket_fio(chat, uid, token, spectator_fio, prompt_msg_id=None):
     custom_price = tok_price if tok_price is not None else u_settings.get("custom_price")
 
     clean_fio = spectator_fio.strip() if spectator_fio and spectator_fio.strip() else None
+    eff_keep_fio = False
     if clean_fio:
         clean_fio = re.sub(r"^(?:покупатель|посетитель|зритель|клиент|фио|билетодержатель|владелец)\s*[:.\-–]?\s*", "", clean_fio, flags=re.I).strip()
         get_store().record_recent_fio(uid, clean_fio)
         fio_label = clean_fio
+    elif keep_fio:
+        eff_keep_fio = True
+        fio_label = "📌 родное из билета (сохраняем ФИО, снимаем только отметки программы)"
     else:
         fio_label = "без зрителя (чистая строка)"
 
@@ -5343,7 +5649,8 @@ def apply_ticket_fio(chat, uid, token, spectator_fio, prompt_msg_id=None):
         custom_price=custom_price,
         seat_info=tok_seat,
         del_texts=tok_del,
-        strip_pushkin=tok_pushkin
+        strip_pushkin=tok_pushkin,
+        keep_fio=eff_keep_fio,
     )
     if not ok:
         return send_text(chat, f"Не удалось обновить билет: {result}")
@@ -5356,7 +5663,7 @@ def apply_ticket_fio(chat, uid, token, spectator_fio, prompt_msg_id=None):
         new_token, target_file_id,
         custom_price=custom_price, hide_price=hide_price, fio=clean_fio,
         seat_info=tok_seat, del_texts=tok_del, strip_pushkin=tok_pushkin,
-        uid=uid, meta=meta
+        uid=uid, meta=meta, keep_fio=eff_keep_fio
     )
     pages_cnt = 1
     try:
@@ -5364,7 +5671,7 @@ def apply_ticket_fio(chat, uid, token, spectator_fio, prompt_msg_id=None):
             pages_cnt = len(_d)
     except Exception:
         pass
-    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt)
+    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt, keep_fio=eff_keep_fio)
     sent = send_cleaned(chat, result, out_name, caption, reply_markup=markup)
     if not sent:
         return send_text(chat, "Не удалось отправить обновлённый билет.")
@@ -5398,6 +5705,7 @@ def apply_ticket_seat(chat, uid, token, new_seat_input, prompt_msg_id=None):
         tok_price = doc_info["custom_price"]
         tok_hide = doc_info["hide_price"]
         tok_fio = doc_info["fio"]
+        tok_keep_fio = doc_info.get("keep_fio")
         tok_del = doc_info.get("del_texts")
         tok_pushkin = doc_info.get("strip_pushkin")
     else:
@@ -5405,6 +5713,7 @@ def apply_ticket_seat(chat, uid, token, new_seat_input, prompt_msg_id=None):
         tok_price = None
         tok_hide = None
         tok_fio = None
+        tok_keep_fio = None
         tok_del = None
         tok_pushkin = False
 
@@ -5443,6 +5752,7 @@ def apply_ticket_seat(chat, uid, token, new_seat_input, prompt_msg_id=None):
 
     u_settings = _user_settings(uid)
     cur_fio = tok_fio if tok_fio is not None else get_store().get_user_fio(uid)
+    eff_keep_fio = tok_keep_fio if tok_keep_fio is not None else (bool(u_settings.get("keep_fio", 0)) and not cur_fio)
     hide_price = tok_hide if tok_hide is not None else bool(u_settings.get("hide_price", 0))
     custom_price = tok_price if tok_price is not None else u_settings.get("custom_price")
 
@@ -5453,7 +5763,8 @@ def apply_ticket_seat(chat, uid, token, new_seat_input, prompt_msg_id=None):
         custom_price=custom_price,
         seat_info=new_seat,
         del_texts=tok_del,
-        strip_pushkin=tok_pushkin
+        strip_pushkin=tok_pushkin,
+        keep_fio=eff_keep_fio,
     )
     if not ok:
         return send_text(chat, f"Не удалось обновить билет: {result}")
@@ -5466,7 +5777,7 @@ def apply_ticket_seat(chat, uid, token, new_seat_input, prompt_msg_id=None):
         new_token, target_file_id,
         custom_price=custom_price, hide_price=hide_price, fio=cur_fio,
         seat_info=new_seat, del_texts=tok_del, strip_pushkin=tok_pushkin,
-        uid=uid, meta=meta
+        uid=uid, meta=meta, keep_fio=eff_keep_fio
     )
     pages_cnt = 1
     try:
@@ -5474,7 +5785,7 @@ def apply_ticket_seat(chat, uid, token, new_seat_input, prompt_msg_id=None):
             pages_cnt = len(_d)
     except Exception:
         pass
-    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt)
+    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt, keep_fio=eff_keep_fio)
     sent = send_cleaned(chat, result, out_name, caption, reply_markup=markup)
     if not sent:
         return send_text(chat, "Не удалось отправить обновлённый билет.")
@@ -5501,6 +5812,7 @@ def _reissue_ticket_with_pushkin_strip(chat, uid, ref):
         tok_price = doc_info["custom_price"]
         tok_hide = doc_info["hide_price"]
         tok_fio = doc_info["fio"]
+        tok_keep_fio = doc_info.get("keep_fio")
         tok_seat = doc_info["seat_info"]
         tok_del = doc_info.get("del_texts")
     else:
@@ -5508,6 +5820,7 @@ def _reissue_ticket_with_pushkin_strip(chat, uid, ref):
         tok_price = None
         tok_hide = None
         tok_fio = None
+        tok_keep_fio = None
         tok_seat = None
         tok_del = None
 
@@ -5517,6 +5830,7 @@ def _reissue_ticket_with_pushkin_strip(chat, uid, ref):
 
     u_settings = _user_settings(uid)
     cur_fio = tok_fio if tok_fio is not None else get_store().get_user_fio(uid)
+    eff_keep_fio = tok_keep_fio if tok_keep_fio is not None else (bool(u_settings.get("keep_fio", 0)) and not cur_fio)
     hide_price = tok_hide if tok_hide is not None else bool(u_settings.get("hide_price", 0))
     custom_price = tok_price if tok_price is not None else u_settings.get("custom_price")
 
@@ -5533,26 +5847,27 @@ def _reissue_ticket_with_pushkin_strip(chat, uid, ref):
         custom_price=custom_price,
         seat_info=tok_seat,
         del_texts=tok_del,
-        strip_pushkin=True
+        strip_pushkin=True,
+        keep_fio=eff_keep_fio,
     )
     if not ok:
         return send_text(chat, f"Не удалось обновить билет: {result}")
 
     meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
-    out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price)
+    out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price, fio=cur_fio)
     caption = (
         ("🧹 Отметка программы снята!\n\n" if is_neutral() else "🧹 Чары Черномора сняты с билета!\n\n")
         + ticket_meta.format_single_ticket_caption(meta, info)
     )
     new_token = secrets.token_hex(8)
-    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=tok_seat, del_texts=tok_del, strip_pushkin=True, uid=uid)
+    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=tok_seat, del_texts=tok_del, strip_pushkin=True, uid=uid, keep_fio=eff_keep_fio)
     pages_cnt = 1
     try:
         with fitz.open(stream=result, filetype="pdf") as _d:
             pages_cnt = len(_d)
     except Exception:
         pass
-    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt)
+    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt, keep_fio=eff_keep_fio)
     sent = send_cleaned(chat, result, out_name, caption, reply_markup=markup)
     if not sent:
         return send_text(chat, "Не удалось отправить обновлённый билет.")
@@ -5571,6 +5886,7 @@ def _send_avito_preview(chat, uid, ref):
         tok_price = doc_info["custom_price"]
         tok_hide = doc_info["hide_price"]
         tok_fio = doc_info["fio"]
+        tok_keep_fio = doc_info.get("keep_fio")
         tok_seat = doc_info["seat_info"]
         tok_del = doc_info.get("del_texts")
         tok_pushkin = doc_info.get("strip_pushkin")
@@ -5579,6 +5895,7 @@ def _send_avito_preview(chat, uid, ref):
         tok_price = None
         tok_hide = None
         tok_fio = None
+        tok_keep_fio = None
         tok_seat = None
         tok_del = None
         tok_pushkin = False
@@ -5589,6 +5906,7 @@ def _send_avito_preview(chat, uid, ref):
 
     u_settings = _user_settings(uid)
     cur_fio = tok_fio if tok_fio is not None else get_store().get_user_fio(uid)
+    eff_keep_fio = tok_keep_fio if tok_keep_fio is not None else (bool(u_settings.get("keep_fio", 0)) and not cur_fio)
     hide_price = tok_hide if tok_hide is not None else bool(u_settings.get("hide_price", 0))
     custom_price = tok_price if tok_price is not None else u_settings.get("custom_price")
 
@@ -5599,7 +5917,8 @@ def _send_avito_preview(chat, uid, ref):
         custom_price=custom_price,
         seat_info=tok_seat,
         del_texts=tok_del,
-        strip_pushkin=tok_pushkin
+        strip_pushkin=tok_pushkin,
+        keep_fio=eff_keep_fio,
     )
     pdf_to_mask = result if ok and isinstance(result, (bytes, bytearray)) else data
     png_bytes = eraser_tools.make_avito_preview(pdf_to_mask, srv=srv)
@@ -5627,6 +5946,7 @@ def _reissue_ticket_with_deletion(chat, uid, ref, target_text):
         tok_price = doc_info["custom_price"]
         tok_hide = doc_info["hide_price"]
         tok_fio = doc_info["fio"]
+        tok_keep_fio = doc_info.get("keep_fio")
         tok_seat = doc_info["seat_info"]
         tok_del = doc_info.get("del_texts")
         tok_pushkin = doc_info.get("strip_pushkin")
@@ -5635,6 +5955,7 @@ def _reissue_ticket_with_deletion(chat, uid, ref, target_text):
         tok_price = None
         tok_hide = None
         tok_fio = None
+        tok_keep_fio = None
         tok_seat = None
         tok_del = None
         tok_pushkin = False
@@ -5652,6 +5973,7 @@ def _reissue_ticket_with_deletion(chat, uid, ref, target_text):
 
     u_settings = _user_settings(uid)
     cur_fio = tok_fio if tok_fio is not None else get_store().get_user_fio(uid)
+    eff_keep_fio = tok_keep_fio if tok_keep_fio is not None else (bool(u_settings.get("keep_fio", 0)) and not cur_fio)
     hide_price = tok_hide if tok_hide is not None else bool(u_settings.get("hide_price", 0))
     custom_price = tok_price if tok_price is not None else u_settings.get("custom_price")
 
@@ -5662,23 +5984,24 @@ def _reissue_ticket_with_deletion(chat, uid, ref, target_text):
         custom_price=custom_price,
         seat_info=tok_seat,
         del_texts=new_del,
-        strip_pushkin=tok_pushkin
+        strip_pushkin=tok_pushkin,
+        keep_fio=eff_keep_fio,
     )
     if not ok:
         return send_text(chat, f"Не удалось обновить билет: {result}")
 
     meta = ticket_meta.extract_ticket_metadata(result, srv=srv)
-    out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price)
+    out_name = ticket_meta.make_clean_ticket_filename(meta, fallback="ticket.pdf", hide_price=hide_price, fio=cur_fio)
     caption = f"✂️ Текст {clean_target} удалён!\n\n" + ticket_meta.format_single_ticket_caption(meta, info) if new_del else ticket_meta.format_single_ticket_caption(meta, info)
     new_token = secrets.token_hex(8)
-    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=tok_seat, del_texts=new_del, strip_pushkin=tok_pushkin, uid=uid)
+    _save_doc_token(new_token, target_file_id, custom_price=custom_price, hide_price=hide_price, fio=cur_fio, seat_info=tok_seat, del_texts=new_del, strip_pushkin=tok_pushkin, uid=uid, keep_fio=eff_keep_fio)
     pages_cnt = 1
     try:
         with fitz.open(stream=result, filetype="pdf") as _d:
             pages_cnt = len(_d)
     except Exception:
         pass
-    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt)
+    markup = _single_ticket_markup(new_token, hide_price=hide_price, pages=pages_cnt, keep_fio=eff_keep_fio)
     sent = send_cleaned(chat, result, out_name, caption, reply_markup=markup)
     if not sent:
         return send_text(chat, "Не удалось отправить обновлённый билет.")
@@ -5779,13 +6102,40 @@ def handle(msg, update_id=None, queued=False):
         parts = text.split(maxsplit=1)
         if len(parts) == 1:
             cur_fio = get_store().get_user_fio(uid)
+            cur_keep = get_store().get_user_keep_fio(uid)
             if cur_fio:
-                return send_text(chat, f"👤 Текущее ФИО зрителя: {cur_fio}\n\nЧтобы изменить: /fio Новое ФИО\nЧтобы сбросить: /fio сброс")
+                return send_text(
+                    chat,
+                    f"👤 Текущее ФИО зрителя: {cur_fio}\n\n"
+                    f"Чтобы изменить: /fio Новое ФИО\n"
+                    f"Чтобы оставлять родное ФИО из билета: /fio родное\n"
+                    f"Чтобы стирать ФИО: /fio сброс",
+                )
+            elif cur_keep:
+                return send_text(
+                    chat,
+                    "👤 Режим ФИО: 📌 родное ФИО из билета сохраняется (не очищается).\n\n"
+                    "Чтобы стирать ФИО: /fio сброс\n"
+                    "Чтобы задать своё: /fio Фамилия Имя Отчество",
+                )
             else:
-                return send_text(chat, "👤 ФИО зрителя не установлено (поля ФИО очищаются).\n\nЧтобы задать: /fio Фамилия Имя Отчество")
+                return send_text(
+                    chat,
+                    "👤 ФИО зрителя не установлено (поля ФИО очищаются).\n\n"
+                    "Чтобы оставлять родное ФИО из билета: /fio родное\n"
+                    "Чтобы задать своё: /fio Фамилия Имя Отчество",
+                )
         arg = parts[1].strip()
-        if arg.lower() in {"сброс", "reset", "clear", "none"}:
+        if arg.lower() in {"родное", "оставить", "оставить фио", "родное фио", "исходное", "не стирать", "keep", "original"}:
+            get_store().set_user_keep_fio(uid, True)
+            get_store().set_user_state(uid, None)
+            recent_token = get_store().get_user_last_doc_token(uid)
+            if recent_token:
+                _reissue_ticket_with_quick(chat, uid, recent_token, "оставить фио")
+            return send_text(chat, "📌 Режим ФИО включён: родное ФИО и почта на билетах теперь сохраняются (убирается только Пушкинская карта).")
+        if arg.lower() in {"сброс", "reset", "clear", "none", "стереть", "очистить"}:
             get_store().set_user_fio(uid, None)
+            get_store().set_user_keep_fio(uid, False)
             get_store().set_user_state(uid, None)
             recent_token = get_store().get_user_last_doc_token(uid)
             if recent_token:
@@ -6054,7 +6404,8 @@ def handle(msg, update_id=None, queued=False):
                 custom_price=cur_set.get("custom_price"),
                 hide_price=cur_set.get("hide_price", 0),
                 batch_mode=cur_set.get("batch_mode", "zip"),
-                auto_preview=cur_set.get("auto_preview", 0)
+                auto_preview=cur_set.get("auto_preview", 0),
+                keep_fio=cur_set.get("keep_fio", 0),
             )
             send_text(chat, f"✅ Шаблон {text.strip()} успешно сохранён!")
             text_card, markup = build_templates_card(uid)
@@ -6065,10 +6416,16 @@ def handle(msg, update_id=None, queued=False):
         get_store().set_user_state(uid, None)
         if text.lower() in {"отмена", "cancel"}:
             return send_text(chat, "Изменение ФИО отменено.")
-        if text.lower() in {"сброс", "reset", "clear"}:
-            get_store().set_user_fio(uid, None)
+        if text.lower() in {"родное", "оставить", "оставить фио", "родное фио", "исходное", "не стирать", "keep", "original"}:
+            get_store().set_user_keep_fio(uid, True)
             text_card, markup = build_settings_card(uid)
-            send_text(chat, "ФИО зрителя сброшено.")
+            send_text(chat, "📌 Включён режим: оставлять родное ФИО из билета (убирается только Пушкинская карта).")
+            return send_text(chat, text_card, markup=markup)
+        if text.lower() in {"сброс", "reset", "clear", "стереть", "очистить"}:
+            get_store().set_user_fio(uid, None)
+            get_store().set_user_keep_fio(uid, False)
+            text_card, markup = build_settings_card(uid)
+            send_text(chat, "ФИО зрителя сброшено (поля ФИО очищаются).")
             return send_text(chat, text_card, markup=markup)
         else:
             spectator_fio = text.strip()
@@ -6123,12 +6480,16 @@ def handle(msg, update_id=None, queued=False):
         if text.lower() in {"отмена", "cancel"}:
             return send_text(chat, "Изменение ФИО отменено.")
 
-        if text.lower() in {"сброс", "reset", "clear", "пусто", "стереть"}:
+        if text.lower() in {"родное", "оставить", "оставить фио", "родное фио", "исходное", "не стирать", "keep", "original"}:
+            get_store().set_user_keep_fio(uid, True)
+            return apply_ticket_fio(chat, uid, ref, spectator_fio=None, keep_fio=True)
+        if text.lower() in {"сброс", "reset", "clear", "пусто", "стереть", "очистить"}:
             get_store().set_user_fio(uid, None)
-            return apply_ticket_fio(chat, uid, ref, spectator_fio=None)
+            get_store().set_user_keep_fio(uid, False)
+            return apply_ticket_fio(chat, uid, ref, spectator_fio=None, keep_fio=False)
         else:
             q = seat_tools.parse_quick_edit(text)
-            if q.get("custom_price") is not None or q.get("seat_info") is not None or q.get("hide_price") is not None:
+            if q.get("custom_price") is not None or q.get("seat_info") is not None or q.get("hide_price") is not None or q.get("keep_fio") is not None:
                 return _reissue_ticket_with_seat(chat, uid, ref, text)
             spectator_fio = q.get("fio") or text.strip()
             spectator_fio = re.sub(r"^(?:покупатель|посетитель|зритель|клиент|фио|билетодержатель|владелец)\s*[:.\-–]?\s*", "", spectator_fio, flags=re.I).strip()
@@ -6302,6 +6663,7 @@ def handle(msg, update_id=None, queued=False):
 
         q = seat_tools.parse_quick_edit(text)
         if (not q["reset_all"] and not q["reset_fio"] and not q["reset_price"] and not q["reset_seat"]
+                and q.get("keep_fio") is None
                 and q["fio"] is None and q["custom_price"] is None and q["hide_price"] is None and q["seat_info"] is None):
             send_text(chat, "⚠️ Не удалось распознать параметры. Напишите, например: Иванов 2500 ряд 3 место 12")
             text_card, kb = _build_batch_item_card(batch_token, idx)
@@ -6309,12 +6671,16 @@ def handle(msg, update_id=None, queued=False):
 
         kwargs = {}
         if q["reset_all"]:
-            kwargs = {"fio": "сброс", "seat_info": "сброс", "custom_price": "сброс", "hide_price": False}
+            kwargs = {"fio": "сброс", "seat_info": "сброс", "custom_price": "сброс", "hide_price": False, "keep_fio": False}
         else:
-            if q["reset_fio"]:
+            if q.get("keep_fio") is True:
+                kwargs["keep_fio"] = True
+            elif q.get("keep_fio") is False or q["reset_fio"]:
                 kwargs["fio"] = "сброс"
+                kwargs["keep_fio"] = False
             elif q["fio"] is not None:
                 kwargs["fio"] = q["fio"]
+                kwargs["keep_fio"] = False
 
             if q["reset_price"]:
                 kwargs["custom_price"] = "сброс"
@@ -6349,7 +6715,12 @@ def handle(msg, update_id=None, queued=False):
             return send_text(chat, text_card, markup=kb) if kb else None
 
         send_text(chat, f"👤 Обновляю ФИО для билета №{idx+1}...")
-        ok, res = _reprocess_batch_item(batch_token, idx, fio=text)
+        if text.lower() in {"родное", "оставить", "оставить фио", "родное фио", "исходное", "не стирать", "keep", "original"}:
+            ok, res = _reprocess_batch_item(batch_token, idx, keep_fio=True)
+        elif text.lower() in {"сброс", "reset", "clear", "пусто", "стереть", "очистить"}:
+            ok, res = _reprocess_batch_item(batch_token, idx, fio="сброс", keep_fio=False)
+        else:
+            ok, res = _reprocess_batch_item(batch_token, idx, fio=text, keep_fio=False)
         if not ok:
             return send_text(chat, f"Не удалось обновить билет: {res}")
         send_text(chat, f"✅ ФИО для билета №{idx+1} обновлено!")
@@ -6404,6 +6775,7 @@ def handle(msg, update_id=None, queued=False):
             parsed = seat_tools.parse_quick_edit(text)
             has_field = (
                 parsed.get("fio") is not None
+                or parsed.get("keep_fio") is not None
                 or parsed.get("custom_price") is not None
                 or parsed.get("seat_info") is not None
                 or parsed.get("hide_price") is not None
@@ -6536,6 +6908,8 @@ def dispatch_update(update):
             text = "Генерирую фото-превью..."
         elif data.startswith("fio"):
             text = "Редактирование ФИО..."
+        elif data.startswith("togglefio"):
+            text = "Переключаю режим ФИО..."
         elif data.startswith("choose_sec"):
             text = "Выбор сектора..."
         elif data.startswith("pushkin"):

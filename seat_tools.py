@@ -316,6 +316,7 @@ def parse_quick_edit(raw: str) -> dict[str, Any]:
     text = str(raw or "").strip()
     res: dict[str, Any] = {
         "fio": None,
+        "keep_fio": None,
         "custom_price": None,
         "hide_price": None,
         "seat_info": None,
@@ -329,8 +330,17 @@ def parse_quick_edit(raw: str) -> dict[str, Any]:
         res["reset_all"] = True
         return res
 
+    if re.search(r"\b(?:оставить\s*фио|родное\s*фио|исходное\s*фио|не\s*стирать\s*фио|сохранить\s*фио)\b", text, re.I):
+        res["keep_fio"] = True
+        text = re.sub(r"\b(?:оставить\s*фио|родное\s*фио|исходное\s*фио|не\s*стирать\s*фио|сохранить\s*фио)\b", "", text, flags=re.I)
+    elif re.search(r"\b(?:стереть\s*фио|убрать\s*фио|очистить\s*фио|без\s*фио)\b", text, re.I):
+        res["keep_fio"] = False
+        res["reset_fio"] = True
+        text = re.sub(r"\b(?:стереть\s*фио|убрать\s*фио|очистить\s*фио|без\s*фио)\b", "", text, flags=re.I)
+
     if "сброс фио" in low or "сбросить фио" in low:
         res["reset_fio"] = True
+        res["keep_fio"] = False
         text = re.sub(r"сброс(?:ить)?\s+фио", "", text, flags=re.I)
     if "сброс цен" in low or "сбросить цен" in low:
         res["reset_price"] = True

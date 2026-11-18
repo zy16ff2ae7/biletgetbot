@@ -377,6 +377,8 @@ class SubscriptionStore:
             db.execute("ALTER TABLE user_settings ADD COLUMN custom_price INTEGER DEFAULT NULL")
         if "last_doc_token" not in cols:
             db.execute("ALTER TABLE user_settings ADD COLUMN last_doc_token TEXT DEFAULT NULL")
+        if "keep_fio" not in cols:
+            db.execute("ALTER TABLE user_settings ADD COLUMN keep_fio INTEGER DEFAULT 0")
         db.execute("CREATE TABLE IF NOT EXISTS user_recent_fios (user_id INTEGER NOT NULL, fio TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (user_id, fio))")
         db.execute("CREATE INDEX IF NOT EXISTS idx_user_recent_fios_updated ON user_recent_fios(user_id, updated DESC)")
         db.execute("CREATE TABLE IF NOT EXISTS doc_tokens (token TEXT PRIMARY KEY, file_id TEXT, created INTEGER)")
@@ -393,6 +395,8 @@ class SubscriptionStore:
             db.execute("ALTER TABLE doc_tokens ADD COLUMN del_texts TEXT DEFAULT NULL")
         if "strip_pushkin" not in doc_cols:
             db.execute("ALTER TABLE doc_tokens ADD COLUMN strip_pushkin INTEGER DEFAULT 0")
+        if "keep_fio" not in doc_cols:
+            db.execute("ALTER TABLE doc_tokens ADD COLUMN keep_fio INTEGER DEFAULT NULL")
         db.execute("CREATE INDEX IF NOT EXISTS idx_doc_tokens_created ON doc_tokens(created)")
         db.execute("""CREATE TABLE IF NOT EXISTS batch_sessions (
             token TEXT PRIMARY KEY,
@@ -413,8 +417,12 @@ class SubscriptionStore:
             hide_price INTEGER DEFAULT 0,
             batch_mode TEXT DEFAULT 'zip',
             auto_preview INTEGER DEFAULT 0,
+            keep_fio INTEGER DEFAULT 0,
             created INTEGER
         )""")
+        preset_cols = {row["name"] for row in db.execute("PRAGMA table_info(user_presets)")}
+        if "keep_fio" not in preset_cols:
+            db.execute("ALTER TABLE user_presets ADD COLUMN keep_fio INTEGER DEFAULT 0")
         db.execute("CREATE INDEX IF NOT EXISTS idx_user_presets_user ON user_presets(user_id)")
         db.execute("""CREATE TABLE IF NOT EXISTS soon_expiry_reminders (
             user_id INTEGER PRIMARY KEY,
@@ -456,15 +464,15 @@ class SubscriptionStore:
                 row = db.execute("SELECT * FROM user_presets WHERE id=?", (preset_id,)).fetchone()
             return dict(row) if row else None
 
-    def save_user_preset(self, user_id, name, fio=None, custom_price=None, hide_price=0, batch_mode="zip", auto_preview=0):
+    def save_user_preset(self, user_id, name, fio=None, custom_price=None, hide_price=0, batch_mode="zip", auto_preview=0, keep_fio=0):
         with self.db() as db:
             count = db.execute("SELECT COUNT(*) FROM user_presets WHERE user_id=?", (user_id,)).fetchone()[0]
             if count >= 10:
                 raise ValueError("Лимит: максимум 10 сохранённых шаблонов.")
             cur = db.execute(
-                "INSERT INTO user_presets (user_id, name, fio, custom_price, hide_price, batch_mode, auto_preview, created) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (user_id, name.strip()[:60], fio, custom_price, int(bool(hide_price)), batch_mode, int(bool(auto_preview)), int(time.time()))
+                "INSERT INTO user_presets (user_id, name, fio, custom_price, hide_price, batch_mode, auto_preview, keep_fio, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_id, name.strip()[:60], fio, custom_price, int(bool(hide_price)), batch_mode, int(bool(auto_preview)), int(bool(keep_fio)), int(time.time()))
             )
             return cur.lastrowid
 
@@ -502,20 +510,22 @@ class SubscriptionStore:
             row = db.execute("SELECT token FROM batch_sessions WHERE user_id=? ORDER BY created DESC LIMIT 1", (user_id,)).fetchone()
             return row["token"] if row else None
 
-    def save_doc_token(self, token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None, del_texts=None, strip_pushkin=None):
+    def save_doc_token(self, token, file_id, custom_price=None, hide_price=None, fio=None, seat_info=None, del_texts=None, strip_pushkin=None, keep_fio=None):
         with self.db() as db:
             db.execute(
-                "INSERT INTO doc_tokens(token, file_id, created, custom_price, hide_price, fio, seat_info, del_texts, strip_pushkin) "
-                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "INSERT INTO doc_tokens(token, file_id, created, custom_price, hide_price, fio, seat_info, del_texts, strip_pushkin, keep_fio) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(token) DO UPDATE SET "
                 "file_id=excluded.file_id, created=excluded.created, "
                 "custom_price=excluded.custom_price, hide_price=excluded.hide_price, "
                 "fio=excluded.fio, seat_info=excluded.seat_info, "
-                "del_texts=excluded.del_texts, strip_pushkin=excluded.strip_pushkin",
+                "del_texts=excluded.del_texts, strip_pushkin=excluded.strip_pushkin, "
+                "keep_fio=excluded.keep_fio",
                 (token, file_id, int(time.time()), custom_price,
                  (1 if hide_price else 0) if hide_price is not None else None,
                  fio, seat_info, del_texts,
-                 (1 if strip_pushkin else 0) if strip_pushkin is not None else None)
+                 (1 if strip_pushkin else 0) if strip_pushkin is not None else None,
+                 (1 if keep_fio else 0) if keep_fio is not None else None)
             )
             db.execute("DELETE FROM doc_tokens WHERE created < ?", (int(time.time()) - 7 * 86400,))
 
@@ -526,7 +536,7 @@ class SubscriptionStore:
 
     def get_doc_token_info(self, token):
         with self.db() as db:
-            row = db.execute("SELECT file_id, custom_price, hide_price, fio, seat_info, del_texts, strip_pushkin FROM doc_tokens WHERE token=?", (token,)).fetchone()
+            row = db.execute("SELECT file_id, custom_price, hide_price, fio, seat_info, del_texts, strip_pushkin, keep_fio FROM doc_tokens WHERE token=?", (token,)).fetchone()
             if not row:
                 return None
             return {
@@ -537,6 +547,7 @@ class SubscriptionStore:
                 "seat_info": row["seat_info"],
                 "del_texts": row["del_texts"],
                 "strip_pushkin": bool(row["strip_pushkin"]) if row["strip_pushkin"] is not None else False,
+                "keep_fio": bool(row["keep_fio"]) if row["keep_fio"] is not None else None,
             }
 
     def set_user_last_doc_token(self, user_id, token):
@@ -555,11 +566,33 @@ class SubscriptionStore:
             return row["fio"] if row and row["fio"] else None
 
     def set_user_fio(self, user_id, fio):
+        clean_val = fio.strip() if (fio and fio.strip()) else None
         with self.db() as db:
-            db.execute("INSERT INTO user_settings(user_id, fio) VALUES(?, ?) "
-                       "ON CONFLICT(user_id) DO UPDATE SET fio=excluded.fio", (user_id, fio))
-        if fio and fio.strip():
-            self.record_recent_fio(user_id, fio)
+            if clean_val:
+                db.execute("INSERT INTO user_settings(user_id, fio, keep_fio) VALUES(?, ?, 0) "
+                           "ON CONFLICT(user_id) DO UPDATE SET fio=excluded.fio, keep_fio=0", (user_id, clean_val))
+            else:
+                db.execute("INSERT INTO user_settings(user_id, fio) VALUES(?, NULL) "
+                           "ON CONFLICT(user_id) DO UPDATE SET fio=NULL", (user_id,))
+        if clean_val:
+            self.record_recent_fio(user_id, clean_val)
+
+    def get_user_keep_fio(self, user_id):
+        with self.db() as db:
+            row = db.execute("SELECT fio, keep_fio FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
+            if not row or row["fio"]:
+                return False
+            return bool(row["keep_fio"])
+
+    def set_user_keep_fio(self, user_id, keep):
+        keep_int = 1 if keep else 0
+        with self.db() as db:
+            if keep_int:
+                db.execute("INSERT INTO user_settings(user_id, fio, keep_fio) VALUES(?, NULL, 1) "
+                           "ON CONFLICT(user_id) DO UPDATE SET fio=NULL, keep_fio=1", (user_id,))
+            else:
+                db.execute("INSERT INTO user_settings(user_id, keep_fio) VALUES(?, 0) "
+                           "ON CONFLICT(user_id) DO UPDATE SET keep_fio=0", (user_id,))
 
     def record_recent_fio(self, user_id, fio):
         if not user_id or not fio or not fio.strip():
@@ -614,9 +647,9 @@ class SubscriptionStore:
 
     def get_user_settings(self, user_id):
         with self.db() as db:
-            row = db.execute("SELECT fio, state, hide_price, batch_mode, auto_preview, custom_price FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
+            row = db.execute("SELECT fio, state, hide_price, batch_mode, auto_preview, custom_price, keep_fio FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
             if not row:
-                return {"fio": None, "state": None, "hide_price": 0, "batch_mode": "zip", "auto_preview": 0, "custom_price": None}
+                return {"fio": None, "state": None, "hide_price": 0, "batch_mode": "zip", "auto_preview": 0, "custom_price": None, "keep_fio": 0}
             return {
                 "fio": row["fio"] if row["fio"] else None,
                 "state": row["state"] if row["state"] else None,
@@ -624,10 +657,11 @@ class SubscriptionStore:
                 "batch_mode": row["batch_mode"] or "zip",
                 "auto_preview": int(row["auto_preview"] or 0),
                 "custom_price": row["custom_price"] if row["custom_price"] is not None else None,
+                "keep_fio": int(row["keep_fio"] or 0),
             }
 
     def update_user_setting(self, user_id, column, value):
-        if column not in {"fio", "state", "hide_price", "batch_mode", "auto_preview", "custom_price"}:
+        if column not in {"fio", "state", "hide_price", "batch_mode", "auto_preview", "custom_price", "keep_fio"}:
             raise ValueError(f"Invalid setting column: {column}")
         with self.db() as db:
             db.execute(f"INSERT INTO user_settings(user_id, {column}) VALUES(?, ?) "
