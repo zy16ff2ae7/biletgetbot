@@ -179,10 +179,19 @@ class KeepFioModeTests(unittest.TestCase):
                     "from": {"id": uid},
                     "message": {"chat": {"id": uid}, "message_id": 10},
                 })
+                fio_menu_txt = sent[-1][0]
                 fio_menu_kb = sent[-1][1] or edited[-1][1]
                 fio_menu_datas = [b.get("callback_data") for row in fio_menu_kb["inline_keyboard"] for b in row]
+                fio_menu_labels = " ".join(b.get("text", "") for row in fio_menu_kb["inline_keyboard"] for b in row)
                 self.assertIn("set:fio_keep", fio_menu_datas)
                 self.assertIn("set:fio_clear", fio_menu_datas)
+                self.assertIn("чары Черномора", fio_menu_txt)
+                self.assertIn("чары Черномора", fio_menu_labels)
+                self.assertNotIn("пушк", (fio_menu_txt + " " + fio_menu_labels).lower())
+
+                tpl_txt, _ = bot.build_templates_card(uid)
+                self.assertIn("чары Черномора", tpl_txt)
+                self.assertNotIn("пушк", tpl_txt.lower())
 
                 # Click set:fio_clear -> OFF
                 bot.handle_callback_query({

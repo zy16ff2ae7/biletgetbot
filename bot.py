@@ -2392,7 +2392,8 @@ BUILTIN_PRESETS = {
         "keep_fio": 0,
         "custom_price": None,
         "batch_mode": "zip",
-        "desc": "Убрать Пушкинскую карту и ФИО, цена исходная, пачки в ZIP",
+        "desc": "Снять чары Черномора и стереть ФИО, цена исходная, пачки в ZIP",
+        "desc_neutral": "Убрать отметки программы и ФИО, цена исходная, пачки в ZIP",
     },
     "keep_fio": {
         "name": "📌 Оставить родное ФИО",
@@ -2402,7 +2403,8 @@ BUILTIN_PRESETS = {
         "keep_fio": 1,
         "custom_price": None,
         "batch_mode": "zip",
-        "desc": "Убрать только Пушкинскую карту, оставить родное ФИО и почту",
+        "desc": "Снять только чары Черномора, оставить родное ФИО и почту",
+        "desc_neutral": "Убрать только отметки программы, оставить родное ФИО и почту",
     },
     "print": {
         "name": "📑 Для печати",
@@ -2491,7 +2493,8 @@ def build_templates_card(uid, target_batch_token=None):
 
     body_parts = [title, subtitle, "⚡️ **Готовые шаблоны:**\n"]
     for key, p in BUILTIN_PRESETS.items():
-        body_parts.append(f"• **{p['name']}** — {p['desc']}\n")
+        p_desc = p.get("desc_neutral") if (is_neutral() and p.get("desc_neutral")) else p["desc"]
+        body_parts.append(f"• **{p['name']}** — {p_desc}\n")
 
     if custom_presets:
         body_parts.append("\n⭐ **Ваши сохранённые шаблоны:**\n")
@@ -4286,20 +4289,23 @@ def handle_callback_query(cb):
         action = data.split(":", 1)[1]
         if action == "fio":
             get_store().set_user_state(uid, "waiting_fio_settings")
+            clear_btn_lbl = "🧹 Очищать ФИО (отметки и ФИО)" if is_neutral() else "🧹 Очищать ФИО (чары Черномора и ФИО)"
+            keep_btn_lbl = "📌 Оставлять родное ФИО (только отметки)" if is_neutral() else "📌 Оставлять родное ФИО (только чары Черномора)"
             fio_set_kb = {
                 "inline_keyboard": [
-                    [{"text": "🧹 Очищать ФИО (убирать Пушку и ФИО)", "callback_data": "set:fio_clear"}],
-                    [{"text": "📌 Оставлять родное ФИО (убирать только Пушку)", "callback_data": "set:fio_keep"}],
+                    [{"text": clear_btn_lbl, "callback_data": "set:fio_clear"}],
+                    [{"text": keep_btn_lbl, "callback_data": "set:fio_keep"}],
                     [{"text": "🔙 Назад в настройки", "callback_data": "set:fio_cancel"}],
                 ]
             }
+            charm_word = "отметки программы" if is_neutral() else "чары Черномора"
             return send_text(
                 chat,
                 "👤 **Настройка ФИО зрителя для билетов**\n\n"
                 "Выберите готовый режим кнопкой ниже или отправьте в чат своё ФИО "
                 "(например, `Иванов Иван Иванович`):\n"
-                "• **Очищать ФИО** — снимает Пушкинскую карту и стирает чужое ФИО.\n"
-                "• **Оставлять родное ФИО** — снимает только Пушкинскую карту, родное ФИО и почта остаются.\n"
+                f"• **Очищать ФИО** — снимает {charm_word} и стирает чужое ФИО.\n"
+                f"• **Оставлять родное ФИО** — снимает только {charm_word}, родное ФИО и почта остаются.\n"
                 "(для отмены напишите: отмена)",
                 markup=fio_set_kb,
             )
@@ -5072,13 +5078,14 @@ def handle_callback_query(cb):
         total = len(session.get("items", []))
 
         if action == "keepfio":
-            send_text(chat, f"📌 Оставляю родное ФИО из билетов и убираю только Пушкинскую карту ({total} шт.)...")
+            charm_word = "отметки программы" if is_neutral() else "чары Черномора"
+            send_text(chat, f"📌 Оставляю родное ФИО из билетов и снимаю только {charm_word} ({total} шт.)...")
             updated = 0
             for i in range(total):
                 ok_i, _ = _reprocess_batch_item(batch_token, i, keep_fio=True)
                 if ok_i:
                     updated += 1
-            return _deliver_updated_batch_result(chat, uid, batch_token, summary_text=f"📌 Готово! На {updated} {tickets_word(updated)} сохранено родное ФИО, отметки программы убраны.")
+            return _deliver_updated_batch_result(chat, uid, batch_token, summary_text=f"📌 Готово! На {updated} {tickets_word(updated)} сохранено родное ФИО, {charm_word} сняты.")
         elif action == "clearfio":
             send_text(chat, f"🧹 Стираю ФИО на всех билетах пачки ({total} шт.)...")
             updated = 0
@@ -5631,7 +5638,8 @@ def apply_ticket_fio(chat, uid, token, spectator_fio, prompt_msg_id=None, keep_f
         fio_label = clean_fio
     elif keep_fio:
         eff_keep_fio = True
-        fio_label = "📌 родное из билета (сохраняем ФИО, снимаем только отметки программы)"
+        charm_word = "отметки программы" if is_neutral() else "чары Черномора"
+        fio_label = f"📌 родное из билета (сохраняем ФИО, снимаем только {charm_word})"
     else:
         fio_label = "без зрителя (чистая строка)"
 
@@ -6132,7 +6140,8 @@ def handle(msg, update_id=None, queued=False):
             recent_token = get_store().get_user_last_doc_token(uid)
             if recent_token:
                 _reissue_ticket_with_quick(chat, uid, recent_token, "оставить фио")
-            return send_text(chat, "📌 Режим ФИО включён: родное ФИО и почта на билетах теперь сохраняются (убирается только Пушкинская карта).")
+            charm_word = "отметки программы" if is_neutral() else "чары Черномора"
+            return send_text(chat, f"📌 Режим ФИО включён: родное ФИО и почта на билетах теперь сохраняются (снимаются только {charm_word}).")
         if arg.lower() in {"сброс", "reset", "clear", "none", "стереть", "очистить"}:
             get_store().set_user_fio(uid, None)
             get_store().set_user_keep_fio(uid, False)
@@ -6419,7 +6428,8 @@ def handle(msg, update_id=None, queued=False):
         if text.lower() in {"родное", "оставить", "оставить фио", "родное фио", "исходное", "не стирать", "keep", "original"}:
             get_store().set_user_keep_fio(uid, True)
             text_card, markup = build_settings_card(uid)
-            send_text(chat, "📌 Включён режим: оставлять родное ФИО из билета (убирается только Пушкинская карта).")
+            charm_word = "отметки программы" if is_neutral() else "чары Черномора"
+            send_text(chat, f"📌 Включён режим: оставлять родное ФИО из билета (снимаются только {charm_word}).")
             return send_text(chat, text_card, markup=markup)
         if text.lower() in {"сброс", "reset", "clear", "стереть", "очистить"}:
             get_store().set_user_fio(uid, None)
