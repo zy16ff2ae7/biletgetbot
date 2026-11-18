@@ -2709,7 +2709,7 @@ def _fio_picker_markup(token, user_id, cur_fio=None, keep_fio=False):
         prefix = "✅ " if (cur_fio and cur_fio.strip().lower() == rfio.lower()) else "👤 "
         rows.append([{"text": f"{prefix}{display_name}", "callback_data": f"qfio:{token}:rec:{idx}"}])
 
-    empty_lbl = "✅ Без ФИО (стёрто)" if (not cur_fio and not keep_fio) else "🧹 Стереть ФИО"
+    empty_lbl = "✅ Без ФИО (стёрто)" if (not cur_fio and not keep_fio) else "❌ Оставить пустым (стереть)"
     keep_lbl = "✅ Родное из билета" if (not cur_fio and keep_fio) else "📌 Оставить родное ФИО"
     rows.append([
         {"text": empty_lbl, "callback_data": f"qfio:{token}:empty"},
