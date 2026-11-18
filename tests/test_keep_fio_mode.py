@@ -158,9 +158,10 @@ class KeepFioModeTests(unittest.TestCase):
                 card_txt, card_kb = bot.build_settings_card(uid)
                 self.assertIn("не установлено (очищается)", card_txt)
                 btn_texts = [b["text"] for row in card_kb["inline_keyboard"] for b in row]
-                self.assertTrue(any("Очищается ➔ 📌 Оставлять родное" in t for t in btn_texts))
+                self.assertIn("✅ 🧹 Стирать ФИО", btn_texts)
+                self.assertIn("⚪️ 📌 Родное ФИО", btn_texts)
 
-                # Click 1-click toggle set:keep_fio -> ON
+                # Click 1-click toggle set:fio_keep (or set:keep_fio) -> ON
                 bot.handle_callback_query({
                     "id": "cb1",
                     "data": "set:keep_fio",
@@ -170,7 +171,8 @@ class KeepFioModeTests(unittest.TestCase):
                 self.assertTrue(store.get_user_keep_fio(uid))
                 self.assertIn("исходное из билета (не очищается)", edited[-1][0])
                 btn_texts_on = [b["text"] for row in edited[-1][1]["inline_keyboard"] for b in row]
-                self.assertTrue(any("Родное остаётся ➔ 🧹 Очищать" in t for t in btn_texts_on))
+                self.assertIn("⚪️ 🧹 Стирать ФИО", btn_texts_on)
+                self.assertIn("✅ 📌 Родное ФИО", btn_texts_on)
 
                 # Click set:fio menu -> sends prompt with both keep & clear buttons
                 bot.handle_callback_query({

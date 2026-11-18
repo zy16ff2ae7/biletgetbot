@@ -31,6 +31,11 @@ if not hasattr(fitz.Rect, "get_area"):
     fitz.Rect.get_area = lambda self: max(0.0, self.width) * max(0.0, self.height)
 
 import requests
+import socket
+import urllib3.util.connection as _urllib3_conn
+
+if os.environ.get("BILET_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no"):
+    _urllib3_conn.allowed_gai_family = lambda: socket.AF_INET
 
 import batches
 import validation
@@ -1255,7 +1260,7 @@ def send_cleaned(chat, data, name, caption, cache_keys=(), reuse_id=None, reply_
                     post_data["disable_content_type_detection"] = "true"
                     if reply_markup is not None:
                         post_data["reply_markup"] = json.dumps(reply_markup)
-                    r = http_session().post(url, files=files, data=post_data, timeout=(10, 240))
+                    r = http_session().post(url, files=files, data=post_data, timeout=(8, 65))
                 response = r.json()
                 log.info("sendDocument response: %.3fs; mode=%s; ok=%s",
                          time.monotonic() - request_started, mode, bool(response.get("ok")))
@@ -1882,18 +1887,64 @@ def send_help(chat, user_id=None, username=None):
     return send_text(chat, HELP_TEXT, markup=get_main_markup(user_id, username))
 
 
+def _welcome_cache_key(path):
+    try:
+        st = path.stat()
+        return f"{BOT_TOKEN[:10]}:{path.name}:{st.st_size}:{int(st.st_mtime)}"
+    except OSError:
+        return f"{BOT_TOKEN[:10]}:{path.name}"
+
+
+def _load_cached_welcome_id(path):
+    global _WELCOME_MEDIA_ID
+    if _WELCOME_MEDIA_ID:
+        return _WELCOME_MEDIA_ID
+    try:
+        cache_p = STATE_DIR / "welcome_media_cache.json"
+        if cache_p.exists():
+            d = json.loads(cache_p.read_text(encoding="utf-8"))
+            val = d.get(_welcome_cache_key(path))
+            if val:
+                _WELCOME_MEDIA_ID = val
+                return val
+    except Exception:
+        pass
+    return None
+
+
+def _save_cached_welcome_id(path, file_id):
+    global _WELCOME_MEDIA_ID
+    _WELCOME_MEDIA_ID = file_id
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_p = STATE_DIR / "welcome_media_cache.json"
+        d = {}
+        if cache_p.exists():
+            try:
+                d = json.loads(cache_p.read_text(encoding="utf-8"))
+            except Exception:
+                d = {}
+        if file_id:
+            d[_welcome_cache_key(path)] = file_id
+        else:
+            d.pop(_welcome_cache_key(path), None)
+        cache_p.write_text(json.dumps(d), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _send_brand_media(chat, path, kind, caption, markup):
     """Send brand media by cached file_id, upload as fallback. Return bool."""
-    global _WELCOME_MEDIA_ID
     payload = {"chat_id": str(chat), "caption": caption[:1000], "reply_markup": json.dumps(markup)}
     field = "animation" if kind == "video" else "photo"
     method = "sendAnimation" if kind == "video" else "sendPhoto"
-    if _WELCOME_MEDIA_ID:
+    cached_id = _load_cached_welcome_id(path)
+    if cached_id:
         try:
-            r = http_session().post(f"{API}/{method}", json={**payload, field: _WELCOME_MEDIA_ID}, timeout=(10, 60))
+            r = http_session().post(f"{API}/{method}", json={**payload, field: cached_id}, timeout=(6, 20))
             if r.json().get("ok"):
                 return True
-            _WELCOME_MEDIA_ID = None
+            _save_cached_welcome_id(path, None)
         except (requests.RequestException, ValueError) as e:
             log.warning("brand media by id: %s", _safe_error(e))
     try:
@@ -1902,7 +1953,7 @@ def _send_brand_media(chat, path, kind, caption, markup):
         thumb_path = Path(HERE, "brand", "thumb.jpg")
         if kind == "video" and thumb_path.exists():
             files["thumbnail"] = ("thumb.jpg", io.BytesIO(thumb_path.read_bytes()), "image/jpeg")
-        r = http_session().post(f"{API}/{method}", files=files, data=payload, timeout=(10, 120))
+        r = http_session().post(f"{API}/{method}", files=files, data=payload, timeout=(6, 25))
         res = r.json()
         if res.get("ok"):
             result = res.get("result") or {}
@@ -1912,7 +1963,7 @@ def _send_brand_media(chat, path, kind, caption, markup):
                 photos = result.get("photo") or []
                 new_id = photos[-1].get("file_id") if photos else None
             if new_id:
-                _WELCOME_MEDIA_ID = new_id
+                _save_cached_welcome_id(path, new_id)
             return True
         log.warning("sendBrandMedia: %s", _safe_error(res.get("description", "")))
         return False
@@ -2571,13 +2622,12 @@ def build_settings_card(uid):
     keep_fio = bool(settings.get("keep_fio", 0)) and not raw_fio
     if raw_fio:
         fio = raw_fio
-        keep_fio_btn = "📌 Оставлять родное ФИО (сбросить своё)"
     elif keep_fio:
         fio = "📌 исходное из билета (не очищается)"
-        keep_fio_btn = "👤 ФИО: 📌 Родное остаётся ➔ 🧹 Очищать"
     else:
         fio = "не установлено (очищается)"
-        keep_fio_btn = "👤 ФИО: 🧹 Очищается ➔ 📌 Оставлять родное"
+    clear_mode_btn = "✅ 🧹 Стирать ФИО" if (not raw_fio and not keep_fio) else "⚪️ 🧹 Стирать ФИО"
+    keep_mode_btn = "✅ 📌 Родное ФИО" if (not raw_fio and keep_fio) else "⚪️ 📌 Родное ФИО"
     hide_price = bool(settings.get("hide_price", 0))
     custom_price = settings.get("custom_price")
     custom_price_display = f"{custom_price} ₽" if custom_price is not None else "исходная"
@@ -2609,7 +2659,10 @@ def build_settings_card(uid):
 
     reply_markup = {
         "inline_keyboard": [
-            [{"text": keep_fio_btn, "callback_data": "set:keep_fio"}],
+            [
+                {"text": clear_mode_btn, "callback_data": "set:fio_clear"},
+                {"text": keep_mode_btn, "callback_data": "set:fio_keep"},
+            ],
             [{"text": "👤 Изменить ФИО", "callback_data": "set:fio"}, {"text": "✏️ Изменить цену", "callback_data": "set:custom_price"}],
             [{"text": price_btn, "callback_data": "set:price"}],
             [{"text": batch_btn, "callback_data": "set:batch"}],
@@ -2658,10 +2711,11 @@ def _single_ticket_markup(token, hide_price=False, pages=1, batch_token=None, ke
 
     rows = [
         [quick_btn],
+        [fio_toggle_btn],
         [seat_btn],
         [fio_btn, price_edit_btn],
         [price_toggle_btn, preview_btn],
-        [fio_toggle_btn, pushkin_btn],
+        [pushkin_btn],
     ]
     if pages > 1:
         rows.append([{"text": f"✂️ Нарезать на отдельные билеты ({pages} шт.)", "callback_data": f"split:{token}"}])
@@ -6797,6 +6851,8 @@ def handle(msg, update_id=None, queued=False):
             if has_field:
                 return _reissue_ticket_with_quick(chat, uid, recent_token, text)
     if msg.get("document"):
+        if isinstance(state, str) and state.startswith("waiting_"):
+            get_store().set_user_state(uid, None)
         if not has_access(uid) and get_store().daily_left(uid) <= 0:
             return no_access_message(uid)
         collection = get_store().open_collection(uid, chat)
@@ -6916,6 +6972,12 @@ def dispatch_update(update):
             text = "Склеиваю билеты в один PDF..."
         elif data.startswith("preview") or data.startswith("bprev"):
             text = "Генерирую фото-превью..."
+        elif data == "set:fio_keep":
+            text = "📌 Включено: родное ФИО из билета сохраняется!"
+        elif data == "set:fio_clear":
+            text = "🧹 Включено: ФИО на билетах стирается!"
+        elif data == "set:keep_fio":
+            text = "Переключаю режим ФИО..."
         elif data.startswith("fio"):
             text = "Редактирование ФИО..."
         elif data.startswith("togglefio"):
